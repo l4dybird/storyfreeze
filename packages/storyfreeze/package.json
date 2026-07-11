@@ -1,6 +1,6 @@
 {
   "name": "storyfreeze",
-  "version": "0.0.0-development.0",
+  "version": "0.1.0-alpha.0",
   "description": "Capture screenshot images from Storybook stories via Puppeteer.",
   "type": "module",
   "engines": {
@@ -22,7 +22,7 @@
     "./dist/storybook/preview.js"
   ],
   "bin": {
-    "storyfreeze": "./dist/node/cli.js"
+    "storyfreeze": "dist/node/cli.js"
   },
   "scripts": {
     "clean": "rimraf -g dist lib lib-esm \"*.tsbuildinfo\"",

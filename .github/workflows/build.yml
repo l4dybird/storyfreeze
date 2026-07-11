@@ -31,3 +31,9 @@ jobs:
         env:
           CI: true
       - run: yarn package:smoke
+      - name: Verify alpha publish metadata
+        run: |
+          test "$(node -p "require('./lerna.json').version")" = "0.1.0-alpha.0"
+          test "$(node -p "require('./packages/storyfreeze/package.json').version")" = "0.1.0-alpha.0"
+          test "$(node scripts/get-dist-tag.js)" = "next"
+      - run: yarn publish:dry-run

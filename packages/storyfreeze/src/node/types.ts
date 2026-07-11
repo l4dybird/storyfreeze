@@ -1,6 +1,7 @@
 import type { Logger } from './logger.js';
 import type { LaunchOptions } from 'puppeteer-core';
-import type { StorybookConnectionOptions, BaseBrowserOptions, ChromeChannel } from 'storycrawler';
+import type { BaseBrowserOptions, ChromeChannel } from './browser.js';
+import type { StorybookConnectionOptions } from './managed-storybook-connection.js';
 
 /**
  *

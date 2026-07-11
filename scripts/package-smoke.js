@@ -64,6 +64,21 @@ try {
   const tarballPath = path.join(temporaryDir, packResult.filename);
   runNpm(['install', '--ignore-scripts', '--no-audit', '--no-fund', tarballPath], consumerDir);
 
+  const installedPackageDir = path.join(consumerDir, 'node_modules', 'storyfreeze');
+  const installedMetadata = JSON.parse(fs.readFileSync(path.join(installedPackageDir, 'package.json'), 'utf8'));
+  if (
+    installedMetadata.dependencies?.storycrawler ||
+    fs.existsSync(path.join(consumerDir, 'node_modules', 'storycrawler'))
+  ) {
+    throw new Error('The installed package still depends on storycrawler.');
+  }
+  for (const declaration of actualFiles.filter(file => file.endsWith('.d.ts'))) {
+    const contents = fs.readFileSync(path.join(installedPackageDir, declaration), 'utf8');
+    if (contents.includes('storycrawler')) {
+      throw new Error(`The declaration ${declaration} still references storycrawler.`);
+    }
+  }
+
   const imported = run(
     process.execPath,
     [

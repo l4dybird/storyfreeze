@@ -1,7 +1,7 @@
 import type { HTTPRequest, Page } from 'puppeteer-core';
 
-// Derived from storycrawler's MIT-licensed ResourceWatcher implementation:
-// https://github.com/reg-viz/storycrawler
+// Derived from storycrawler. Copyright (c) 2019 reg-viz, MIT licensed.
+// https://github.com/reg-viz/storycap/tree/master/packages/storycrawler
 // The implementation is intentionally request-based so repeated requests to the
 // same URL cannot reuse an already-resolved completion promise.
 

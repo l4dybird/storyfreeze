@@ -1,4 +1,4 @@
-import type { Story } from 'storycrawler';
+import type { Story } from './story.js';
 import { parseShardOptions, sortStories, shardStories } from './shard-utilities.js';
 
 describe(parseShardOptions, () => {

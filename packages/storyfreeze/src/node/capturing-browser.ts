@@ -1,13 +1,9 @@
 import { fileURLToPath } from 'node:url';
 import type { ConsoleMessage, Viewport } from 'puppeteer-core';
-import {
-  BaseBrowser,
-  MetricsWatcher,
-  sleep,
-  getDeviceDescriptors,
-  type Story,
-  type StorybookConnection,
-} from 'storycrawler';
+import { BaseBrowser, MetricsWatcher, getDeviceDescriptors } from './browser.js';
+import { sleep } from './async-utils.js';
+import type { Story } from './story.js';
+import type { ManagedStorybookConnection } from './managed-storybook-connection.js';
 
 import type { MainOptions, RunMode } from './types.js';
 import type { VariantKey, ScreenshotOptions, StrictScreenshotOptions, Exposed } from '../shared/types.js';
@@ -68,7 +64,7 @@ export class CapturingBrowser extends BaseBrowser {
    *
    **/
   constructor(
-    private readonly connection: StorybookConnection,
+    private readonly connection: ManagedStorybookConnection,
     protected opt: MainOptions,
     private mode: RunMode,
     private readonly idx: number,

@@ -1,5 +1,5 @@
 import type { Page } from 'puppeteer-core';
-import { sleep } from 'storycrawler';
+import { sleep } from './async-utils.js';
 import type { RunMode } from './types.js';
 import {
   PreviewAddonVersionMismatchError,

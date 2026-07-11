@@ -3,7 +3,8 @@
 import { readFileSync } from 'node:fs';
 import yargs from 'yargs';
 import { hideBin } from 'yargs/helpers';
-import { time, getDeviceDescriptors, type ChromeChannel } from 'storycrawler';
+import { time } from './async-utils.js';
+import { getDeviceDescriptors, type ChromeChannel } from './browser.js';
 import { main } from './main.js';
 import type { MainOptions, ShardOptions } from './types.js';
 import { Logger } from './logger.js';

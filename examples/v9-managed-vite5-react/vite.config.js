@@ -8,8 +8,8 @@ export default defineConfig({
   resolve: {
     alias: [
       {
-        find: 'storycapture', 
-        replacement: resolve(__dirname, 'node_modules', 'storycapture', 'lib')
+        find: 'storyfreeze',
+        replacement: resolve(__dirname, 'node_modules', 'storyfreeze', 'lib')
       }
     ]
   },

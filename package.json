@@ -1,5 +1,5 @@
 {
-  "name": "storycapture-root",
+  "name": "storyfreeze-root",
   "private": true,
   "packageManager": "yarn@1.22.22",
   "scripts": {
@@ -9,8 +9,8 @@
     "doc:toc": "node scripts/add-toc.js",
     "doc": "yarn doc:clihelp && yarn doc:toc && prettier --write \"*.md\" --loglevel warn",
     "typedoc:build": "lerna run typedoc",
-    "copy:misc": "yarn copy:misc:storycapture",
-    "copy:misc:storycapture": "cpy README.md CONTRIBUTING.md MIGRATION.md LICENSE packages/storycapture",
+    "copy:misc": "yarn copy:misc:storyfreeze",
+    "copy:misc:storyfreeze": "cpy README.md CONTRIBUTING.md MIGRATION.md LICENSE packages/storyfreeze",
     "build": "lerna run build && yarn doc && yarn copy:misc",
     "build:pages": "yarn typedoc:build",
     "format": "prettier --write \"packages/**/src/**/*\" \"packages/**/samples/**/*.ts\" \"scripts/**/*\" \"*.md\" \"packages/*/*.md\"",

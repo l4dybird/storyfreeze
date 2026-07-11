@@ -62,7 +62,7 @@ export class CapturingBrowser extends StoryPreviewBrowser {
    *
    * @override
    *
-   * @param opt - Options for Storycapture.
+   * @param opt - Options for StoryFreeze.
    * @param mode - Indicates this worker runs as managed mode or simple mode.
    * @param idx - Worker id.
    *

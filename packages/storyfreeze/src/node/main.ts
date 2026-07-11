@@ -10,12 +10,12 @@ import { ManagedStorybookConnection } from './managed-storybook-connection';
 async function abortable<T>(operation: Promise<T>, signal?: AbortSignal): Promise<T> {
   if (!signal) return operation;
   if (signal.aborted) {
-    throw signal.reason instanceof Error ? signal.reason : new Error('Storycapture was interrupted.');
+    throw signal.reason instanceof Error ? signal.reason : new Error('StoryFreeze was interrupted.');
   }
 
   return new Promise<T>((resolve, reject) => {
     const onAbort = () =>
-      reject(signal.reason instanceof Error ? signal.reason : new Error('Storycapture was interrupted.'));
+      reject(signal.reason instanceof Error ? signal.reason : new Error('StoryFreeze was interrupted.'));
     signal.addEventListener('abort', onAbort, { once: true });
     operation.then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort));
   });
@@ -23,7 +23,7 @@ async function abortable<T>(operation: Promise<T>, signal?: AbortSignal): Promis
 
 function throwIfAborted(signal?: AbortSignal) {
   if (!signal?.aborted) return;
-  throw signal.reason instanceof Error ? signal.reason : new Error('Storycapture was interrupted.');
+  throw signal.reason instanceof Error ? signal.reason : new Error('StoryFreeze was interrupted.');
 }
 
 async function detectRunMode(storiesBrowser: StoriesBrowser, opt: MainOptions) {
@@ -33,10 +33,10 @@ async function detectRunMode(storiesBrowser: StoriesBrowser, opt: MainOptions) {
 
   // We can check whether the secret value is set by `register.js` or not.
   const registered: boolean | undefined = await storiesBrowser.page.evaluate(
-    () => (window as any).__STORYCAP_MANAGED_MODE_REGISTERED__,
+    () => (window as any).__STORYFREEZE_MANAGED_MODE_REGISTERED__,
   );
   const mode: RunMode = registered ? 'managed' : 'simple';
-  opt.logger.log(`Storycapture runs with ${mode} mode`);
+  opt.logger.log(`StoryFreeze runs with ${mode} mode`);
   return mode;
 }
 
@@ -51,7 +51,7 @@ async function bootCapturingBrowserAsWorkers(
       const browser = await new CapturingBrowser(connection, opt, mode, i).boot();
       if (opt.signal?.aborted) {
         await browser.close();
-        throw opt.signal.reason instanceof Error ? opt.signal.reason : new Error('Storycapture was interrupted.');
+        throw opt.signal.reason instanceof Error ? opt.signal.reason : new Error('StoryFreeze was interrupted.');
       }
       onBoot(browser);
       return browser;
@@ -96,7 +96,7 @@ export async function disposeRuntimeResources(resources: RuntimeResources, logge
 
 /**
  *
- * Run main process of Storycapture.
+ * Run main process of StoryFreeze.
  *
  * @param mainOptions - Parameters for this procedure
  *

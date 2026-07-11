@@ -13,7 +13,7 @@ const config = {
   stories: ['../src/**/*.mdx', '../src/**/*.stories.@(js|jsx|mjs|ts|tsx)'],
   addons: [
     getAbsolutePath('@storybook/addon-links'),
-    getAbsolutePath('storycapture'),
+    getAbsolutePath('storyfreeze'),
   ],
   framework: {
     name: getAbsolutePath('@storybook/react-vite'),

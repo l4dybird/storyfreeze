@@ -2,7 +2,7 @@ module.exports = {
   stories: ['../src/**/*.stories.@(js|jsx|mdx)'],
   addons: [
     '@storybook/addon-links',
-    'storycapture',
+    'storyfreeze',
     '@storybook/preset-create-react-app',
   ],
   framework: {

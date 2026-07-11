@@ -1,7 +1,7 @@
 {
-  "name": "storycapture",
-  "version": "9.0.0",
-  "description": "A Storybook addon, Save the screenshot image of your stories! via puppeteer.",
+  "name": "storyfreeze",
+  "version": "0.0.0-development.0",
+  "description": "Capture screenshot images from Storybook stories via Puppeteer.",
   "engines": {
     "node": ">=18"
   },
@@ -23,7 +23,7 @@
   ],
   "typings": "lib/index.d.ts",
   "bin": {
-    "storycapture": "lib/node/cli.js"
+    "storyfreeze": "lib/node/cli.js"
   },
   "scripts": {
     "clean": "rimraf -g lib lib-esm \"*.tsbuildinfo\"",
@@ -32,7 +32,7 @@
     "build:esm": "tsc --p tsconfig.build.esm.json",
     "prepare": "yarn clean && yarn build",
     "test": "jest",
-    "typedoc": "typedoc --out \"../../dist-pages/typedoc/storycapture\" --ignoreCompilerErrors --tsconfig tsconfig.build.json src"
+    "typedoc": "typedoc --out \"../../dist-pages/typedoc/storyfreeze\" --ignoreCompilerErrors --tsconfig tsconfig.build.json src"
   },
   "repository": {
     "type": "git",

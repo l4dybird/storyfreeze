@@ -1,6 +1,6 @@
 /**
  *
- * @returns Whether current process runs in Storycapture browser.
+ * @returns Whether current process runs in StoryFreeze browser.
  *
  **/
 export function isScreenshot() {

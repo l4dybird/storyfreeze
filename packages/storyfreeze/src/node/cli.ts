@@ -17,7 +17,7 @@ async function createOptions(): Promise<MainOptions> {
     .locale('en')
     .wrap(120)
     .version(require('../../package.json').version)
-    .usage('usage: storycapture [options] storybook_url')
+    .usage('usage: storyfreeze [options] storybook_url')
     .options({
       outDir: { string: true, alias: 'o', default: '__screenshots__', description: 'Output directory.' },
       parallel: { number: true, alias: 'p', default: 4, description: 'Number of browsers to screenshot.' },
@@ -76,11 +76,11 @@ async function createOptions(): Promise<MainOptions> {
         description: 'JSON string of launch config for Puppeteer.',
       },
     })
-    .example('storycapture http://localhost:9009', '')
-    .example('storycapture http://localhost:9009 -V 1024x768 -V 320x568', '')
-    .example('storycapture http://localhost:9009 -i "some-kind/a-story"', '')
-    .example('storycapture http://example.com/your-storybook -e "**/default" -V iPad', '')
-    .example('storycapture --serverCmd "start-storybook -p 3000" http://localhost:3000', '');
+    .example('storyfreeze http://localhost:9009', '')
+    .example('storyfreeze http://localhost:9009 -V 1024x768 -V 320x568', '')
+    .example('storyfreeze http://localhost:9009 -i "some-kind/a-story"', '')
+    .example('storyfreeze http://example.com/your-storybook -e "**/default" -V iPad', '')
+    .example('storyfreeze --serverCmd "start-storybook -p 3000" http://localhost:3000', '');
   let storybookUrl: string;
 
   const argv = await setting.argv;
@@ -130,7 +130,7 @@ async function createOptions(): Promise<MainOptions> {
   let puppeteerLaunchConfig: string;
   try {
     puppeteerLaunchConfig = {
-      headless: process.env['STORYCAP_SHOW'] !== 'enabled',
+      headless: process.env['STORYFREEZE_SHOW'] !== 'enabled',
       ...JSON.parse(puppeteerLaunchConfigString),
     };
   } catch (error) {
@@ -187,8 +187,8 @@ async function cli() {
   const handleSignal = (signal: NodeJS.Signals) => {
     if (shutdownController.signal.aborted) return;
     receivedSignal = signal;
-    logger.warn(`Received ${signal}. Shutting down Storycapture.`);
-    shutdownController.abort(new Error(`Storycapture was interrupted by ${signal}.`));
+    logger.warn(`Received ${signal}. Shutting down StoryFreeze.`);
+    shutdownController.abort(new Error(`StoryFreeze was interrupted by ${signal}.`));
   };
   const handleSigint = () => handleSignal('SIGINT');
   const handleSigterm = () => handleSignal('SIGTERM');

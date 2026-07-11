@@ -7,7 +7,7 @@ function run() {
   echo "Start $1"
   yarn --pure-lockfile
   yarn clear
-  yarn storycapture:all
+  yarn storyfreeze:all
   img_count=$(find __screenshots__ -name "*.png" | wc -l)
   if [ "$img_count" -eq 0 ]; then
     echo "Test was failed. There is no capture..."

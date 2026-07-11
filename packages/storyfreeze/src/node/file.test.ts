@@ -8,7 +8,7 @@ describe(FileSystem, () => {
   let outDir: string;
 
   beforeEach(async () => {
-    outDir = await fs.mkdtemp(path.join(os.tmpdir(), 'storycapture-file-'));
+    outDir = await fs.mkdtemp(path.join(os.tmpdir(), 'storyfreeze-file-'));
   });
 
   afterEach(async () => {

@@ -4,7 +4,7 @@ import { StorybookConnectionOptions, BaseBrowserOptions, ChromeChannel } from 's
 
 /**
  *
- * Represents Storycapture mode.
+ * Represents StoryFreeze mode.
  *
  **/
 export type RunMode = 'simple' | 'managed';

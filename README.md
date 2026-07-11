@@ -6,9 +6,9 @@
 > originally forked from [reg-viz/storycap](https://github.com/reg-viz/storycap).
 > It is not an official successor to either project.
 
-StoryFreeze is currently being migrated from the Storycapture 9 baseline. Until
-the package and CLI rename phase is complete, the examples and commands in this
-document continue to use the `storycapture` name.
+StoryFreeze currently preserves the behavior of the Storycapture 9 baseline
+while it is being migrated to Storybook 10. The package and CLI use the
+`storyfreeze` name.
 
 [storybook]: https://github.com/storybooks/storybook
 [puppeteer]: https://github.com/GoogleChrome/puppeteer
@@ -16,11 +16,11 @@ document continue to use the `storycapture` name.
 The base package was created to support v9 of storybook with [storycap](https://github.com/reg-viz/storycap).
 Special thanks to the author of the [storycap](https://github.com/reg-viz/storycap).
 
-[![npm](https://img.shields.io/npm/v/storycapture.svg?style=flat-square)](https://www.npmjs.com/package/storycapture)
+[![npm](https://img.shields.io/npm/v/storyfreeze.svg?style=flat-square)](https://www.npmjs.com/package/storyfreeze)
 
 > A [Storybook][storybook] Addon, Save the screenshot image of your stories :camera: via [Puppeteer][puppeteer].
 
-Storycapture crawls your Storybook and takes screenshot images.
+StoryFreeze crawls your Storybook and takes screenshot images.
 It is primarily responsible for image generation necessary for Visual Testing such as [reg-suit](https://github.com/reg-viz/reg-suit).
 
 <!-- toc -->
@@ -31,7 +31,7 @@ It is primarily responsible for image generation necessary for Visual Testing su
   - [Managed mode](#managed-mode)
     - [Setup Storybook](#setup-storybook)
     - [Setup your stories(optional)](#setup-your-storiesoptional)
-    - [Run `storycapture` Command](#run-storycapture-command)
+    - [Run `storyfreeze` Command](#run-storyfreeze-command)
 - [API](#api)
   - [`withScreenshot`](#withscreenshot)
   - [type `ScreenshotOptions`](#type-screenshotoptions)
@@ -69,44 +69,44 @@ It is primarily responsible for image generation necessary for Visual Testing su
 ## Install
 
 ```sh
-$ npm install storycapture
+$ npm install storyfreeze
 ```
 
 Or
 
 ```sh
-$ npm install storycapture puppeteer
+$ npm install storyfreeze puppeteer
 ```
 
 Installing puppeteer is optional. See [Chromium version](#chromium-version) to get more detail.
 
 ## Getting Started
 
-Storycapture runs with 2 modes. One is "simple" and another is "managed".
+StoryFreeze runs with 2 modes. One is "simple" and another is "managed".
 
 With the simple mode, you don't need to configure your Storybook. All you need is give Storybook's URL, such as:
 
 ```sh
-$ npx storycapture http://localhost:9001
+$ npx storyfreeze http://localhost:9001
 ```
 
 You can launch your server via `--serverCmd` option.
 
 ```sh
-$ storycapture --serverCmd "start-storybook -p 9001" http://localhost:9001
+$ storyfreeze --serverCmd "start-storybook -p 9001" http://localhost:9001
 ```
 
 Of course, you can use pre-built Storybook:
 
 ```sh
 $ build-storybook -o dist-storybook
-$ storycapture --serverCmd "npx http-server dist-storybook -p 9001" http://localhost:9001
+$ storyfreeze --serverCmd "npx http-server dist-storybook -p 9001" http://localhost:9001
 ```
 
-Also, Storycapture can crawls built and hosted Storybook pages:
+Also, StoryFreeze can crawls built and hosted Storybook pages:
 
 ```sh
-$ storycapture https://next--storybookjs.netlify.app/vue-kitchen-sink/
+$ storyfreeze https://next--storybookjs.netlify.app/vue-kitchen-sink/
 ```
 
 ### Managed mode
@@ -115,7 +115,7 @@ $ storycapture https://next--storybookjs.netlify.app/vue-kitchen-sink/
 
 If you want to control how stories are captured (timing or size or etc...), use managed mode.
 
-First, add `storycapture` to your Storybook config file:
+First, add `storyfreeze` to your Storybook config file:
 
 ```js
 /* .storybook/main.js */
@@ -125,17 +125,17 @@ module.exports = {
   addons: [
     '@storybook/addon-actions',
     '@storybook/addon-links',
-    'storycapture', // <-- Add storycapture
+    'storyfreeze', // <-- Add storyfreeze
   ],
 };
 ```
 
-Next, use `withScreenshot` decorator to tell how Storycapture captures your stories.
+Next, use `withScreenshot` decorator to tell how StoryFreeze captures your stories.
 
 ```js
 /* .storybook/preview.js */
 
-import { withScreenshot } from 'storycapture';
+import { withScreenshot } from 'storyfreeze';
 
 export const decorators = [
   withScreenshot, // Registration the decorator is required
@@ -184,24 +184,24 @@ export const Small = {
 };
 ```
 
-#### Run `storycapture` Command
+#### Run `storyfreeze` Command
 
 ```sh
 $ npx start-storybook -p 9009
-$ npx storycapture http://localhost:9009
+$ npx storyfreeze http://localhost:9009
 ```
 
 Or you can exec with one-liner via `--serverCmd` option:
 
 ```sh
-$ npx storycapture http://localhost:9009 --serverCmd "start-storybook -p 9009"
+$ npx storyfreeze http://localhost:9009 --serverCmd "start-storybook -p 9009"
 ```
 
 ## API
 
 ### `withScreenshot`
 
-A Storybook decorator to notify Storycapture to captures stories.
+A Storybook decorator to notify StoryFreeze to captures stories.
 
 ### type `ScreenshotOptions`
 
@@ -228,19 +228,19 @@ interface ScreenshotOptions {
 ```
 
 - `delay`: Waiting time [msec] before capturing.
-- `waitAssets`: If set true, Storycapture waits until all resources requested by the story, such as `<img>` or CSS background images, are finished.
-- `waitFor` : If you set a function to return `Promise`, Storycapture waits the promise is resolved. You can also set a name of global function that returns `Promise`.
-- `fullPage`: If set true, Storycapture captures the entire page of stories.
-- `focus`: If set a valid CSS selector string, Storycapture captures after focusing the element matched by the selector.
-- `hover`: If set a valid CSS selector string, Storycapture captures after hovering the element matched by the selector.
-- `click`: If set a valid CSS selector string, Storycapture captures after clicking the element matched by the selector.
-- `skip`: If set true, Storycapture cancels capturing corresponding stories.
+- `waitAssets`: If set true, StoryFreeze waits until all resources requested by the story, such as `<img>` or CSS background images, are finished.
+- `waitFor` : If you set a function to return `Promise`, StoryFreeze waits the promise is resolved. You can also set a name of global function that returns `Promise`.
+- `fullPage`: If set true, StoryFreeze captures the entire page of stories.
+- `focus`: If set a valid CSS selector string, StoryFreeze captures after focusing the element matched by the selector.
+- `hover`: If set a valid CSS selector string, StoryFreeze captures after hovering the element matched by the selector.
+- `click`: If set a valid CSS selector string, StoryFreeze captures after clicking the element matched by the selector.
+- `skip`: If set true, StoryFreeze cancels capturing corresponding stories.
 - `viewport`, `viewports`: See type `Viewport` section below.
 - `variants`: See type `Variants` section below.
-- `waitImages`: Deprecated. Use `waitAssets`. If set true, Storycapture waits until `<img>` in the story are loaded.
-- `omitBackground`: If set true, Storycapture omits the background of the page allowing for transparent screenshots. Note the storybook theme will need to be transparent as well.
-- `captureBeyondViewport`: If set true, Storycapture captures screenshot beyond the viewport. See also [Puppeteer API docs](https://github.com/puppeteer/puppeteer/blob/v13.1.3/docs/api.md#pagescreenshotoptions).
-- `clip`: If set, Storycapture captures only the portion of the screen bounded by x/y/width/height.
+- `waitImages`: Deprecated. Use `waitAssets`. If set true, StoryFreeze waits until `<img>` in the story are loaded.
+- `omitBackground`: If set true, StoryFreeze omits the background of the page allowing for transparent screenshots. Note the storybook theme will need to be transparent as well.
+- `captureBeyondViewport`: If set true, StoryFreeze captures screenshot beyond the viewport. See also [Puppeteer API docs](https://github.com/puppeteer/puppeteer/blob/v13.1.3/docs/api.md#pagescreenshotoptions).
+- `clip`: If set, StoryFreeze captures only the portion of the screen bounded by x/y/width/height.
 
 ### type `Variants`
 
@@ -318,14 +318,14 @@ addParameters({
 function isScreenshot(): boolean;
 ```
 
-Returns whether current process runs in Storycapture browser. It's useful to change your stories' behavior only in Storycapture (e.g. disable JavaScript animation).
+Returns whether current process runs in StoryFreeze browser. It's useful to change your stories' behavior only in StoryFreeze (e.g. disable JavaScript animation).
 
 ## Command Line Options
 
 <!-- inject:clihelp -->
 
 ```txt
-usage: storycapture [options] storybook_url
+usage: storyfreeze [options] storybook_url
 
 Options:
       --help                       Show help                                                                   [boolean]
@@ -362,11 +362,11 @@ Options:
                [string] [default: "{ "args": ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"] }"]
 
 Examples:
-  storycapture http://localhost:9009
-  storycapture http://localhost:9009 -V 1024x768 -V 320x568
-  storycapture http://localhost:9009 -i "some-kind/a-story"
-  storycapture http://example.com/your-storybook -e "**/default" -V iPad
-  storycapture --serverCmd "start-storybook -p 3000" http://localhost:3000
+  storyfreeze http://localhost:9009
+  storyfreeze http://localhost:9009 -V 1024x768 -V 320x568
+  storyfreeze http://localhost:9009 -i "some-kind/a-story"
+  storyfreeze http://example.com/your-storybook -e "**/default" -V iPad
+  storyfreeze --serverCmd "start-storybook -p 3000" http://localhost:3000
 
 ```
 
@@ -374,7 +374,7 @@ Examples:
 
 ## Multiple PNGs from 1 story
 
-By default, storycapture generates 1 screenshot image from 1 story. Use `variants` if you want multiple PNGs(e.g. viewports, element's states variation, etc...) for 1 story.
+By default, storyfreeze generates 1 screenshot image from 1 story. Use `variants` if you want multiple PNGs(e.g. viewports, element's states variation, etc...) for 1 story.
 
 ### Basic usage
 
@@ -531,7 +531,7 @@ export const MyStory = {
 
 #### Example 2
 
-Another example, the following setting tells storycapture to wait for resolving of `fontLoading`:
+Another example, the following setting tells storyfreeze to wait for resolving of `fontLoading`:
 
 ```html
 <!-- ./storybook/preview-head.html -->
@@ -554,7 +554,7 @@ Another example, the following setting tells storycapture to wait for resolving 
 ```js
 /* .storybook/preview.js */
 
-import { withScreenshot } from 'storycapture';
+import { withScreenshot } from 'storyfreeze';
 
 export const decorators = [withScreenshot];
 
@@ -567,7 +567,7 @@ export const parameters = {
 
 ## Chromium version
 
-Storycapture searches Chromium binary in the following order:
+StoryFreeze searches Chromium binary in the following order:
 
 1. Installed Puppeteer package (if you installed explicitly)
 1. Canary Chrome installed locally
@@ -579,7 +579,7 @@ You can change search channel with `--chromiumChannel` option or set executable 
 
 ### Storybook versions
 
-Storycapture is tested with the followings versions:
+StoryFreeze is tested with the followings versions:
 
 - Simple mode:
   - [x] Storybook v9.x
@@ -590,11 +590,11 @@ See also packages in `examples` directory.
 
 ### UI frameworks
 
-Storycapture (with both simple and managed mode) is agnostic for specific UI frameworks(e.g. React, Angular, Vue.js, etc...). So you can use it with Storybook with your own favorite framework :smile: .
+StoryFreeze (with both simple and managed mode) is agnostic for specific UI frameworks(e.g. React, Angular, Vue.js, etc...). So you can use it with Storybook with your own favorite framework :smile: .
 
 ## How it works
 
-Storycapture accesses the launched page using [Puppeteer][puppeteer].
+StoryFreeze accesses the launched page using [Puppeteer][puppeteer].
 
 ## Contributing
 

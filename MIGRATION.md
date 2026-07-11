@@ -28,6 +28,10 @@ $ npm uninstall storycapture
 $ npm install --save-dev storyfreeze
 ```
 
+StoryFreeze requires Node.js 20.19 or newer and Storybook 10. It is published
+as an ESM-only package, so replace CommonJS `require('storyfreeze')` calls with
+ESM imports.
+
 Update the addon package and imports:
 
 ```diff

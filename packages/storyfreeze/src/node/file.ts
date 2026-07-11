@@ -1,7 +1,7 @@
 import fs from 'fs/promises';
 import path from 'path';
 import { randomBytes } from 'crypto';
-import { MainOptions } from './types';
+import type { MainOptions } from './types.js';
 import sanitize from 'sanitize-filename';
 
 export class FileSystem {

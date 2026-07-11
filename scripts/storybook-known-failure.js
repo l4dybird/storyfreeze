@@ -58,12 +58,13 @@ function assertBaseline() {
   }
 }
 
-function assertNoScreenshots() {
+function findScreenshots() {
   const screenshotDir = path.join(fixtureDir, '__screenshots__');
   if (!fs.existsSync(screenshotDir)) {
-    return;
+    return [];
   }
 
+  const screenshots = [];
   const pending = [screenshotDir];
   while (pending.length > 0) {
     const current = pending.pop();
@@ -72,10 +73,11 @@ function assertNoScreenshots() {
       if (entry.isDirectory()) {
         pending.push(entryPath);
       } else if (entry.name.endsWith('.png')) {
-        throw new Error(`Unexpected screenshot generated: ${entryPath}`);
+        screenshots.push(entryPath);
       }
     }
   }
+  return screenshots;
 }
 
 function main() {
@@ -96,24 +98,28 @@ function main() {
   }
 
   const compatibility = runNpm('build-storybook');
-  if (compatibility.status === 0) {
-    throw new Error('StoryFreeze unexpectedly passed its Storybook 10 compatibility check.');
+  if (compatibility.status !== 0) {
+    throw new Error('The managed Storybook 10 build must succeed after ESM packaging.');
   }
 
-  const expectedFragments = [
-    'SB_CORE-SERVER_0002',
-    'ERR_MODULE_NOT_FOUND',
-    'storyfreeze/lib-esm/client/with-screenshot',
-  ];
-  const missingFragments = expectedFragments.filter(
-    fragment => !compatibility.output.replace(/\\/g, '/').includes(fragment),
-  );
+  const capture = runNpm('storyfreeze:dev');
+  if (capture.status !== 0) {
+    throw new Error('StoryFreeze must complete the Storybook 10 capture.');
+  }
+  const expectedFragments = ['StoryFreeze runs with simple mode', 'Shutdown storybook server', 'capturing 2 PNGs'];
+  const missingFragments = expectedFragments.filter(fragment => !capture.output.replace(/\\/g, '/').includes(fragment));
   if (missingFragments.length > 0) {
     throw new Error(`StoryFreeze failed at an unexpected point. Missing: ${missingFragments.join(', ')}`);
   }
+  if (capture.output.includes('StoryFreeze runs with managed mode')) {
+    throw new Error('Managed mode unexpectedly became available; advance the compatibility assertion.');
+  }
 
-  assertNoScreenshots();
-  console.log('Observed the expected Storybook 10 compatibility failure.');
+  const screenshots = findScreenshots();
+  if (screenshots.length !== 2) {
+    throw new Error(`Expected 2 screenshots, found ${screenshots.length}.`);
+  }
+  console.log('Observed the expected Storybook 10 managed-mode compatibility boundary.');
 }
 
 try {

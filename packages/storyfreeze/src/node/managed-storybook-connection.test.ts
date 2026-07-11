@@ -1,6 +1,7 @@
+import { jest } from '@jest/globals';
 import net from 'net';
-import { Logger } from './logger';
-import { ManagedStorybookConnection } from './managed-storybook-connection';
+import { Logger } from './logger.js';
+import { ManagedStorybookConnection } from './managed-storybook-connection.js';
 
 jest.setTimeout(15_000);
 

@@ -1,8 +1,9 @@
-import { StoriesBrowser, Story } from 'storycrawler';
-import { Logger } from './logger';
-import { ManagedStorybookConnection } from './managed-storybook-connection';
-import { MainOptions } from './types';
-import { disposeRuntimeResources, filterStories, main } from './main';
+import { jest } from '@jest/globals';
+import { StoriesBrowser, type Story } from 'storycrawler';
+import { Logger } from './logger.js';
+import { ManagedStorybookConnection } from './managed-storybook-connection.js';
+import type { MainOptions } from './types.js';
+import { disposeRuntimeResources, filterStories, main } from './main.js';
 
 function story(id: string, kind: string, name: string): Story {
   return { id, kind, story: name, version: 'v5' };

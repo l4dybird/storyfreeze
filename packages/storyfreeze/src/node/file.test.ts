@@ -1,8 +1,8 @@
 import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
-import { FileSystem } from './file';
-import { MainOptions } from './types';
+import { FileSystem } from './file.js';
+import type { MainOptions } from './types.js';
 
 describe(FileSystem, () => {
   let outDir: string;

@@ -12,6 +12,7 @@
     "build-storybook": "storybook build --test",
     "build-storybook:baseline": "storybook build --test --config-dir .storybook-simple -o storybook-static-baseline",
     "storyfreeze:prepare": "node ../../scripts/e2e-prestorybook.js .",
+    "storyfreeze:dev": "node node_modules/storyfreeze/dist/node/cli.js --verbose --parallel 1 --serverTimeout 30000 --serverCmd \"storybook dev -p 9009 --ci --exact-port --no-open\" http://127.0.0.1:9009",
     "test:known-failure": "node ../../scripts/storybook-known-failure.js ."
   },
   "dependencies": {

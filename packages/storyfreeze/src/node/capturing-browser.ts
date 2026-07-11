@@ -1,28 +1,28 @@
 import { EventEmitter } from 'events';
-import path from 'path';
+import { fileURLToPath } from 'node:url';
 import type { ConsoleMessage, Viewport } from 'puppeteer-core';
 import {
-  Story,
-  StorybookConnection,
   StoryPreviewBrowser,
   MetricsWatcher,
   sleep,
   getDeviceDescriptors,
+  type Story,
+  type StorybookConnection,
 } from 'storycrawler';
 
-import { MainOptions, RunMode } from './types';
-import { VariantKey, ScreenshotOptions, StrictScreenshotOptions, Exposed } from '../shared/types';
-import { ScreenshotTimeoutError, InvalidCurrentStoryStateError } from './errors';
+import type { MainOptions, RunMode } from './types.js';
+import type { VariantKey, ScreenshotOptions, StrictScreenshotOptions, Exposed } from '../shared/types.js';
+import { ScreenshotTimeoutError, InvalidCurrentStoryStateError } from './errors.js';
 import {
   createBaseScreenshotOptions,
   mergeScreenshotOptions,
   extractVariantKeys,
   pickupWithVariantKey,
-  InvalidVariantKeysReason,
-} from '../shared/screenshot-options-helper';
-import { Logger } from './logger';
-import { FileSystem } from './file';
-import { ResourceWatcher } from './resource-watcher';
+  type InvalidVariantKeysReason,
+} from '../shared/screenshot-options-helper.js';
+import { Logger } from './logger.js';
+import { FileSystem } from './file.js';
+import { ResourceWatcher } from './resource-watcher.js';
 
 /**
  *
@@ -101,7 +101,9 @@ export class CapturingBrowser extends StoryPreviewBrowser {
 
   private async addStyles() {
     if (this.opt.disableCssAnimation) {
-      await this.page.addStyleTag({ path: path.resolve(__dirname, '../../assets/disable-animation.css') });
+      await this.page.addStyleTag({
+        path: fileURLToPath(new URL('../../assets/disable-animation.css', import.meta.url)),
+      });
     }
   }
 

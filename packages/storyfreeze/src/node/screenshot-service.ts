@@ -1,8 +1,8 @@
-import { Story, createExecutionService, time } from 'storycrawler';
-import { CapturingBrowser } from './capturing-browser';
-import { FileSystem } from './file';
-import { Logger } from './logger';
-import { VariantKey } from '../shared/types';
+import { createExecutionService, time, type Story } from 'storycrawler';
+import type { CapturingBrowser } from './capturing-browser.js';
+import type { FileSystem } from './file.js';
+import type { Logger } from './logger.js';
+import type { VariantKey } from '../shared/types.js';
 
 function createRequest({
   story,

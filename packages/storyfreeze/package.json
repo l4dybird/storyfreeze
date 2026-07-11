@@ -2,36 +2,33 @@
   "name": "storyfreeze",
   "version": "0.0.0-development.0",
   "description": "Capture screenshot images from Storybook stories via Puppeteer.",
+  "type": "module",
   "engines": {
-    "node": ">=18"
+    "node": ">=20.19.0"
   },
-  "main": "lib/index.js",
-  "module": "lib-esm/index.js",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
     ".": {
-      "require": "./lib/index.js",
-      "browser": "./lib-esm/index.js",
-      "import": "./lib-esm/index.js",
-      "default": "./lib/index.js"
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
     },
-    "./register": "./register.js"
+    "./register": {
+      "types": "./dist/client/register.d.ts",
+      "import": "./dist/client/register.js"
+    }
   },
   "sideEffects": [
-    "./register.js",
-    "./lib/client/register.js",
-    "./lib-esm/client/register.js"
+    "./dist/client/register.js"
   ],
-  "typings": "lib/index.d.ts",
   "bin": {
-    "storyfreeze": "lib/node/cli.js"
+    "storyfreeze": "./dist/node/cli.js"
   },
   "scripts": {
-    "clean": "rimraf -g lib lib-esm \"*.tsbuildinfo\"",
-    "build": "yarn build:cjs && yarn build:esm",
-    "build:cjs": "tsc --p tsconfig.build.cjs.json",
-    "build:esm": "tsc --p tsconfig.build.esm.json",
-    "prepare": "yarn clean && yarn build",
-    "test": "jest",
+    "clean": "rimraf -g dist lib lib-esm \"*.tsbuildinfo\"",
+    "build": "tsc --p tsconfig.build.json",
+    "prepare": "npm run clean && npm run build",
+    "test": "node --experimental-vm-modules ../../node_modules/jest/bin/jest.js",
     "typedoc": "typedoc --out \"../../dist-pages/typedoc/storyfreeze\" --ignoreCompilerErrors --tsconfig tsconfig.build.json src"
   },
   "repository": {
@@ -48,15 +45,13 @@
   },
   "homepage": "https://github.com/l4dybird/storyfreeze#readme",
   "files": [
-    "lib",
-    "lib-esm",
+    "dist",
     "assets",
     "CONTRIBUTING.md",
     "MIGRATION.md",
     "README.md",
     "LICENSE",
-    "package.json",
-    "register.js"
+    "package.json"
   ],
   "keywords": [
     "storybook",
@@ -93,7 +88,7 @@
     "yargs": "^17.0.0"
   },
   "peerDependencies": {
-    "storybook": "^9.0.0"
+    "storybook": "^10.0.0"
   },
   "jest": {
     "moduleFileExtensions": [
@@ -105,9 +100,16 @@
       "^.+\\.tsx?$": [
         "ts-jest",
         {
-          "diagnostics": false
+          "diagnostics": false,
+          "useESM": true
         }
       ]
+    },
+    "extensionsToTreatAsEsm": [
+      ".ts"
+    ],
+    "moduleNameMapper": {
+      "^(\\.{1,2}/.*)\\.js$": "$1"
     },
     "testMatch": [
       "**/__tests__/*.(ts|tsx)",
@@ -118,7 +120,7 @@
       "_old/.*",
       "examples/.*",
       "\\.d\\.ts$",
-      "lib/.*"
+      "dist/.*"
     ],
     "testEnvironmentOptions": {
       "url": "http://localhost"

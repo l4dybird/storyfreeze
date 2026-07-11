@@ -24,5 +24,9 @@ declare module 'nanomatch' {
     unixify?: boolean;
   }
 
-  export const isMatch: (string: string, pattern: string, options?: MatchOptions) => boolean;
+  const nanomatch: {
+    isMatch: (string: string, pattern: string, options?: MatchOptions) => boolean;
+  };
+
+  export default nanomatch;
 }

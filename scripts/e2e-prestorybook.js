@@ -18,7 +18,7 @@ const argv = minimist(process.argv.slice(2));
  *
  * This script does:
  *
- * - emulate to `npm i storyfreeze` under the Storybook example project
+ * - emulate `npm i storyfreeze` under the Storybook example project
  *   - copy package.json
  *   - copy built javascripts
  *   - create symlink .bin/storyfreeze
@@ -42,13 +42,13 @@ async function main() {
   rimraf.sync(legacyDist);
   rimraf.sync(dist);
   mkdirp.sync(dist);
-  copyDir.sync(`${path.join(prjDir, 'lib')}`, path.join(dist, 'lib'), {});
-  copyDir.sync(`${path.join(prjDir, 'lib-esm')}`, path.join(dist, 'lib-esm'), {});
-  await cpy(['package.json', 'register.js'], dist, { cwd: prjDir });
+  copyDir.sync(path.join(prjDir, 'dist'), path.join(dist, 'dist'), {});
+  copyDir.sync(path.join(prjDir, 'assets'), path.join(dist, 'assets'), {});
+  await cpy(['package.json'], dist, { cwd: prjDir });
   rimraf.sync(path.resolve(dist, '../.bin/storyfreeze'));
   rimraf.sync(path.resolve(dist, '../.bin/storycapture'));
   mkdirp(path.resolve(dist, '../.bin'));
-  fs.symlinkSync(path.resolve(prjDir, 'lib/node/cli.js'), path.resolve(dist, '../.bin/storyfreeze'));
+  fs.symlinkSync(path.resolve(prjDir, 'dist/node/cli.js'), path.resolve(dist, '../.bin/storyfreeze'));
   fs.chmodSync(path.resolve(dist, '../.bin/storyfreeze'), 0o775);
   return 0;
 }

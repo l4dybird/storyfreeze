@@ -1,6 +1,14 @@
 import { expect, userEvent, waitFor, within } from 'storybook/test';
 import { Fixture } from './Fixture';
 
+const retrySessionKey = 'storyfreeze-fixture-retry-ready';
+
+async function waitForRetryRequest() {
+  if (sessionStorage.getItem(retrySessionKey)) return;
+  sessionStorage.setItem(retrySessionKey, 'true');
+  await new Promise(resolve => setTimeout(resolve, 3500));
+}
+
 const meta = {
   title: 'Compatibility/Fixture',
   component: Fixture,
@@ -55,5 +63,16 @@ export const Interactions = {
 export const ConsoleError = {
   args: {
     consoleLevel: 'error',
+  },
+};
+
+export const Retry = {
+  args: {
+    retryStatus: 'Ready after retry',
+  },
+  parameters: {
+    screenshot: {
+      waitFor: waitForRetryRequest,
+    },
   },
 };

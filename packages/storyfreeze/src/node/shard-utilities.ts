@@ -1,4 +1,4 @@
-import type { Story } from 'storycrawler';
+import type { Story } from './story.js';
 import type { ShardOptions } from './types.js';
 
 export const parseShardOptions = (arg: string): ShardOptions => {

@@ -1,5 +1,5 @@
 import { jest } from '@jest/globals';
-import { StoriesBrowser } from 'storycrawler';
+import { BaseBrowser } from './browser.js';
 import { Logger } from './logger.js';
 import { ManagedStorybookConnection } from './managed-storybook-connection.js';
 import type { MainOptions } from './types.js';
@@ -89,11 +89,11 @@ describe(main, () => {
       return this;
     });
     const disconnect = jest.spyOn(ManagedStorybookConnection.prototype, 'disconnect').mockResolvedValue();
-    jest.spyOn(StoriesBrowser.prototype, 'boot').mockImplementation(async function (this: StoriesBrowser) {
+    jest.spyOn(BaseBrowser.prototype, 'boot').mockImplementation(async function (this: BaseBrowser) {
       return this;
     });
     jest.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('enumeration failed'));
-    const close = jest.spyOn(StoriesBrowser.prototype, 'close').mockResolvedValue();
+    const close = jest.spyOn(BaseBrowser.prototype, 'close').mockResolvedValue();
 
     await expect(main(options)).rejects.toThrow('enumeration failed');
 
@@ -108,20 +108,18 @@ describe(main, () => {
       return this;
     });
     const disconnect = jest.spyOn(ManagedStorybookConnection.prototype, 'disconnect').mockResolvedValue();
-    jest.spyOn(StoriesBrowser.prototype, 'boot').mockImplementation(async function (this: StoriesBrowser) {
+    jest.spyOn(BaseBrowser.prototype, 'boot').mockImplementation(async function (this: BaseBrowser) {
       return this;
     });
-    const getStories = jest.spyOn(StoriesBrowser.prototype, 'getStories');
     jest.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ entries: {} })));
-    const close = jest.spyOn(StoriesBrowser.prototype, 'close').mockResolvedValue();
-    jest.spyOn(StoriesBrowser.prototype, 'page', 'get').mockReturnValue({
+    const close = jest.spyOn(BaseBrowser.prototype, 'close').mockResolvedValue();
+    jest.spyOn(BaseBrowser.prototype, 'page', 'get').mockReturnValue({
       goto: jest.fn(async () => {}),
       evaluate: jest.fn(async () => false),
     } as never);
 
     await expect(main(options)).resolves.toBe(0);
 
-    expect(getStories).not.toHaveBeenCalled();
     expect(close).toHaveBeenCalledTimes(1);
     expect(disconnect).toHaveBeenCalledTimes(1);
   });
@@ -134,11 +132,11 @@ describe(main, () => {
       return this;
     });
     const disconnect = jest.spyOn(ManagedStorybookConnection.prototype, 'disconnect').mockResolvedValue();
-    jest.spyOn(StoriesBrowser.prototype, 'boot').mockImplementation(async function (this: StoriesBrowser) {
+    jest.spyOn(BaseBrowser.prototype, 'boot').mockImplementation(async function (this: BaseBrowser) {
       return this;
     });
     jest.spyOn(globalThis, 'fetch').mockImplementation(() => new Promise(() => {}));
-    const close = jest.spyOn(StoriesBrowser.prototype, 'close').mockResolvedValue();
+    const close = jest.spyOn(BaseBrowser.prototype, 'close').mockResolvedValue();
 
     const running = main({ ...options, signal: controller.signal });
     await new Promise(resolve => setImmediate(resolve));

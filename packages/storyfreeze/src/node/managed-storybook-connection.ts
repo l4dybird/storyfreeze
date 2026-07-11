@@ -1,20 +1,35 @@
 import * as childProcess from 'child_process';
 import type { ChildProcess } from 'child_process';
 import waitOn from 'wait-on';
-import {
-  InvalidUrlError,
-  StorybookConnection,
-  StorybookServerTimeoutError,
-  type StorybookConnectionOptions,
-  type StorybookConnectionStatus,
-} from 'storycrawler';
 import type { Logger } from './logger.js';
 
-// Derived from storycrawler's MIT-licensed StorybookConnection implementation:
-// https://github.com/reg-viz/storycrawler
+// Derived from storycrawler. Copyright (c) 2019 reg-viz, MIT licensed.
+// https://github.com/reg-viz/storycap/tree/master/packages/storycrawler
 
 const defaultShutdownTimeout = 5_000;
 const exitPollInterval = 25;
+
+export interface StorybookConnectionOptions {
+  storybookUrl: string;
+  serverCmd?: string;
+  serverTimeout?: number;
+}
+
+export type StorybookConnectionStatus = 'CONNECTED' | 'CONNECTING' | 'DISCONNECTED';
+
+export class InvalidUrlError extends Error {
+  constructor(invalidUrl: string) {
+    super(`The URL ${invalidUrl} is invalid.`);
+    this.name = 'InvalidUrlError';
+  }
+}
+
+export class StorybookServerTimeoutError extends Error {
+  constructor(timeout: number) {
+    super(`Storybook server launch timeout exceeded in ${timeout} ms.`);
+    this.name = 'StorybookServerTimeoutError';
+  }
+}
 
 type ManagedConnectionOptions = {
   shutdownTimeout?: number;
@@ -100,27 +115,29 @@ async function terminateProcessTree(proc: ChildProcess, timeout: number, logger:
   }
 }
 
-export class ManagedStorybookConnection extends StorybookConnection {
+export class ManagedStorybookConnection {
   private serverProcess?: ChildProcess;
   private readonly shutdownTimeout: number;
+  private connectionStatus: StorybookConnectionStatus = 'DISCONNECTED';
 
   constructor(
     private readonly serverOptions: StorybookConnectionOptions,
     private readonly managedLogger: Logger,
     options: ManagedConnectionOptions = {},
   ) {
-    super(serverOptions, managedLogger);
     this.shutdownTimeout = options.shutdownTimeout ?? defaultShutdownTimeout;
   }
 
-  private setStatus(status: StorybookConnectionStatus) {
-    // Keep storycrawler's inherited public status getter in sync until the
-    // dependency is replaced by StoryFreeze's own connection in Phase 1.
-    Reflect.set(this, '_status', status);
+  get url() {
+    return this.serverOptions.storybookUrl;
+  }
+
+  get status() {
+    return this.connectionStatus;
   }
 
   async connect() {
-    this.setStatus('CONNECTING');
+    this.connectionStatus = 'CONNECTING';
     this.managedLogger.log(`Wait for connecting storybook server ${this.managedLogger.color.green(this.url)}.`);
     if (this.serverOptions.serverCmd) {
       this.serverProcess = childProcess.spawn(this.serverOptions.serverCmd, {
@@ -134,7 +151,7 @@ export class ManagedStorybookConnection extends StorybookConnection {
 
     await waitServer(this.url, this.serverOptions.serverTimeout || 10_000);
     this.managedLogger.debug(this.serverOptions.serverCmd ? 'Storybook server started' : 'Found Storybook server');
-    this.setStatus('CONNECTED');
+    this.connectionStatus = 'CONNECTED';
     return this;
   }
 
@@ -147,7 +164,7 @@ export class ManagedStorybookConnection extends StorybookConnection {
         await terminateProcessTree(proc, this.shutdownTimeout, this.managedLogger);
       }
     } finally {
-      this.setStatus('DISCONNECTED');
+      this.connectionStatus = 'DISCONNECTED';
     }
   }
 }

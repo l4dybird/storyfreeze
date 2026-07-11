@@ -1,5 +1,6 @@
 import nanomatch from 'nanomatch';
-import { StoriesBrowser, ChromiumNotFoundError, type Story } from 'storycrawler';
+import { BaseBrowser, ChromiumNotFoundError } from './browser.js';
+import type { Story } from './story.js';
 import { CapturingBrowser } from './capturing-browser.js';
 import type { MainOptions, RunMode } from './types.js';
 import { FileSystem } from './file.js';
@@ -28,7 +29,7 @@ function throwIfAborted(signal?: AbortSignal) {
   throw signal.reason instanceof Error ? signal.reason : new Error('StoryFreeze was interrupted.');
 }
 
-async function detectRunMode(storiesBrowser: StoriesBrowser, opt: MainOptions) {
+async function detectRunMode(storiesBrowser: BaseBrowser, opt: MainOptions) {
   const storyId = 'storyfreeze-probe--preview';
   const mode = await detectPreviewMode(
     storiesBrowser.page,
@@ -83,7 +84,7 @@ function toLegacyStory(descriptor: StoryDescriptor): Story {
 
 type RuntimeResources = {
   workers: Array<Pick<CapturingBrowser, 'close'>>;
-  storiesBrowser?: Pick<StoriesBrowser, 'close'>;
+  storiesBrowser?: Pick<BaseBrowser, 'close'>;
   connection?: Pick<ManagedStorybookConnection, 'disconnect'>;
 };
 
@@ -118,7 +119,7 @@ export async function main(mainOptions: MainOptions) {
   const logger = mainOptions.logger;
   const fileSystem = new FileSystem(mainOptions);
   let connection: ManagedStorybookConnection | undefined;
-  let storiesBrowser: StoriesBrowser | undefined;
+  let storiesBrowser: BaseBrowser | undefined;
   let workers: CapturingBrowser[] = [];
 
   try {
@@ -128,7 +129,7 @@ export async function main(mainOptions: MainOptions) {
     logger.debug('Created to connection.');
 
     // Launch Puppeteer process and fetch names of all stories.
-    storiesBrowser = new StoriesBrowser(connection, mainOptions, logger);
+    storiesBrowser = new BaseBrowser(mainOptions);
     await storiesBrowser.boot();
     throwIfAborted(mainOptions.signal);
     logger.log('Executable Chromium path:', logger.color.magenta(storiesBrowser.executablePath));

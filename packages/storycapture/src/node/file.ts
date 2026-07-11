@@ -1,5 +1,6 @@
 import fs from 'fs/promises';
 import path from 'path';
+import { randomBytes } from 'crypto';
 import { MainOptions } from './types';
 import sanitize from 'sanitize-filename';
 
@@ -20,6 +21,19 @@ export class FileSystem {
     return filePath;
   }
 
+  private async writeAtomic(filePath: string, buffer: Buffer) {
+    await fs.mkdir(path.dirname(filePath), { recursive: true });
+    const temporaryPath = `${filePath}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`;
+
+    try {
+      await fs.writeFile(temporaryPath, buffer);
+      await fs.rename(temporaryPath, filePath);
+    } catch (error) {
+      await fs.rm(temporaryPath, { force: true });
+      throw error;
+    }
+  }
+
   /**
    *
    * Save captured buffer as a PNG image.
@@ -34,8 +48,7 @@ export class FileSystem {
   async saveScreenshot(kind: string, story: string, suffix: string[], buffer: Buffer) {
     const filePath = this.getPath(kind, story, suffix, '.png');
 
-    await fs.mkdir(path.dirname(filePath), { recursive: true });
-    await fs.writeFile(filePath, buffer);
+    await this.writeAtomic(filePath, buffer);
 
     return filePath;
   }
@@ -54,8 +67,7 @@ export class FileSystem {
   async saveTrace(kind: string, story: string, suffix: string[], buffer: Buffer) {
     const filePath = this.getPath(kind, story, [...suffix, 'trace'], '.json');
 
-    await fs.mkdir(path.dirname(filePath), { recursive: true });
-    await fs.writeFile(filePath, buffer);
+    await this.writeAtomic(filePath, buffer);
 
     return filePath;
   }

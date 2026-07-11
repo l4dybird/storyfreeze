@@ -26,6 +26,7 @@ export type ShardOptions = {
  *
  **/
 export interface MainOptions extends BaseBrowserOptions {
+  signal?: AbortSignal;
   serverOptions: StorybookConnectionOptions;
   captureTimeout: number;
   captureMaxRetryCount: number;

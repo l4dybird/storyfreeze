@@ -36,7 +36,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/huuyafwww/storycapture.git"
+    "url": "git+https://github.com/l4dybird/storyfreeze.git"
   },
   "author": "tsuyoshiwada",
   "contributors": [
@@ -44,9 +44,9 @@
   ],
   "license": "MIT",
   "bugs": {
-    "url": "https://github.com/huuyafwww/storycapture/issues"
+    "url": "https://github.com/l4dybird/storyfreeze/issues"
   },
-  "homepage": "https://github.com/huuyafwww/storycapture#readme",
+  "homepage": "https://github.com/l4dybird/storyfreeze#readme",
   "files": [
     "lib",
     "lib-esm",

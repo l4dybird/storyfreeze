@@ -1,0 +1,35 @@
+{
+  "upstream": "huuyafwww/storycapture",
+  "commit": "18613f2a5f752ecdcd183b35e864f638e207fca4",
+  "package": "storycapture@9.0.0",
+  "packageManager": "yarn@1.22.22",
+  "node": "22.14.0",
+  "chromium": "131.0.6778.204",
+  "osImage": "windows-11-pro@10.0.26200",
+  "capturedAt": "2026-07-11T12:52:38.8351940Z",
+  "checks": {
+    "unit": {
+      "status": "pass",
+      "command": "npx yarn@1.22.22 test"
+    },
+    "build": {
+      "status": "pass",
+      "command": "npx yarn@1.22.22 build"
+    },
+    "node20Consumer": {
+      "status": "pass",
+      "node": "20.19.0",
+      "tests": 31,
+      "command": "npx node@20.19.0"
+    },
+    "packagePack": {
+      "status": "pass",
+      "files": 72,
+      "command": "npx yarn@1.22.22 exec npm pack --json"
+    },
+    "storybook9ManagedVite5": {
+      "status": "known-failure",
+      "reason": "storycrawler waits for a Storybook private global and times out after 60000ms"
+    }
+  }
+}

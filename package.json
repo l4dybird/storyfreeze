@@ -1,6 +1,7 @@
 {
   "name": "storycapture-root",
   "private": true,
+  "packageManager": "yarn@1.22.22",
   "scripts": {
     "clean": "lerna run clean",
     "bootstrap": "lerna bootstrap",
@@ -16,6 +17,7 @@
     "format:check": "prettier --check \"packages/**/src/**/*\" \"packages/**/samples/**/*.ts\" \"scripts/**/*\"",
     "lint": "eslint \"packages/**/src/**/*.ts\"",
     "test": "lerna run test",
+    "baseline:verify": "node scripts/validate-baseline.js",
     "e2e": "bash e2e.sh",
     "regression": "reg-suit run",
     "deploy:ci": "lerna run clean && yarn build && lerna publish --yes from-package --dist-tag \"$(node ./scripts/get-dist-tag.js)\"",
@@ -26,7 +28,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/huuyafwww/storycapture.git"
+    "url": "git+https://github.com/l4dybird/storyfreeze.git"
   },
   "author": "tsuyoshiwada",
   "contributors": [
@@ -34,9 +36,9 @@
   ],
   "license": "MIT",
   "bugs": {
-    "url": "https://github.com/huuyafwww/storycapture/issues"
+    "url": "https://github.com/l4dybird/storyfreeze/issues"
   },
-  "homepage": "https://github.com/huuyafwww/storycapture#readme",
+  "homepage": "https://github.com/l4dybird/storyfreeze#readme",
   "devDependencies": {
     "@typescript-eslint/eslint-plugin": "8.19.1",
     "@typescript-eslint/parser": "8.19.1",

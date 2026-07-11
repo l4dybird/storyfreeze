@@ -1,0 +1,55 @@
+name: Bug report
+description: Report a reproducible StoryFreeze problem
+title: '[Bug]: '
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for helping improve StoryFreeze. Do not report security vulnerabilities here; follow SECURITY.md instead.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What happened, and what did you expect instead?
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: StoryFreeze version or commit
+      placeholder: 0.1.0-alpha.0 or commit SHA
+    validations:
+      required: true
+  - type: input
+    id: storybook
+    attributes:
+      label: Storybook version
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Node.js, operating system, browser, and browser version
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Provide a minimal repository or exact steps and commands.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs and diagnostics
+      render: shell
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I searched for existing issues.
+          required: true
+        - label: This report does not contain a security vulnerability.
+          required: true

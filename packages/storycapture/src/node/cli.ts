@@ -181,27 +181,49 @@ async function createOptions(): Promise<MainOptions> {
 async function cli() {
   const opt = await createOptions();
   const { logger, ...rest } = opt;
+  const shutdownController = new AbortController();
+  let receivedSignal: NodeJS.Signals | undefined;
+
+  const handleSignal = (signal: NodeJS.Signals) => {
+    if (shutdownController.signal.aborted) return;
+    receivedSignal = signal;
+    logger.warn(`Received ${signal}. Shutting down Storycapture.`);
+    shutdownController.abort(new Error(`Storycapture was interrupted by ${signal}.`));
+  };
+  const handleSigint = () => handleSignal('SIGINT');
+  const handleSigterm = () => handleSignal('SIGTERM');
+  process.once('SIGINT', handleSigint);
+  process.once('SIGTERM', handleSigterm);
 
   logger.debug('Option:', rest);
 
-  time(main(opt))
-    .then(([numberOfCaptured, duration]) => {
-      logger.log(
-        `Screenshot was ended successfully in ${logger.color.green(duration + ' msec')} capturing ${logger.color.green(
-          numberOfCaptured + '',
-        )} PNGs.`,
-      );
-      process.exit(0);
-    })
-    .catch(error => {
-      if (error instanceof Error) {
-        logger.error(error.message);
-        logger.errorStack(error.stack);
-      } else {
-        logger.error(error);
-      }
-      process.exit(1);
-    });
+  try {
+    const [numberOfCaptured, duration] = await time(main({ ...opt, signal: shutdownController.signal }));
+    logger.log(
+      `Screenshot was ended successfully in ${logger.color.green(duration + ' msec')} capturing ${logger.color.green(
+        numberOfCaptured + '',
+      )} PNGs.`,
+    );
+    return 0;
+  } catch (error) {
+    if (error instanceof Error) {
+      logger.error(error.message);
+      logger.errorStack(error.stack);
+    } else {
+      logger.error(error);
+    }
+    return receivedSignal === 'SIGINT' ? 130 : receivedSignal === 'SIGTERM' ? 143 : 1;
+  } finally {
+    process.removeListener('SIGINT', handleSigint);
+    process.removeListener('SIGTERM', handleSigterm);
+  }
 }
 
-cli();
+cli()
+  .then(code => {
+    process.exitCode = code;
+  })
+  .catch(error => {
+    process.stderr.write(`${error instanceof Error ? error.stack || error.message : String(error)}\n`);
+    process.exitCode = 1;
+  });

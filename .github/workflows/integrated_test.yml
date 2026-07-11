@@ -9,11 +9,11 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     strategy:
       matrix:
-        node-version: [20.x]
+        node-version: [20.19.0]
         example_dir:
           - examples/v9-managed-react
           - examples/v9-simple-react

@@ -6,7 +6,6 @@ import {
   StorybookConnection,
   StoryPreviewBrowser,
   MetricsWatcher,
-  ResourceWatcher,
   sleep,
   getDeviceDescriptors,
 } from 'storycrawler';
@@ -23,6 +22,7 @@ import {
 } from '../shared/screenshot-options-helper';
 import { Logger } from './logger';
 import { FileSystem } from './file';
+import { ResourceWatcher } from './resource-watcher';
 
 /**
  *
@@ -92,6 +92,11 @@ export class CapturingBrowser extends StoryPreviewBrowser {
     await this.addStyles();
     this.resourceWatcher = new ResourceWatcher(this.page).init();
     return this;
+  }
+
+  async close() {
+    this.resourceWatcher?.dispose();
+    await super.close();
   }
 
   private async addStyles() {

@@ -2,7 +2,7 @@ import '@fontsource/noto-sans/400.css';
 import React, { useEffect, useState } from 'react';
 import './fixture.css';
 
-export function Fixture({ asyncLabel, consoleLevel }) {
+export function Fixture({ asyncLabel, consoleLevel, retryStatus }) {
   const [label, setLabel] = useState('Loading…');
   const [clicks, setClicks] = useState(0);
 
@@ -23,6 +23,7 @@ export function Fixture({ asyncLabel, consoleLevel }) {
     <main className="fixture-card">
       <img src="/fixture.svg" alt="StoryFreeze fixture" />
       <p data-testid="async-status">{label}</p>
+      {retryStatus && <p data-testid="retry-status">{retryStatus}</p>}
       <button
         className="fixture-button"
         type="button"

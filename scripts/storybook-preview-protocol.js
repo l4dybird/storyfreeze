@@ -6,9 +6,8 @@ const { spawnSync } = require('child_process');
 
 const fixtureDir = path.resolve(process.cwd(), process.argv[2] || '.');
 const npmCli = process.env.npm_execpath;
-const managedScreenshotPaths = [
-  'Compatibility/Fixture/Console Error_LARGE.png',
-  'Compatibility/Fixture/Console Error_SMALL.png',
+
+const interactionScreenshotPaths = [
   'Compatibility/Fixture/Interactions_clicked.png',
   'Compatibility/Fixture/Interactions_LARGE.png',
   'Compatibility/Fixture/Interactions_LARGE_focused.png',
@@ -17,10 +16,19 @@ const managedScreenshotPaths = [
   'Compatibility/Fixture/Interactions_SMALL_focused.png',
   'Compatibility/Fixture/Interactions_SMALL_hovered.png',
 ].sort();
+const managedScreenshotPaths = [
+  'Compatibility/Fixture/Console Error_LARGE.png',
+  'Compatibility/Fixture/Console Error_SMALL.png',
+  ...interactionScreenshotPaths,
+  'Compatibility/Fixture/Retry_LARGE.png',
+  'Compatibility/Fixture/Retry_SMALL.png',
+].sort();
 const simpleScreenshotPaths = [
   'Compatibility/Fixture/Console Error.png',
   'Compatibility/Fixture/Interactions.png',
+  'Compatibility/Fixture/Retry.png',
 ].sort();
+const retryScreenshotPaths = ['Compatibility/Fixture/Retry_LARGE.png', 'Compatibility/Fixture/Retry_SMALL.png'].sort();
 
 function runNpm(script) {
   const command = npmCli ? process.execPath : process.platform === 'win32' ? 'npm.cmd' : 'npm';
@@ -34,8 +42,8 @@ function runNpm(script) {
       FORCE_COLOR: '0',
       STORYBOOK_DISABLE_TELEMETRY: '1',
     },
-    maxBuffer: 10 * 1024 * 1024,
-    timeout: 120000,
+    maxBuffer: 20 * 1024 * 1024,
+    timeout: 180000,
   });
 
   const output = `${result.stdout || ''}${result.stderr || ''}`;
@@ -47,29 +55,28 @@ function runNpm(script) {
 
   return {
     status: result.status,
-    output: output.replace(/\u001b\[[0-9;]*m/g, ''),
+    output: output.replace(/\u001b\[[0-9;]*m/g, '').replace(/\\/g, '/'),
   };
 }
 
-function assertBaseline() {
-  const indexPath = path.join(fixtureDir, 'storybook-static-baseline', 'index.json');
-  const index = JSON.parse(fs.readFileSync(indexPath, 'utf8'));
+function assertStaticBuild(directoryName) {
+  const buildDir = path.join(fixtureDir, directoryName);
+  const index = JSON.parse(fs.readFileSync(path.join(buildDir, 'index.json'), 'utf8'));
   const entries = Object.values(index.entries || {});
 
   if (!entries.some(entry => entry.type === 'story')) {
-    throw new Error('The Storybook 10 baseline did not emit a story entry.');
+    throw new Error(`${directoryName} did not emit a story entry.`);
   }
   if (!entries.some(entry => entry.type === 'docs')) {
-    throw new Error('The Storybook 10 baseline did not emit a docs entry.');
+    throw new Error(`${directoryName} did not emit a docs entry.`);
   }
 
-  const assetsDir = path.join(fixtureDir, 'storybook-static-baseline', 'assets');
-  const assets = fs.readdirSync(assetsDir);
+  const assets = fs.readdirSync(path.join(buildDir, 'assets'));
   if (!assets.some(asset => asset.endsWith('.woff2'))) {
-    throw new Error('The Storybook 10 baseline did not bundle the local font asset.');
+    throw new Error(`${directoryName} did not bundle the local font asset.`);
   }
-  if (!fs.existsSync(path.join(fixtureDir, 'storybook-static-baseline', 'fixture.svg'))) {
-    throw new Error('The Storybook 10 baseline did not copy the local image asset.');
+  if (!fs.existsSync(path.join(buildDir, 'fixture.svg'))) {
+    throw new Error(`${directoryName} did not copy the local image asset.`);
   }
 }
 
@@ -95,82 +102,162 @@ function findScreenshots(directoryName) {
   return screenshots;
 }
 
-function assertScreenshots(screenshots, directoryName, expectedPaths) {
+function expectedDimensions(relativePath) {
+  const logical = relativePath.includes('_SMALL')
+    ? [750, 1334]
+    : relativePath.includes('_LARGE') || relativePath.endsWith('/Interactions_clicked.png')
+      ? [1200, 800]
+      : [800, 600];
+  const scales = process.platform === 'linux' ? [1] : [1, 1.25, 1.5, 1.75, 2];
+  return scales.map(scale => logical.map(value => Math.round(value * scale)));
+}
+
+function assertScreenshots(directoryName, expectedPaths) {
   const screenshotDir = path.join(fixtureDir, directoryName);
+  const screenshots = findScreenshots(directoryName);
   const actualPaths = screenshots.map(file => path.relative(screenshotDir, file).replaceAll('\\', '/')).sort();
   if (JSON.stringify(actualPaths) !== JSON.stringify(expectedPaths)) {
-    throw new Error(`Unexpected screenshots: ${JSON.stringify(actualPaths)}.`);
+    throw new Error(`${directoryName} emitted unexpected screenshots: ${JSON.stringify(actualPaths)}.`);
   }
 
   for (const screenshot of screenshots) {
+    const relativePath = path.relative(screenshotDir, screenshot).replaceAll('\\', '/');
     const png = fs.readFileSync(screenshot);
     if (png.subarray(0, 8).toString('hex') !== '89504e470d0a1a0a') {
-      throw new Error(`${screenshot} is not a PNG file.`);
+      throw new Error(`${relativePath} is not a PNG file.`);
     }
-    if (png.length < 24 || png.readUInt32BE(16) === 0 || png.readUInt32BE(20) === 0) {
-      throw new Error(`${screenshot} has invalid PNG dimensions.`);
+    if (png.length < 24) {
+      throw new Error(`${relativePath} has a truncated PNG header.`);
+    }
+
+    const dimensions = [png.readUInt32BE(16), png.readUInt32BE(20)];
+    const expected = expectedDimensions(relativePath);
+    if (
+      !expected.some(([width, height]) => Math.abs(dimensions[0] - width) <= 1 && Math.abs(dimensions[1] - height) <= 1)
+    ) {
+      throw new Error(
+        `${relativePath} is ${dimensions.join('x')}; expected ${expected.map(value => value.join('x')).join(' or ')}.`,
+      );
     }
   }
 }
 
-function main() {
-  const clear = runNpm('clear');
-  if (clear.status !== 0) {
-    throw new Error('Failed to clear the Storybook 10 fixture.');
-  }
-
-  const baseline = runNpm('build-storybook:baseline');
-  if (baseline.status !== 0) {
-    throw new Error('The Storybook 10 baseline build must succeed.');
-  }
-  assertBaseline();
-
-  const prepare = runNpm('storyfreeze:prepare');
-  if (prepare.status !== 0) {
-    throw new Error('Failed to install the local StoryFreeze build into the fixture.');
-  }
-
-  const compatibility = runNpm('build-storybook');
-  if (compatibility.status !== 0) {
-    throw new Error('The managed Storybook 10 build must succeed after ESM packaging.');
-  }
-
-  const simpleCapture = runNpm('storyfreeze:simple-dev');
-  if (simpleCapture.status !== 0) {
-    throw new Error('StoryFreeze must complete the Storybook 10 simple-mode capture.');
-  }
-  for (const fragment of ['StoryFreeze runs with simple mode', 'Shutdown storybook server', 'capturing 2 PNGs']) {
-    if (!simpleCapture.output.replace(/\\/g, '/').includes(fragment)) {
-      throw new Error(`Simple-mode capture is missing diagnostic: ${fragment}.`);
-    }
-  }
-  if (simpleCapture.output.includes('StoryFreeze runs with managed mode')) {
-    throw new Error('Simple mode unexpectedly detected the managed preview protocol.');
-  }
-  if (simpleCapture.output.includes('Error rendering story')) {
-    throw new Error('Storybook rendered an error page during simple-mode capture.');
-  }
-  assertScreenshots(findScreenshots('__screenshots__/simple'), '__screenshots__/simple', simpleScreenshotPaths);
-
-  const capture = runNpm('storyfreeze:dev');
+function assertCapture({ script, mode, directoryName, expectedPaths, extraFragments = [] }) {
+  const capture = runNpm(script);
   if (capture.status !== 0) {
-    throw new Error('StoryFreeze must complete the Storybook 10 capture.');
+    throw new Error(`${script} must complete successfully.`);
   }
-  const expectedFragments = ['StoryFreeze runs with managed mode', 'Shutdown storybook server', 'capturing 9 PNGs'];
-  const missingFragments = expectedFragments.filter(fragment => !capture.output.replace(/\\/g, '/').includes(fragment));
+
+  const expectedFragments = [
+    `StoryFreeze runs with ${mode} mode`,
+    'Shutdown storybook server',
+    `capturing ${expectedPaths.length} PNGs`,
+    ...extraFragments,
+  ];
+  const missingFragments = expectedFragments.filter(fragment => !capture.output.includes(fragment));
   if (missingFragments.length > 0) {
-    throw new Error(`StoryFreeze failed at an unexpected point. Missing: ${missingFragments.join(', ')}`);
+    throw new Error(`${script} is missing diagnostics: ${missingFragments.join(', ')}.`);
   }
-  if (capture.output.includes('StoryFreeze runs with simple mode')) {
-    throw new Error('Managed mode handshake was not detected on the Storybook preview.');
+
+  const oppositeMode = mode === 'managed' ? 'simple' : 'managed';
+  if (capture.output.includes(`StoryFreeze runs with ${oppositeMode} mode`)) {
+    throw new Error(`${script} unexpectedly ran in ${oppositeMode} mode.`);
   }
   if (capture.output.includes('Error rendering story')) {
-    throw new Error('Storybook rendered an error page during capture.');
+    throw new Error(`${script} rendered a Storybook error page.`);
   }
 
-  const screenshots = findScreenshots('__screenshots__/managed');
-  assertScreenshots(screenshots, '__screenshots__/managed', managedScreenshotPaths);
-  console.log('Verified the Storybook 10 simple mode and managed preview protocol.');
+  assertScreenshots(directoryName, expectedPaths);
+}
+
+function requireSuccess(script, message) {
+  const result = runNpm(script);
+  if (result.status !== 0) throw new Error(message);
+}
+
+function main() {
+  requireSuccess('clear', 'Failed to clear the Storybook 10 fixture.');
+  requireSuccess('build-storybook:simple', 'The simple Storybook 10 static build must succeed.');
+  assertStaticBuild('storybook-static/simple');
+
+  requireSuccess('storyfreeze:prepare', 'Failed to install the local StoryFreeze tarball into the fixture.');
+  requireSuccess('build-storybook:managed', 'The managed Storybook 10 static build must succeed.');
+  assertStaticBuild('storybook-static/managed');
+
+  assertCapture({
+    script: 'storyfreeze:simple-dev',
+    mode: 'simple',
+    directoryName: '__screenshots__/simple-dev',
+    expectedPaths: simpleScreenshotPaths,
+    extraFragments: ['Found 3 stories.'],
+  });
+  assertCapture({
+    script: 'storyfreeze:managed-dev',
+    mode: 'managed',
+    directoryName: '__screenshots__/managed-dev',
+    expectedPaths: managedScreenshotPaths,
+    extraFragments: ['Found 3 stories.'],
+  });
+  assertCapture({
+    script: 'storyfreeze:simple-static',
+    mode: 'simple',
+    directoryName: '__screenshots__/simple-static',
+    expectedPaths: simpleScreenshotPaths,
+    extraFragments: ['Found 3 stories.'],
+  });
+  assertCapture({
+    script: 'storyfreeze:managed-static',
+    mode: 'managed',
+    directoryName: '__screenshots__/managed-static',
+    expectedPaths: managedScreenshotPaths,
+    extraFragments: ['Found 3 stories.'],
+  });
+  assertCapture({
+    script: 'storyfreeze:filter-dev',
+    mode: 'managed',
+    directoryName: '__screenshots__/filter-dev',
+    expectedPaths: interactionScreenshotPaths,
+    extraFragments: ['Found 1 stories.'],
+  });
+  assertCapture({
+    script: 'storyfreeze:filter-static',
+    mode: 'managed',
+    directoryName: '__screenshots__/filter-static',
+    expectedPaths: interactionScreenshotPaths,
+    extraFragments: ['Found 1 stories.'],
+  });
+  assertCapture({
+    script: 'storyfreeze:shard-dev',
+    mode: 'managed',
+    directoryName: '__screenshots__/shard-dev',
+    expectedPaths: interactionScreenshotPaths,
+    extraFragments: ['Found 3 stories. 1 are being processed by this shard (number 2 of 2).'],
+  });
+  assertCapture({
+    script: 'storyfreeze:shard-static',
+    mode: 'managed',
+    directoryName: '__screenshots__/shard-static',
+    expectedPaths: interactionScreenshotPaths,
+    extraFragments: ['Found 3 stories. 1 are being processed by this shard (number 2 of 2).'],
+  });
+  assertCapture({
+    script: 'storyfreeze:retry-dev',
+    mode: 'managed',
+    directoryName: '__screenshots__/retry-dev',
+    expectedPaths: retryScreenshotPaths,
+    extraFragments: ['Found 1 stories.', 'Retry to screenshot this story after this sequence.'],
+  });
+  assertCapture({
+    script: 'storyfreeze:retry-static',
+    mode: 'managed',
+    directoryName: '__screenshots__/retry-static',
+    expectedPaths: retryScreenshotPaths,
+    extraFragments: ['Found 1 stories.', 'Retry to screenshot this story after this sequence.'],
+  });
+
+  console.log(
+    'Verified Storybook 10 dev/static, simple/managed, filtering, sharding, retry, and packaged CLI execution.',
+  );
 }
 
 try {

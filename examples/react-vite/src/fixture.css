@@ -1,0 +1,42 @@
+:root {
+  font-family: 'Noto Sans', sans-serif;
+}
+
+body {
+  margin: 0;
+}
+
+.fixture-card {
+  align-items: center;
+  background: #f4f7fb;
+  border: 2px solid #243b53;
+  border-radius: 16px;
+  box-sizing: border-box;
+  display: grid;
+  gap: 16px;
+  justify-items: center;
+  margin: 24px;
+  min-height: 320px;
+  padding: 32px;
+}
+
+.fixture-card img {
+  height: 96px;
+  width: 96px;
+}
+
+.fixture-button {
+  background: #2864dc;
+  border: 0;
+  border-radius: 8px;
+  color: white;
+  cursor: pointer;
+  font: inherit;
+  padding: 12px 20px;
+}
+
+.fixture-button:hover,
+.fixture-button:focus-visible {
+  background: #1748a7;
+  outline: 4px solid #8bb7ff;
+}

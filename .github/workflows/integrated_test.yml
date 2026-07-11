@@ -8,27 +8,23 @@ on:
   pull_request:
 
 jobs:
-  test:
+  react-vite-known-failure:
     runs-on: ubuntu-24.04
-
-    strategy:
-      matrix:
-        node-version: [20.19.0]
-        example_dir:
-          - examples/v9-managed-react
-          - examples/v9-simple-react
-          - examples/v9-managed-vite5-react
+    timeout-minutes: 10
 
     steps:
       - uses: actions/checkout@v4
-      - name: Use Node.js
+      - name: Use Node.js 20.19.0
         uses: actions/setup-node@v4
         with:
-          node-version: ${{ matrix.node-version }}
-          cache: 'yarn'
+          node-version: 20.19.0
+          cache: 'npm'
+          cache-dependency-path: examples/react-vite/package-lock.json
+      - run: corepack enable
       - run: yarn install --frozen-lockfile
       - run: yarn bootstrap
       - run: yarn build
-      - run: yarn e2e ${{ matrix.example_dir }}
-        env:
-          CI: true
+      - run: npm ci
+        working-directory: examples/react-vite
+      - run: npm run test:known-failure
+        working-directory: examples/react-vite

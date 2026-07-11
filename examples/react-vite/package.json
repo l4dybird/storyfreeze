@@ -1,0 +1,29 @@
+{
+  "name": "storyfreeze-react-vite-fixture",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "scripts": {
+    "clear": "rimraf __screenshots__ storybook-static storybook-static-baseline",
+    "storybook": "storybook dev -p 9009 --exact-port --no-open",
+    "build-storybook": "storybook build --test",
+    "build-storybook:baseline": "storybook build --test --config-dir .storybook-simple -o storybook-static-baseline",
+    "storyfreeze:prepare": "node ../../scripts/e2e-prestorybook.js .",
+    "test:known-failure": "node ../../scripts/storybook-known-failure.js ."
+  },
+  "dependencies": {
+    "@fontsource/noto-sans": "5.2.6",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
+  "devDependencies": {
+    "@storybook/addon-docs": "10.5.0",
+    "@storybook/react-vite": "10.5.0",
+    "rimraf": "6.1.3",
+    "storybook": "10.5.0",
+    "vite": "7.3.6"
+  }
+}

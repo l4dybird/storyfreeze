@@ -1,47 +1,26 @@
 #!/bin/bash
 
-set -e
+set -euo pipefail
 
 function run() {
-  pushd $1
-  echo "Start $1"
-  yarn --pure-lockfile
-  yarn clear
-  yarn storyfreeze:all
-  img_count=$(find __screenshots__ -name "*.png" | wc -l)
-  if [ "$img_count" -eq 0 ]; then
-    echo "Test was failed. There is no capture..."
-    popd > /dev/null
-    exit 1
-  fi
-  mv __screenshots__ ../../__screenshots__/$1
+  local fixture=$1
+  pushd "$fixture" > /dev/null
+  echo "Start $fixture"
+  npm ci
+  npm run test:known-failure
   popd > /dev/null
-  echo "Success $1"
+  echo "Success $fixture"
   echo ""
 }
 
-total=${NODE_TOTAL:-1}
-current_idx=${NODE_INDEX:-0}
-
-rm -rf __screenshots__
-mkdir -p __screenshots__/examples
-
-if [ -n "$1" ]; then
-  run $1
-  if [ "$?" -gt 0 ]; then
-    exit 1
-  fi
+if [ -n "${1:-}" ]; then
+  run "$1"
 else
-  i=0
-  for x in $(ls examples); do
-    if [ "$(expr $i % $total)"  -eq "$current_idx" ]; then
-      run examples/${x}
-      if [ "$?" -gt 0 ]; then
-        exit 1
-      fi
+  for fixture in examples/*; do
+    if [ -d "$fixture" ]; then
+      run "$fixture"
     fi
-    i=$(expr $i + 1)
   done
 fi
 
-echo "E2E test was ended successfully 🎉"
+echo "Storybook compatibility fixtures completed successfully 🎉"

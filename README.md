@@ -134,16 +134,11 @@ module.exports = {
 };
 ```
 
-Next, use `withScreenshot` decorator to tell how StoryFreeze captures your stories.
+The addon automatically registers StoryFreeze's preview hooks. Configure capture
+behavior with the `screenshot` parameter; do not register the decorator manually.
 
 ```js
 /* .storybook/preview.js */
-
-import { withScreenshot } from 'storyfreeze';
-
-export const decorators = [
-  withScreenshot, // Registration the decorator is required
-];
 
 export const parameters = {
   // Global parameter is optional.
@@ -205,11 +200,13 @@ $ npx storyfreeze http://localhost:9009 --serverCmd "start-storybook -p 9009"
 
 ### `withScreenshot`
 
-A Storybook decorator to notify StoryFreeze to captures stories.
+The Storybook decorator used by the addon to notify StoryFreeze. Storybook 10
+loads it automatically from `storyfreeze/preview`; applications should configure
+`parameters.screenshot` instead of registering this decorator manually.
 
 ### type `ScreenshotOptions`
 
-`ScreenshotOptions` object is available as the value of the key `screenshot` of `addParameters` argument or `withScreenshot` argument.
+`ScreenshotOptions` is available as the value of the `screenshot` parameter.
 
 ```ts
 interface ScreenshotOptions {
@@ -558,10 +555,6 @@ Another example, the following setting tells storyfreeze to wait for resolving o
 ```js
 /* .storybook/preview.js */
 
-import { withScreenshot } from 'storyfreeze';
-
-export const decorators = [withScreenshot];
-
 export const parameters = {
   screenshot: {
     waitFor: 'fontLoading',
@@ -586,9 +579,9 @@ You can change search channel with `--chromiumChannel` option or set executable 
 StoryFreeze is tested with the followings versions:
 
 - Simple mode:
-  - [x] Storybook v9.x
+  - [x] Storybook v10.x
 - Managed mode:
-  - [x] Storybook v9.x
+  - [x] Storybook v10.x
 
 See also packages in `examples` directory.
 

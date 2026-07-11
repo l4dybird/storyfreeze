@@ -1,9 +1,5 @@
-import storyfreezePreview from 'storyfreeze/preview';
-
 /** @type { import('@storybook/react-vite').Preview } */
 const preview = {
-  decorators: storyfreezePreview.decorators,
-  afterEach: storyfreezePreview.afterEach,
   parameters: {
     screenshot: {
       viewports: {

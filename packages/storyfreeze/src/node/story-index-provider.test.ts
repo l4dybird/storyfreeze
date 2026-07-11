@@ -1,0 +1,112 @@
+import { jest } from '@jest/globals';
+import { StorybookStoryIndexProvider } from './story-index-provider.js';
+
+describe(StorybookStoryIndexProvider, () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  it('loads story entries from index.json, excludes docs, and sorts by id', async () => {
+    const fetchMock = jest.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          entries: {
+            'button--secondary': {
+              type: 'story',
+              id: 'button--secondary',
+              title: 'Button',
+              name: 'Secondary',
+              tags: ['autodocs'],
+              importPath: './Button.stories.ts',
+            },
+            'button--docs': {
+              type: 'docs',
+              id: 'button--docs',
+              title: 'Button',
+              name: 'Docs',
+            },
+            'button--primary': {
+              type: 'story',
+              id: 'button--primary',
+              title: 'Button',
+              name: 'Primary',
+            },
+          },
+        }),
+      ),
+    );
+    const signal = new AbortController().signal;
+
+    await expect(
+      new StorybookStoryIndexProvider().load(new URL('https://example.test/storybook?ignored=1'), signal),
+    ).resolves.toEqual([
+      { id: 'button--primary', title: 'Button', name: 'Primary' },
+      {
+        id: 'button--secondary',
+        title: 'Button',
+        name: 'Secondary',
+        tags: ['autodocs'],
+        importPath: './Button.stories.ts',
+      },
+    ]);
+    expect(fetchMock).toHaveBeenCalledWith(new URL('https://example.test/storybook/index.json'), { signal });
+  });
+
+  it('rejects unsuccessful HTTP responses', async () => {
+    jest.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 404 }));
+
+    await expect(new StorybookStoryIndexProvider().load(new URL('https://example.test'))).rejects.toThrow('HTTP 404');
+  });
+
+  it('rejects invalid JSON', async () => {
+    jest.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{'));
+
+    await expect(new StorybookStoryIndexProvider().load(new URL('https://example.test'))).rejects.toThrow(
+      'Invalid JSON',
+    );
+  });
+
+  it.each([
+    ['a document without entries', {}],
+    ['a non-object entry', { entries: { invalid: null } }],
+    ['an entry without a type', { entries: { invalid: {} } }],
+    ['an invalid story', { entries: { invalid: { type: 'story', id: 'story--invalid', title: 'Story', name: 1 } } }],
+    [
+      'invalid tags',
+      {
+        entries: {
+          invalid: { type: 'story', id: 'story--invalid', title: 'Story', name: 'Invalid', tags: [1] },
+        },
+      },
+    ],
+    [
+      'an invalid import path',
+      {
+        entries: {
+          invalid: { type: 'story', id: 'story--invalid', title: 'Story', name: 'Invalid', importPath: 1 },
+        },
+      },
+    ],
+  ])('rejects %s', async (_label, body) => {
+    jest.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify(body)));
+
+    await expect(new StorybookStoryIndexProvider().load(new URL('https://example.test'))).rejects.toThrow(
+      'Invalid Storybook index',
+    );
+  });
+
+  it('rejects duplicate story IDs', async () => {
+    jest.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          entries: {
+            first: { type: 'story', id: 'duplicate', title: 'Story', name: 'First' },
+            second: { type: 'story', id: 'duplicate', title: 'Story', name: 'Second' },
+          },
+        }),
+      ),
+    );
+
+    await expect(new StorybookStoryIndexProvider().load(new URL('https://example.test'))).rejects.toThrow(
+      'duplicate story id',
+    );
+  });
+});

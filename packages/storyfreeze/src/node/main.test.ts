@@ -1,12 +1,13 @@
 import { jest } from '@jest/globals';
-import { StoriesBrowser, type Story } from 'storycrawler';
+import { StoriesBrowser } from 'storycrawler';
 import { Logger } from './logger.js';
 import { ManagedStorybookConnection } from './managed-storybook-connection.js';
 import type { MainOptions } from './types.js';
 import { disposeRuntimeResources, filterStories, main } from './main.js';
+import type { StoryDescriptor } from './story-index-provider.js';
 
-function story(id: string, kind: string, name: string): Story {
-  return { id, kind, story: name, version: 'v5' };
+function story(id: string, title: string, name: string): StoryDescriptor {
+  return { id, title, name };
 }
 
 describe(filterStories, () => {
@@ -24,7 +25,7 @@ describe(filterStories, () => {
     ]);
   });
 
-  it('applies include before exclude using the legacy kind/story name', () => {
+  it('applies include before exclude using the title/story name', () => {
     expect(filterStories(stories, ['Button/**'], ['**/Secondary']).map(item => item.id)).toEqual(['button--primary']);
   });
 });
@@ -91,7 +92,7 @@ describe(main, () => {
     jest.spyOn(StoriesBrowser.prototype, 'boot').mockImplementation(async function (this: StoriesBrowser) {
       return this;
     });
-    jest.spyOn(StoriesBrowser.prototype, 'getStories').mockRejectedValue(new Error('enumeration failed'));
+    jest.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('enumeration failed'));
     const close = jest.spyOn(StoriesBrowser.prototype, 'close').mockResolvedValue();
 
     await expect(main(options)).rejects.toThrow('enumeration failed');
@@ -110,7 +111,8 @@ describe(main, () => {
     jest.spyOn(StoriesBrowser.prototype, 'boot').mockImplementation(async function (this: StoriesBrowser) {
       return this;
     });
-    jest.spyOn(StoriesBrowser.prototype, 'getStories').mockResolvedValue([]);
+    const getStories = jest.spyOn(StoriesBrowser.prototype, 'getStories');
+    jest.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ entries: {} })));
     const close = jest.spyOn(StoriesBrowser.prototype, 'close').mockResolvedValue();
     jest.spyOn(StoriesBrowser.prototype, 'page', 'get').mockReturnValue({
       goto: jest.fn(async () => {}),
@@ -119,6 +121,7 @@ describe(main, () => {
 
     await expect(main(options)).resolves.toBe(0);
 
+    expect(getStories).not.toHaveBeenCalled();
     expect(close).toHaveBeenCalledTimes(1);
     expect(disconnect).toHaveBeenCalledTimes(1);
   });
@@ -134,7 +137,7 @@ describe(main, () => {
     jest.spyOn(StoriesBrowser.prototype, 'boot').mockImplementation(async function (this: StoriesBrowser) {
       return this;
     });
-    jest.spyOn(StoriesBrowser.prototype, 'getStories').mockImplementation(() => new Promise(() => {}));
+    jest.spyOn(globalThis, 'fetch').mockImplementation(() => new Promise(() => {}));
     const close = jest.spyOn(StoriesBrowser.prototype, 'close').mockResolvedValue();
 
     const running = main({ ...options, signal: controller.signal });

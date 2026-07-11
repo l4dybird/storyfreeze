@@ -4,8 +4,9 @@ import { CapturingBrowser } from './capturing-browser.js';
 import type { MainOptions, RunMode } from './types.js';
 import { FileSystem } from './file.js';
 import { createScreenshotService } from './screenshot-service.js';
-import { shardStories, sortStories } from './shard-utilities.js';
+import { shardStories } from './shard-utilities.js';
 import { ManagedStorybookConnection } from './managed-storybook-connection.js';
+import { StorybookStoryIndexProvider, type StoryDescriptor } from './story-index-provider.js';
 
 async function abortable<T>(operation: Promise<T>, signal?: AbortSignal): Promise<T> {
   if (!signal) return operation;
@@ -61,15 +62,23 @@ async function bootCapturingBrowserAsWorkers(
   return browsers;
 }
 
-export function filterStories(flatStories: Story[], include: string[], exclude: string[]): Story[] {
-  const conbined = flatStories.map(s => ({ ...s, name: s.kind + '/' + s.story }));
+export function filterStories(
+  flatStories: readonly StoryDescriptor[],
+  include: string[],
+  exclude: string[],
+): StoryDescriptor[] {
+  const combined = flatStories.map(story => ({ story, matchName: `${story.title}/${story.name}` }));
   const included = include.length
-    ? conbined.filter(s => include.some(rule => nanomatch.isMatch(s.name, rule)))
-    : conbined;
+    ? combined.filter(({ matchName }) => include.some(rule => nanomatch.isMatch(matchName, rule)))
+    : combined;
   const excluded = exclude.length
-    ? included.filter(s => !exclude.some(rule => nanomatch.isMatch(s.name, rule)))
+    ? included.filter(({ matchName }) => !exclude.some(rule => nanomatch.isMatch(matchName, rule)))
     : included;
-  return excluded;
+  return excluded.map(({ story }) => story);
+}
+
+function toLegacyStory(descriptor: StoryDescriptor): Story {
+  return { id: descriptor.id, kind: descriptor.title, story: descriptor.name, version: 'v5' };
 }
 
 type RuntimeResources = {
@@ -123,7 +132,11 @@ export async function main(mainOptions: MainOptions) {
     await storiesBrowser.boot();
     throwIfAborted(mainOptions.signal);
     logger.log('Executable Chromium path:', logger.color.magenta(storiesBrowser.executablePath));
-    const allStories = await abortable(storiesBrowser.getStories(), mainOptions.signal);
+    const storyIndexProvider = new StorybookStoryIndexProvider();
+    const allStories = await abortable(
+      storyIndexProvider.load(new URL(mainOptions.serverOptions.storybookUrl), mainOptions.signal),
+      mainOptions.signal,
+    );
     logger.debug('Ended to fetch stories metadata.');
 
     // Mode(simple / managed) detection.
@@ -138,8 +151,11 @@ export async function main(mainOptions: MainOptions) {
       return 0;
     }
 
-    const sortedStories = sortStories(stories);
-    const shardedStories = shardStories(sortedStories, mainOptions.shard.shardNumber, mainOptions.shard.totalShards);
+    const shardedStories = shardStories(
+      stories.map(toLegacyStory),
+      mainOptions.shard.shardNumber,
+      mainOptions.shard.totalShards,
+    );
 
     if (shardedStories.length === 0) {
       logger.log('This shard has no stories to screenshot.');

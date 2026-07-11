@@ -9,10 +9,11 @@ Storybook 10 can build the stories without the StoryFreeze addon. The default
 config represents managed mode, enables the locally built StoryFreeze package,
 and is exercised by `npm run test:known-failure`.
 
-The expected failure is `SB_CORE-SERVER_0002` with `ERR_MODULE_NOT_FOUND` for
-`storyfreeze/lib-esm/client/with-screenshot`. The xfail runner rejects any
-other failure and must be updated as compatibility work advances the failure
-to a later stage.
+The current compatibility boundary is managed-mode detection. Storybook and
+StoryFreeze complete the capture, but the managed config is detected as simple
+mode because the Storybook 10 addon entry is not packaged yet. The xfail runner
+rejects command failures, missing PNGs, and any unexpected diagnostic, and must
+be updated as compatibility work advances to the next stage.
 
 The fixture covers a docs entry, asynchronous rendering, local font and image
 assets, a play function, screenshot parameters, viewports, variants, pointer

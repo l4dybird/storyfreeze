@@ -8,7 +8,7 @@ import {
   type StorybookConnectionOptions,
   type StorybookConnectionStatus,
 } from 'storycrawler';
-import { Logger } from './logger';
+import type { Logger } from './logger.js';
 
 // Derived from storycrawler's MIT-licensed StorybookConnection implementation:
 // https://github.com/reg-viz/storycrawler

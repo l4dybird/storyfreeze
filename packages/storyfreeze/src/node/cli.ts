@@ -1,12 +1,17 @@
 #!/usr/bin/env node
 
+import { readFileSync } from 'node:fs';
 import yargs from 'yargs';
 import { hideBin } from 'yargs/helpers';
-import { time, ChromeChannel, getDeviceDescriptors } from 'storycrawler';
-import { main } from './main';
-import { MainOptions, ShardOptions } from './types';
-import { Logger } from './logger';
-import { parseShardOptions } from './shard-utilities';
+import { time, getDeviceDescriptors, type ChromeChannel } from 'storycrawler';
+import { main } from './main.js';
+import type { MainOptions, ShardOptions } from './types.js';
+import { Logger } from './logger.js';
+import { parseShardOptions } from './shard-utilities.js';
+
+const packageVersion = (
+  JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as { version: string }
+).version;
 
 function showDevices(logger: Logger) {
   getDeviceDescriptors().map(device => logger.log(device.name, JSON.stringify(device.viewport)));
@@ -16,7 +21,7 @@ async function createOptions(): Promise<MainOptions> {
   const setting = yargs(hideBin(process.argv))
     .locale('en')
     .wrap(120)
-    .version(require('../../package.json').version)
+    .version(packageVersion)
     .usage('usage: storyfreeze [options] storybook_url')
     .options({
       outDir: { string: true, alias: 'o', default: '__screenshots__', description: 'Output directory.' },

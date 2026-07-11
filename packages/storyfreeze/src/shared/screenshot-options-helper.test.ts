@@ -1,4 +1,4 @@
-import { expandViewportsOption, pickupWithVariantKey, extractVariantKeys } from './screenshot-options-helper';
+import { expandViewportsOption, pickupWithVariantKey, extractVariantKeys } from './screenshot-options-helper.js';
 
 describe(expandViewportsOption, () => {
   it('should expand viewport and variants from viewports', () => {

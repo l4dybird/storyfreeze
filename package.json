@@ -17,6 +17,7 @@
     "format:check": "prettier --check \"packages/**/src/**/*\" \"packages/**/samples/**/*.ts\" \"scripts/**/*\"",
     "lint": "eslint \"packages/**/src/**/*.ts\"",
     "test": "lerna run test",
+    "package:smoke": "node scripts/package-smoke.js",
     "baseline:verify": "node scripts/validate-baseline.js",
     "e2e": "bash e2e.sh",
     "regression": "reg-suit run",

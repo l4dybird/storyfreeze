@@ -1,11 +1,11 @@
-import { isMatch } from 'nanomatch';
-import { StoriesBrowser, Story, sleep, ChromiumNotFoundError } from 'storycrawler';
-import { CapturingBrowser } from './capturing-browser';
-import { MainOptions, RunMode } from './types';
-import { FileSystem } from './file';
-import { createScreenshotService } from './screenshot-service';
-import { shardStories, sortStories } from './shard-utilities';
-import { ManagedStorybookConnection } from './managed-storybook-connection';
+import nanomatch from 'nanomatch';
+import { StoriesBrowser, sleep, ChromiumNotFoundError, type Story } from 'storycrawler';
+import { CapturingBrowser } from './capturing-browser.js';
+import type { MainOptions, RunMode } from './types.js';
+import { FileSystem } from './file.js';
+import { createScreenshotService } from './screenshot-service.js';
+import { shardStories, sortStories } from './shard-utilities.js';
+import { ManagedStorybookConnection } from './managed-storybook-connection.js';
 
 async function abortable<T>(operation: Promise<T>, signal?: AbortSignal): Promise<T> {
   if (!signal) return operation;
@@ -63,8 +63,12 @@ async function bootCapturingBrowserAsWorkers(
 
 export function filterStories(flatStories: Story[], include: string[], exclude: string[]): Story[] {
   const conbined = flatStories.map(s => ({ ...s, name: s.kind + '/' + s.story }));
-  const included = include.length ? conbined.filter(s => include.some(rule => isMatch(s.name, rule))) : conbined;
-  const excluded = exclude.length ? included.filter(s => !exclude.some(rule => isMatch(s.name, rule))) : included;
+  const included = include.length
+    ? conbined.filter(s => include.some(rule => nanomatch.isMatch(s.name, rule)))
+    : conbined;
+  const excluded = exclude.length
+    ? included.filter(s => !exclude.some(rule => nanomatch.isMatch(s.name, rule)))
+    : included;
   return excluded;
 }
 

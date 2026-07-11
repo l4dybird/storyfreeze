@@ -1,5 +1,5 @@
-import { Story } from 'storycrawler';
-import { parseShardOptions, sortStories, shardStories } from './shard-utilities';
+import type { Story } from 'storycrawler';
+import { parseShardOptions, sortStories, shardStories } from './shard-utilities.js';
 
 describe(parseShardOptions, () => {
   it('should accept correct arguments', () => {

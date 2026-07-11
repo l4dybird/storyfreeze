@@ -12,8 +12,8 @@
   - [Test all packages](#test-all-packages)
   - [Test a specific package](#test-a-specific-package)
 - [E2E test](#e2e-test)
-  - [All Storybook versions](#all-storybook-versions)
-  - [Single Storybook](#single-storybook)
+  - [All compatibility fixtures](#all-compatibility-fixtures)
+  - [Single fixture](#single-fixture)
 - [Update documents' ToC and CLI usage section](#update-documents-toc-and-cli-usage-section)
 
 <!-- tocstop -->
@@ -78,20 +78,22 @@ $ yarn run jest
 
 ## E2E test
 
-### All Storybook versions
+### All compatibility fixtures
 
 ```sh
 $ ./e2e.sh
 ```
 
-When the command exit successfully, check `__screenshots__` dir. There should be captured PNG files.
+During the Storybook 10 migration, the command succeeds only when each fixture
+reaches its recorded compatibility failure. Once StoryFreeze can capture the
+fixture, this check will be converted back to a screenshot-producing E2E test.
 
-### Single Storybook
+### Single fixture
 
 And `e2e.sh` also accepts a specific storybook example's name. For example:
 
 ```sh
-$ ./e2e.sh examples/v4-simple
+$ ./e2e.sh examples/react-vite
 ```
 
 ## Update documents' ToC and CLI usage section

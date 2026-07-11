@@ -6,7 +6,7 @@
 - [From storybook-chrome-screenshot 1.x to storyfreeze](#from-storybook-chrome-screenshot-1x-to-storyfreeze)
   - [Replace dependency](#replace-dependency)
   - [Replace decorators](#replace-decorators)
-  - [Move global options from `setScreentshotOptions` to `withScreenshot`](#move-global-options-from-setscreentshotoptions-to-withscreenshot)
+  - [Move global options from `setScreentshotOptions` to parameters](#move-global-options-from-setscreentshotoptions-to-parameters)
   - [Modify screenshot options](#modify-screenshot-options)
   - [CLI usage](#cli-usage)
   - [CLI options](#cli-options)
@@ -32,7 +32,7 @@ StoryFreeze requires Node.js 20.19 or newer and Storybook 10. It is published
 as an ESM-only package, so replace CommonJS `require('storyfreeze')` calls with
 ESM imports.
 
-Update the addon package and imports:
+Update the addon package and direct API imports:
 
 ```diff
 // .storybook/main.js
@@ -40,8 +40,11 @@ Update the addon package and imports:
 + addons: ['storyfreeze']
 
 - import { withScreenshot, isScreenshot } from 'storycapture';
-+ import { withScreenshot, isScreenshot } from 'storyfreeze';
++ import { isScreenshot } from 'storyfreeze';
 ```
+
+Remove manual `withScreenshot` decorator registration. Storybook 10 loads it
+from the addon automatically; move its options to `parameters.screenshot`.
 
 Run the renamed CLI:
 
@@ -51,9 +54,10 @@ Run the renamed CLI:
 ```
 
 The `STORYCAP_SHOW` environment variable is now `STORYFREEZE_SHOW`. The
-`withScreenshot`, `isScreenshot`, `ScreenshotOptions`, `Variants`, `Viewport`,
-and `parameters.screenshot` APIs are unchanged. Screenshot output paths and
-filenames are also unchanged.
+`isScreenshot`, `ScreenshotOptions`, `Variants`, `Viewport`, and
+`parameters.screenshot` APIs are unchanged. The `withScreenshot` export remains
+available for direct integrations but must not be registered alongside the
+addon. Screenshot output paths and filenames are also unchanged.
 
 ## From storybook-chrome-screenshot 1.x to storyfreeze
 
@@ -64,13 +68,13 @@ $ npm uninstall storybook-chrome-screenshot
 $ npm install storyfreeze
 ```
 
-And edit SB addons installation:
+And add StoryFreeze to the Storybook addons configuration:
 
 ```js
-/* .storybook/addons.js */
-
-//import 'storybook-chrome-screenshot/register';
-import 'storyfreeze/register';
+/* .storybook/main.js */
+export default {
+  addons: ['storyfreeze'],
+};
 ```
 
 ### Replace decorators
@@ -94,35 +98,34 @@ addDecorator(
 
 ```js
 /* After */
-/* .storybook/config.js */
+/* .storybook/preview.js */
 
-import { addDecorator } from '@storybook/react';
-import { withScreenshot } from 'storyfreeze';
-
-addDecorator(
-  withScreenshot({
+export const parameters = {
+  screenshot: {
     /* Some options... */
-  }),
-);
+  },
+};
 ```
 
-You should replace import path if you configure screenshot behavior in each story:
+Use the `screenshot` parameter if you configure screenshot behavior in each story:
 
 ```js
 import React from 'react';
 import { storiesOf } from '@storybook/react';
-// import { withScreenshot } from 'storybook-chrome-screenshot';
-import { withScreenshot } from 'storyfreeze'; // <-
 import { Button } from './Button';
 
 storiesOf('Button', module)
-  .addDecorator(withScreenshot())
+  .addParameters({
+    screenshot: {
+      /* Some options... */
+    },
+  })
   .add('with default style', () => <Button>Default</Button>);
 ```
 
-### Move global options from `setScreentshotOptions` to `withScreenshot`
+### Move global options from `setScreentshotOptions` to parameters
 
-SCS's `setScreentshotOptions` API is already deleted. Use `withScreenshot` instead of it.
+SCS's `setScreentshotOptions` API is already deleted. Use Storybook parameters instead.
 
 ```js
 /* Before */
@@ -140,24 +143,21 @@ setScreenshotOptions({
 
 ```js
 /* After */
-/* .storybook/config.js */
-import { addDecorator } from '@storybook/react';
-import { withScreenshot } from 'storyfreeze';
-
-addDecorator(
-  withScreenshot({
+/* .storybook/preview.js */
+export const parameters = {
+  screenshot: {
     viewport: {
       width: 768,
       height: 400,
       deviceScaleFactor: 2,
     },
-  }),
-);
+  },
+};
 ```
 
 ### Modify screenshot options
 
-Some fields of the argument of `withScreenshot` are deprecated.
+Some fields of `ScreenshotOptions` are deprecated.
 
 - `namespace` field is deleted. If you want to add suffix to eace story, use `defaultVariantSuffix`
 - `filePattern` field is deleted
@@ -225,12 +225,13 @@ You had the following if you use zisui managed mode.
 import 'zisui/register';
 ```
 
-You should replace it:
+Replace the legacy registration with the Storybook addon configuration:
 
 ```js
-/* .storybook/addons.js */
-
-import 'storyfreeze/register';
+/* .storybook/main.js */
+export default {
+  addons: ['storyfreeze'],
+};
 ```
 
 And you should edit `.storybook/config.js`:
@@ -249,28 +250,23 @@ addDecorator(withScreenshot({
 You should replace it as the following:
 
 ```js
-/* .storybook/config.js */
+/* .storybook/preview.js */
 
-import { addDecorator } from '@storybook/react';
-import { withScreenshot } from 'storyfreeze';
-
-addDecorator(withScreenshot({
-  // Some screenshot options...
-});
-```
-
-**Remarks**: StoryFreeze accepts [Storybook's global parameters notation](https://github.com/storybookjs/storybook/blob/next/MIGRATION.md#options-addon-deprecated), so `addParameters` is recommended if you use Storybook v5.0 or later:
-
-```js
-/* .storybook/config.js */
-
-import { addDecorator, addParameters } from '@storybook/react';
-import { withScreenshot } from 'storyfreeze';
-
-addDecorator(withScreenshot);
-addParameters({
+export const parameters = {
   screenshot: {
     // Some screenshot options...
   },
-});
+};
+```
+
+StoryFreeze uses Storybook's global parameters notation:
+
+```js
+/* .storybook/preview.js */
+
+export const parameters = {
+  screenshot: {
+    // Some screenshot options...
+  },
+};
 ```

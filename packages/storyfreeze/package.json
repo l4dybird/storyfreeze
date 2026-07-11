@@ -16,14 +16,9 @@
     "./preview": {
       "types": "./dist/storybook/preview.d.ts",
       "import": "./dist/storybook/preview.js"
-    },
-    "./register": {
-      "types": "./dist/client/register.d.ts",
-      "import": "./dist/client/register.js"
     }
   },
   "sideEffects": [
-    "./dist/client/register.js",
     "./dist/storybook/preview.js"
   ],
   "bin": {
@@ -60,6 +55,7 @@
     "package.json"
   ],
   "keywords": [
+    "storybook-addon",
     "storybook",
     "addon",
     "puppeteer",
@@ -67,7 +63,6 @@
     "screenshot",
     "capture",
     "visual-testing",
-    "storybook-addon",
     "testing",
     "test"
   ],

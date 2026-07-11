@@ -1,10 +1,11 @@
 import { isMatch } from 'nanomatch';
-import { StorybookConnection, StoriesBrowser, Story, sleep, ChromiumNotFoundError } from 'storycrawler';
+import { StoriesBrowser, Story, sleep, ChromiumNotFoundError } from 'storycrawler';
 import { CapturingBrowser } from './capturing-browser';
 import { MainOptions, RunMode } from './types';
 import { FileSystem } from './file';
 import { createScreenshotService } from './screenshot-service';
 import { shardStories, sortStories } from './shard-utilities';
+import { ManagedStorybookConnection } from './managed-storybook-connection';
 
 async function abortable<T>(operation: Promise<T>, signal?: AbortSignal): Promise<T> {
   if (!signal) return operation;
@@ -40,7 +41,7 @@ async function detectRunMode(storiesBrowser: StoriesBrowser, opt: MainOptions) {
 }
 
 async function bootCapturingBrowserAsWorkers(
-  connection: StorybookConnection,
+  connection: ManagedStorybookConnection,
   opt: MainOptions,
   mode: RunMode,
   onBoot: (browser: CapturingBrowser) => void,
@@ -70,7 +71,7 @@ export function filterStories(flatStories: Story[], include: string[], exclude: 
 type RuntimeResources = {
   workers: Array<Pick<CapturingBrowser, 'close'>>;
   storiesBrowser?: Pick<StoriesBrowser, 'close'>;
-  connection?: Pick<StorybookConnection, 'disconnect'>;
+  connection?: Pick<ManagedStorybookConnection, 'disconnect'>;
 };
 
 export async function disposeRuntimeResources(resources: RuntimeResources, logger: MainOptions['logger']) {
@@ -103,13 +104,13 @@ export async function disposeRuntimeResources(resources: RuntimeResources, logge
 export async function main(mainOptions: MainOptions) {
   const logger = mainOptions.logger;
   const fileSystem = new FileSystem(mainOptions);
-  let connection: StorybookConnection | undefined;
+  let connection: ManagedStorybookConnection | undefined;
   let storiesBrowser: StoriesBrowser | undefined;
   let workers: CapturingBrowser[] = [];
 
   try {
     // Wait for connection to Storybook server.
-    connection = new StorybookConnection(mainOptions.serverOptions, logger);
+    connection = new ManagedStorybookConnection(mainOptions.serverOptions, logger);
     await abortable(connection.connect(), mainOptions.signal);
     logger.debug('Created to connection.');
 

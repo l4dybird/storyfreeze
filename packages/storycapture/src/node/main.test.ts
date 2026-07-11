@@ -1,5 +1,6 @@
-import { StoriesBrowser, Story, StorybookConnection } from 'storycrawler';
+import { StoriesBrowser, Story } from 'storycrawler';
 import { Logger } from './logger';
+import { ManagedStorybookConnection } from './managed-storybook-connection';
 import { MainOptions } from './types';
 import { disposeRuntimeResources, filterStories, main } from './main';
 
@@ -80,10 +81,12 @@ describe(main, () => {
   afterEach(() => jest.restoreAllMocks());
 
   it('closes the enumeration browser and connection when story enumeration fails', async () => {
-    jest.spyOn(StorybookConnection.prototype, 'connect').mockImplementation(async function (this: StorybookConnection) {
+    jest.spyOn(ManagedStorybookConnection.prototype, 'connect').mockImplementation(async function (
+      this: ManagedStorybookConnection,
+    ) {
       return this;
     });
-    const disconnect = jest.spyOn(StorybookConnection.prototype, 'disconnect').mockResolvedValue();
+    const disconnect = jest.spyOn(ManagedStorybookConnection.prototype, 'disconnect').mockResolvedValue();
     jest.spyOn(StoriesBrowser.prototype, 'boot').mockImplementation(async function (this: StoriesBrowser) {
       return this;
     });
@@ -97,10 +100,12 @@ describe(main, () => {
   });
 
   it('disconnects after an early return when no stories match', async () => {
-    jest.spyOn(StorybookConnection.prototype, 'connect').mockImplementation(async function (this: StorybookConnection) {
+    jest.spyOn(ManagedStorybookConnection.prototype, 'connect').mockImplementation(async function (
+      this: ManagedStorybookConnection,
+    ) {
       return this;
     });
-    const disconnect = jest.spyOn(StorybookConnection.prototype, 'disconnect').mockResolvedValue();
+    const disconnect = jest.spyOn(ManagedStorybookConnection.prototype, 'disconnect').mockResolvedValue();
     jest.spyOn(StoriesBrowser.prototype, 'boot').mockImplementation(async function (this: StoriesBrowser) {
       return this;
     });
@@ -119,10 +124,12 @@ describe(main, () => {
 
   it('closes the browser and connection when interrupted during enumeration', async () => {
     const controller = new AbortController();
-    jest.spyOn(StorybookConnection.prototype, 'connect').mockImplementation(async function (this: StorybookConnection) {
+    jest.spyOn(ManagedStorybookConnection.prototype, 'connect').mockImplementation(async function (
+      this: ManagedStorybookConnection,
+    ) {
       return this;
     });
-    const disconnect = jest.spyOn(StorybookConnection.prototype, 'disconnect').mockResolvedValue();
+    const disconnect = jest.spyOn(ManagedStorybookConnection.prototype, 'disconnect').mockResolvedValue();
     jest.spyOn(StoriesBrowser.prototype, 'boot').mockImplementation(async function (this: StoriesBrowser) {
       return this;
     });

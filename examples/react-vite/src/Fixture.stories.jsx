@@ -47,6 +47,9 @@ export const Interactions = {
     await userEvent.click(canvas.getByRole('button'));
     await expect(canvas.getByRole('button')).toHaveTextContent('Captures: 1');
   },
+  afterEach: async ({ canvasElement }) => {
+    await expect(within(canvasElement).getByRole('button')).toHaveTextContent('Captures: 1');
+  },
 };
 
 export const ConsoleError = {

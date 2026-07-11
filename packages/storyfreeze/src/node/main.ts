@@ -1,5 +1,5 @@
 import nanomatch from 'nanomatch';
-import { StoriesBrowser, sleep, ChromiumNotFoundError, type Story } from 'storycrawler';
+import { StoriesBrowser, ChromiumNotFoundError, type Story } from 'storycrawler';
 import { CapturingBrowser } from './capturing-browser.js';
 import type { MainOptions, RunMode } from './types.js';
 import { FileSystem } from './file.js';
@@ -7,6 +7,7 @@ import { createScreenshotService } from './screenshot-service.js';
 import { shardStories } from './shard-utilities.js';
 import { ManagedStorybookConnection } from './managed-storybook-connection.js';
 import { StorybookStoryIndexProvider, type StoryDescriptor } from './story-index-provider.js';
+import { detectPreviewMode } from './story-navigator.js';
 
 async function abortable<T>(operation: Promise<T>, signal?: AbortSignal): Promise<T> {
   if (!signal) return operation;
@@ -28,15 +29,14 @@ function throwIfAborted(signal?: AbortSignal) {
 }
 
 async function detectRunMode(storiesBrowser: StoriesBrowser, opt: MainOptions) {
-  // Reuse `storiesBrowser` instance to avoid cost of re-launching another Puppeteer process.
-  await storiesBrowser.page.goto(opt.serverOptions.storybookUrl);
-  await sleep(100);
-
-  // We can check whether the secret value is set by `register.js` or not.
-  const registered: boolean | undefined = await storiesBrowser.page.evaluate(
-    () => (window as any).__STORYFREEZE_MANAGED_MODE_REGISTERED__,
+  const storyId = 'storyfreeze-probe--preview';
+  const mode = await detectPreviewMode(
+    storiesBrowser.page,
+    new URL(opt.serverOptions.storybookUrl),
+    storyId,
+    5000,
+    opt.signal,
   );
-  const mode: RunMode = registered ? 'managed' : 'simple';
   opt.logger.log(`StoryFreeze runs with ${mode} mode`);
   return mode;
 }
@@ -139,17 +139,17 @@ export async function main(mainOptions: MainOptions) {
     );
     logger.debug('Ended to fetch stories metadata.');
 
-    // Mode(simple / managed) detection.
-    const mode = await abortable(detectRunMode(storiesBrowser, mainOptions), mainOptions.signal);
-    await storiesBrowser.close();
-    storiesBrowser = undefined;
-
     const stories = filterStories(allStories, mainOptions.include, mainOptions.exclude);
 
     if (stories.length === 0) {
       logger.warn('There is no matched story. Check your include/exclude options.');
       return 0;
     }
+
+    // Detect managed mode from StoryFreeze's owned preview protocol on the story iframe.
+    const mode = await abortable(detectRunMode(storiesBrowser, mainOptions), mainOptions.signal);
+    await storiesBrowser.close();
+    storiesBrowser = undefined;
 
     const shardedStories = shardStories(
       stories.map(toLegacyStory),

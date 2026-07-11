@@ -13,13 +13,18 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
+    "./preview": {
+      "types": "./dist/storybook/preview.d.ts",
+      "import": "./dist/storybook/preview.js"
+    },
     "./register": {
       "types": "./dist/client/register.d.ts",
       "import": "./dist/client/register.js"
     }
   },
   "sideEffects": [
-    "./dist/client/register.js"
+    "./dist/client/register.js",
+    "./dist/storybook/preview.js"
   ],
   "bin": {
     "storyfreeze": "./dist/node/cli.js"

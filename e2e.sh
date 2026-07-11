@@ -7,7 +7,7 @@ function run() {
   pushd "$fixture" > /dev/null
   echo "Start $fixture"
   npm ci
-  npm run test:known-failure
+  npm run test:preview-protocol
   popd > /dev/null
   echo "Success $fixture"
   echo ""

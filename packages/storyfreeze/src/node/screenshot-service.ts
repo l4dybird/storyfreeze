@@ -80,8 +80,8 @@ export function createScreenshotService({
 
         const { succeeded, buffer, variantKeysToPush, defaultVariantSuffix } = result;
 
-        // Queue retry request if the request was not succeeded.
-        // Worker throws `ScreenshotTimeoutError` if the queued request continues failed and the count exceeds the threhold.
+        // Queue retry requests while the worker reports a retryable timeout.
+        // The worker throws after the configured retry limit is reached.
         if (!succeeded) return push(createRequest({ story, variantKey, count: count + 1 }));
 
         // Queue screenshot requests for additional variants.

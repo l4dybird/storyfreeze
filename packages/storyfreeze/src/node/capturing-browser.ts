@@ -1,8 +1,7 @@
-import { EventEmitter } from 'events';
 import { fileURLToPath } from 'node:url';
 import type { ConsoleMessage, Viewport } from 'puppeteer-core';
 import {
-  StoryPreviewBrowser,
+  BaseBrowser,
   MetricsWatcher,
   sleep,
   getDeviceDescriptors,
@@ -12,7 +11,7 @@ import {
 
 import type { MainOptions, RunMode } from './types.js';
 import type { VariantKey, ScreenshotOptions, StrictScreenshotOptions, Exposed } from '../shared/types.js';
-import { ScreenshotTimeoutError, InvalidCurrentStoryStateError } from './errors.js';
+import { InvalidCurrentStoryStateError, PreviewReadyTimeoutError } from './errors.js';
 import {
   createBaseScreenshotOptions,
   mergeScreenshotOptions,
@@ -23,6 +22,7 @@ import {
 import { Logger } from './logger.js';
 import { FileSystem } from './file.js';
 import { ResourceWatcher } from './resource-watcher.js';
+import { StoryNavigator } from './story-navigator.js';
 
 /**
  *
@@ -47,16 +47,16 @@ interface ScreenshotResult {
  * A worker to capture screenshot images.
  *
  **/
-export class CapturingBrowser extends StoryPreviewBrowser {
+export class CapturingBrowser extends BaseBrowser {
+  private _currentStory?: Story;
   private currentStoryRetryCount = 0;
   private viewport?: Viewport;
-  private emitter: EventEmitter;
-  private readonly processedStories = new Set<string>();
   private baseScreenshotOptions: StrictScreenshotOptions;
   private currentRequestId!: string;
   private currentVariantKey: VariantKey = { isDefault: true, keys: [] };
   private touched = false;
   private resourceWatcher!: ResourceWatcher;
+  private navigator!: StoryNavigator;
 
   /**
    *
@@ -68,17 +68,21 @@ export class CapturingBrowser extends StoryPreviewBrowser {
    *
    **/
   constructor(
-    protected connection: StorybookConnection,
+    private readonly connection: StorybookConnection,
     protected opt: MainOptions,
     private mode: RunMode,
-    idx: number,
+    private readonly idx: number,
   ) {
-    super(connection, idx, opt, opt.logger);
-    this.emitter = new EventEmitter();
-    this.emitter.on('error', e => {
-      throw e;
-    });
+    super(opt);
     this.baseScreenshotOptions = createBaseScreenshotOptions(opt);
+  }
+
+  get currentStory() {
+    return this._currentStory;
+  }
+
+  private debug(...args: unknown[]) {
+    this.opt.logger.debug(`[cid: ${this.idx}]`, ...args);
   }
 
   /**
@@ -89,8 +93,8 @@ export class CapturingBrowser extends StoryPreviewBrowser {
   async boot() {
     await super.boot();
     await this.expose();
-    await this.addStyles();
     this.resourceWatcher = new ResourceWatcher(this.page).init();
+    this.navigator = new StoryNavigator(this.page, new URL(this.connection.url), this.idx);
     return this;
   }
 
@@ -109,19 +113,11 @@ export class CapturingBrowser extends StoryPreviewBrowser {
 
   private async expose() {
     const exposed: Exposed = {
-      emitCapture: (opt: ScreenshotOptions, clientStoryKey: string) =>
-        this.subscribeScreenshotOptions(opt, clientStoryKey),
       getBaseScreenshotOptions: () => this.baseScreenshotOptions,
       getCurrentVariantKey: () => this.currentVariantKey,
       waitBrowserMetricsStable: () => this.waitBrowserMetricsStable('preEmit'),
     };
     await Promise.all(Object.entries(exposed).map(([k, f]) => this.page.exposeFunction(k, f)));
-  }
-
-  private async reload() {
-    await this.page.reload();
-    await sleep(this.opt.viewportDelay);
-    await this.addStyles();
   }
 
   private async waitIfTouched() {
@@ -144,84 +140,21 @@ export class CapturingBrowser extends StoryPreviewBrowser {
     await this.page.mouse.move(0, 0);
     await this.page.mouse.click(0, 0);
 
-    await this.setCurrentStory(story, { forceRerender: true });
+    await this.setCurrentStory(story);
     this.touched = false;
 
     return;
   }
 
-  private async subscribeScreenshotOptions(opt: ScreenshotOptions, clientStoryKey: string) {
-    if (this.touched) return;
-
-    if (!this.currentStory) {
-      this.emitter.emit('error', new InvalidCurrentStoryStateError());
-      return;
+  private async setCurrentStory(story: Story): Promise<ScreenshotOptions | undefined> {
+    this._currentStory = story;
+    this.debug('Set story', story.id);
+    await this.navigator.navigate(story.id);
+    await this.addStyles();
+    if (this.mode === 'managed') {
+      return this.navigator.waitForReady(this.opt.captureTimeout, this.opt.signal);
     }
-
-    // Sometimes preview window emits options before completion of change story.
-    // So asserts story identifiers between this class hold and sent from browser and skips procedure if they're not equal.
-    if (this.currentStory.id !== clientStoryKey) {
-      this.debug('This options was sent from previous story', this.currentStory.id, clientStoryKey);
-      return;
-    }
-
-    // Sometimes preview window emits options twice for a story.
-    // The second(or more) options should be ignore because we should guarantee just one PNG for each request.
-    if (this.processedStories.has(this.currentRequestId)) {
-      this.debug(
-        'This story was already processed:',
-        this.currentRequestId,
-        this.currentStory.kind,
-        this.currentStory.story,
-        this.currentVariantKey,
-        JSON.stringify(opt),
-      );
-      return;
-    }
-    this.processedStories.add(this.currentRequestId);
-
-    this.debug(
-      'Start to process to screenshot story:',
-      this.currentRequestId,
-      this.currentStory.kind,
-      this.currentStory.story,
-      this.currentVariantKey,
-      JSON.stringify(opt),
-    );
-
-    this.emitter.emit('screenshotOptions', opt);
-  }
-
-  private async waitForOptionsFromBrowser() {
-    return new Promise<ScreenshotOptions | undefined>((resolve, reject) => {
-      const id = setTimeout(() => {
-        this.emitter.removeAllListeners();
-        if (!this.currentStory) {
-          reject(new InvalidCurrentStoryStateError());
-          return;
-        }
-        if (this.currentStoryRetryCount < this.opt.captureMaxRetryCount) {
-          this.opt.logger.warn(
-            `Capture timeout exceeded in ${
-              this.opt.captureTimeout + ''
-            } msec. Retry to screenshot this story after this sequence.`,
-            this.currentStory.kind,
-            this.currentStory.story,
-          );
-          resolve(undefined);
-          return;
-        }
-        reject(new ScreenshotTimeoutError(this.opt.captureTimeout, this.currentStory));
-      }, this.opt.captureTimeout);
-
-      const cb = (opt?: ScreenshotOptions) => {
-        clearTimeout(id);
-        this.emitter.removeAllListeners();
-        resolve(opt);
-      };
-
-      this.emitter.once('screenshotOptions', cb);
-    });
+    return undefined;
   }
 
   private async setViewport(opt: StrictScreenshotOptions) {
@@ -262,16 +195,20 @@ export class CapturingBrowser extends StoryPreviewBrowser {
     // So we compare the current viewport with the next viewport and wait for `opt.viewportDelay` time if they are different.
     if (!this.viewport || JSON.stringify(this.viewport) !== JSON.stringify(nextViewport)) {
       this.debug('Change viewport', JSON.stringify(nextViewport));
-      await this.page.setViewport(nextViewport);
-
       // Setting isMobile or hasTouch properties will reload the page.
       // See also https://github.com/puppeteer/puppeteer/blob/main/docs/api/puppeteer.viewport.md
       const willBeReloaded =
         nextViewport.isMobile !== this.viewport?.isMobile || nextViewport.hasTouch !== this.viewport?.hasTouch;
+      if (willBeReloaded) {
+        // Avoid racing Puppeteer's implicit reload against Storybook's preview lifecycle.
+        await this.page.goto('about:blank', { waitUntil: 'domcontentloaded' });
+      }
+      await this.page.setViewport(nextViewport);
       this.viewport = nextViewport;
       if (willBeReloaded || this.opt.reloadAfterChangeViewport) {
-        this.processedStories.delete(this.currentRequestId);
-        await Promise.all([this.reload(), this.waitForOptionsFromBrowser()]);
+        // Start a fresh owned request after the viewport has settled.
+        await this.setCurrentStory(this.currentStory);
+        await sleep(this.opt.viewportDelay);
       } else {
         await sleep(this.opt.viewportDelay);
       }
@@ -283,8 +220,8 @@ export class CapturingBrowser extends StoryPreviewBrowser {
   private async warnIfTargetElementNotFound(selector: string) {
     const targetElement = await this.page.$(selector);
     if (this.currentStory && !targetElement) {
-      this.logger.warn(
-        `No matched element for "${this.logger.color.yellow(selector)}" in story "${this.currentStory.id}".`,
+      this.opt.logger.warn(
+        `No matched element for "${this.opt.logger.color.yellow(selector)}" in story "${this.currentStory.id}".`,
       );
     }
   }
@@ -335,11 +272,11 @@ export class CapturingBrowser extends StoryPreviewBrowser {
   private logInvalidVariantKeysReason(reason: InvalidVariantKeysReason | null) {
     if (reason) {
       if (reason.type === 'notFound') {
-        this.logger.warn(
+        this.opt.logger.warn(
           `Invalid variants. The variant key '${reason.to}' does not exist(story id: ${this.currentStory!.id}).`,
         );
       } else if (reason.type === 'circular') {
-        this.logger.warn(
+        this.opt.logger.warn(
           `Invalid variants. Reference ${reason.refs.join(' -> ')} is circular(story id: ${this.currentStory!.id}).`,
         );
       }
@@ -410,17 +347,22 @@ export class CapturingBrowser extends StoryPreviewBrowser {
     let defaultVariantSuffix: string | undefined;
 
     try {
-      await this.setCurrentStory(story, { forceRerender: true });
+      try {
+        emittedScreenshotOptions = await this.setCurrentStory(story);
+      } catch (error) {
+        if (error instanceof PreviewReadyTimeoutError && this.currentStoryRetryCount < this.opt.captureMaxRetryCount) {
+          this.opt.logger.warn(`${error.message} Retry to screenshot this story after this sequence.`);
+          return { buffer: null, succeeded: false, variantKeysToPush: [], defaultVariantSuffix: '' };
+        }
+        throw error;
+      }
 
       if (this.mode === 'managed') {
-        // Screenshot options are emitted form the browser process when managed mode.
-        emittedScreenshotOptions = await this.waitForOptionsFromBrowser();
         if (!this.currentStory) {
           throw new InvalidCurrentStoryStateError();
         }
         if (!emittedScreenshotOptions) {
-          // End this capturing process as failure of timeout if emitter don't resolve screenshot options.
-          return { buffer: null, succeeded: false, variantKeysToPush: [], defaultVariantSuffix: '' };
+          throw new InvalidCurrentStoryStateError();
         }
       } else {
         await sleep(this.opt.delay);

@@ -27,7 +27,7 @@ declare module 'storybook/preview-api' {
       parameterName: string;
       skipIfNoParametersOrOptions: boolean;
       wrapper: (getStory: any, context: any, args: { parameters: any; options: any }) => any;
-    }): Function;
+    }): (getStory: any, context: any) => any;
   }
 
   export const makeDecorator: MakeDecorator;

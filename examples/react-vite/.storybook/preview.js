@@ -1,8 +1,9 @@
-import { withScreenshot } from 'storyfreeze';
+import storyfreezePreview from 'storyfreeze/preview';
 
 /** @type { import('@storybook/react-vite').Preview } */
 const preview = {
-  decorators: [withScreenshot],
+  decorators: storyfreezePreview.decorators,
+  afterEach: storyfreezePreview.afterEach,
   parameters: {
     screenshot: {
       viewports: {

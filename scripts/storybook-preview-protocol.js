@@ -6,6 +6,21 @@ const { spawnSync } = require('child_process');
 
 const fixtureDir = path.resolve(process.cwd(), process.argv[2] || '.');
 const npmCli = process.env.npm_execpath;
+const managedScreenshotPaths = [
+  'Compatibility/Fixture/Console Error_LARGE.png',
+  'Compatibility/Fixture/Console Error_SMALL.png',
+  'Compatibility/Fixture/Interactions_clicked.png',
+  'Compatibility/Fixture/Interactions_LARGE.png',
+  'Compatibility/Fixture/Interactions_LARGE_focused.png',
+  'Compatibility/Fixture/Interactions_LARGE_hovered.png',
+  'Compatibility/Fixture/Interactions_SMALL.png',
+  'Compatibility/Fixture/Interactions_SMALL_focused.png',
+  'Compatibility/Fixture/Interactions_SMALL_hovered.png',
+].sort();
+const simpleScreenshotPaths = [
+  'Compatibility/Fixture/Console Error.png',
+  'Compatibility/Fixture/Interactions.png',
+].sort();
 
 function runNpm(script) {
   const command = npmCli ? process.execPath : process.platform === 'win32' ? 'npm.cmd' : 'npm';
@@ -58,8 +73,8 @@ function assertBaseline() {
   }
 }
 
-function findScreenshots() {
-  const screenshotDir = path.join(fixtureDir, '__screenshots__');
+function findScreenshots(directoryName) {
+  const screenshotDir = path.join(fixtureDir, directoryName);
   if (!fs.existsSync(screenshotDir)) {
     return [];
   }
@@ -78,6 +93,24 @@ function findScreenshots() {
     }
   }
   return screenshots;
+}
+
+function assertScreenshots(screenshots, directoryName, expectedPaths) {
+  const screenshotDir = path.join(fixtureDir, directoryName);
+  const actualPaths = screenshots.map(file => path.relative(screenshotDir, file).replaceAll('\\', '/')).sort();
+  if (JSON.stringify(actualPaths) !== JSON.stringify(expectedPaths)) {
+    throw new Error(`Unexpected screenshots: ${JSON.stringify(actualPaths)}.`);
+  }
+
+  for (const screenshot of screenshots) {
+    const png = fs.readFileSync(screenshot);
+    if (png.subarray(0, 8).toString('hex') !== '89504e470d0a1a0a') {
+      throw new Error(`${screenshot} is not a PNG file.`);
+    }
+    if (png.length < 24 || png.readUInt32BE(16) === 0 || png.readUInt32BE(20) === 0) {
+      throw new Error(`${screenshot} has invalid PNG dimensions.`);
+    }
+  }
 }
 
 function main() {
@@ -102,24 +135,42 @@ function main() {
     throw new Error('The managed Storybook 10 build must succeed after ESM packaging.');
   }
 
+  const simpleCapture = runNpm('storyfreeze:simple-dev');
+  if (simpleCapture.status !== 0) {
+    throw new Error('StoryFreeze must complete the Storybook 10 simple-mode capture.');
+  }
+  for (const fragment of ['StoryFreeze runs with simple mode', 'Shutdown storybook server', 'capturing 2 PNGs']) {
+    if (!simpleCapture.output.replace(/\\/g, '/').includes(fragment)) {
+      throw new Error(`Simple-mode capture is missing diagnostic: ${fragment}.`);
+    }
+  }
+  if (simpleCapture.output.includes('StoryFreeze runs with managed mode')) {
+    throw new Error('Simple mode unexpectedly detected the managed preview protocol.');
+  }
+  if (simpleCapture.output.includes('Error rendering story')) {
+    throw new Error('Storybook rendered an error page during simple-mode capture.');
+  }
+  assertScreenshots(findScreenshots('__screenshots__/simple'), '__screenshots__/simple', simpleScreenshotPaths);
+
   const capture = runNpm('storyfreeze:dev');
   if (capture.status !== 0) {
     throw new Error('StoryFreeze must complete the Storybook 10 capture.');
   }
-  const expectedFragments = ['StoryFreeze runs with simple mode', 'Shutdown storybook server', 'capturing 2 PNGs'];
+  const expectedFragments = ['StoryFreeze runs with managed mode', 'Shutdown storybook server', 'capturing 9 PNGs'];
   const missingFragments = expectedFragments.filter(fragment => !capture.output.replace(/\\/g, '/').includes(fragment));
   if (missingFragments.length > 0) {
     throw new Error(`StoryFreeze failed at an unexpected point. Missing: ${missingFragments.join(', ')}`);
   }
-  if (capture.output.includes('StoryFreeze runs with managed mode')) {
-    throw new Error('Managed mode unexpectedly became available; advance the compatibility assertion.');
+  if (capture.output.includes('StoryFreeze runs with simple mode')) {
+    throw new Error('Managed mode handshake was not detected on the Storybook preview.');
+  }
+  if (capture.output.includes('Error rendering story')) {
+    throw new Error('Storybook rendered an error page during capture.');
   }
 
-  const screenshots = findScreenshots();
-  if (screenshots.length !== 2) {
-    throw new Error(`Expected 2 screenshots, found ${screenshots.length}.`);
-  }
-  console.log('Observed the expected Storybook 10 managed-mode compatibility boundary.');
+  const screenshots = findScreenshots('__screenshots__/managed');
+  assertScreenshots(screenshots, '__screenshots__/managed', managedScreenshotPaths);
+  console.log('Verified the Storybook 10 simple mode and managed preview protocol.');
 }
 
 try {

@@ -75,6 +75,17 @@ try {
   );
   assertEqual(imported, 'isScreenshot,withScreenshot', 'ESM exports');
 
+  const preview = run(
+    process.execPath,
+    [
+      '--input-type=module',
+      '--eval',
+      "const preview = (await import('storyfreeze/preview')).default; process.stdout.write(Object.keys(preview).sort().join(','));",
+    ],
+    { cwd: consumerDir },
+  );
+  assertEqual(preview, 'afterEach,decorators', 'preview exports');
+
   const requireCheck = run(
     process.execPath,
     [

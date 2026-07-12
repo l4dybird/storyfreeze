@@ -83,11 +83,11 @@ describe(main, () => {
   afterEach(() => vi.restoreAllMocks());
 
   it('closes the enumeration browser and connection when story enumeration fails', async () => {
-    vi.spyOn(ManagedStorybookConnection.prototype, 'connect').mockImplementation(async function (
-      this: ManagedStorybookConnection,
-    ) {
-      return this;
-    });
+    vi.spyOn(ManagedStorybookConnection.prototype, 'connect').mockImplementation(
+      async function (this: ManagedStorybookConnection) {
+        return this;
+      },
+    );
     const disconnect = vi.spyOn(ManagedStorybookConnection.prototype, 'disconnect').mockResolvedValue(undefined);
     vi.spyOn(BaseBrowser.prototype, 'boot').mockImplementation(async function (this: BaseBrowser) {
       return this;
@@ -102,11 +102,11 @@ describe(main, () => {
   });
 
   it('disconnects after an early return when no stories match', async () => {
-    vi.spyOn(ManagedStorybookConnection.prototype, 'connect').mockImplementation(async function (
-      this: ManagedStorybookConnection,
-    ) {
-      return this;
-    });
+    vi.spyOn(ManagedStorybookConnection.prototype, 'connect').mockImplementation(
+      async function (this: ManagedStorybookConnection) {
+        return this;
+      },
+    );
     const disconnect = vi.spyOn(ManagedStorybookConnection.prototype, 'disconnect').mockResolvedValue(undefined);
     vi.spyOn(BaseBrowser.prototype, 'boot').mockImplementation(async function (this: BaseBrowser) {
       return this;
@@ -126,11 +126,11 @@ describe(main, () => {
 
   it('closes the browser and connection when interrupted during enumeration', async () => {
     const controller = new AbortController();
-    vi.spyOn(ManagedStorybookConnection.prototype, 'connect').mockImplementation(async function (
-      this: ManagedStorybookConnection,
-    ) {
-      return this;
-    });
+    vi.spyOn(ManagedStorybookConnection.prototype, 'connect').mockImplementation(
+      async function (this: ManagedStorybookConnection) {
+        return this;
+      },
+    );
     const disconnect = vi.spyOn(ManagedStorybookConnection.prototype, 'disconnect').mockResolvedValue(undefined);
     vi.spyOn(BaseBrowser.prototype, 'boot').mockImplementation(async function (this: BaseBrowser) {
       return this;

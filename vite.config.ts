@@ -3,10 +3,7 @@ import { defineConfig } from 'vite-plus';
 export default defineConfig({
   test: {
     environment: 'node',
-    include: [
-      'packages/storyfreeze/src/**/__tests__/*.{ts,tsx}',
-      'packages/storyfreeze/src/**/*.test.{ts,tsx}',
-    ],
+    include: ['packages/storyfreeze/src/**/__tests__/*.{ts,tsx}', 'packages/storyfreeze/src/**/*.test.{ts,tsx}'],
   },
   lint: {
     categories: {
@@ -36,6 +33,20 @@ export default defineConfig({
       'no-use-before-define': 'error',
       'typescript/no-namespace': 'error',
     },
+  },
+  fmt: {
+    ignorePatterns: ['examples/**'],
+    trailingComma: 'all',
+    tabWidth: 2,
+    semi: true,
+    singleQuote: true,
+    bracketSpacing: true,
+    printWidth: 120,
+    arrowParens: 'avoid',
+    sortPackageJson: false,
+  },
+  staged: {
+    '*': 'vp fmt --write',
   },
   run: {
     tasks: {

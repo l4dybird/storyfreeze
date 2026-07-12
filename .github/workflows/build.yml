@@ -36,6 +36,8 @@ jobs:
           restore-keys: |
             vite-task-${{ runner.os }}-${{ runner.arch }}-node-${{ matrix.node-version }}-
       - run: pnpm baseline:verify
+      - run: pnpm format:check
+        if: matrix.node-version == '22.18.0'
       - run: pnpm build
       - run: pnpm test
         env:

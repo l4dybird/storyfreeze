@@ -78,7 +78,7 @@ function isChromiumProcess(process) {
 }
 
 function isChromiumBrowserRoot(process) {
-  return isChromiumProcess(process) && !process.argv.some(argument => argument.startsWith('--type='));
+  return isChromiumProcess(process) && !process.argv.some(argument => /(?:^|\s)--type=/.test(argument));
 }
 
 function countPngs(directory) {
@@ -165,7 +165,7 @@ function measureCapture(iteration, warmup) {
       }
 
       const reportedCaptureMs = Number(
-        stdout.match(/Screenshot was ended successfully in (\d+) msec capturing/)?.[1] || 0,
+        `${stdout}\n${stderr}`.match(/Screenshot was ended successfully in (\d+) msec capturing/)?.[1] || 0,
       );
       resolve({
         iteration,

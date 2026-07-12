@@ -147,6 +147,40 @@ describe(CapturingBrowser, () => {
     expect(close).toHaveBeenCalledTimes(1);
     expect(unsubscribe).toHaveBeenCalledTimes(1);
   });
+
+  it('removes the console listener without stopping a trace that failed to start', async () => {
+    const options = {
+      captureMaxRetryCount: 1,
+      delay: 0,
+      disableWaitAssets: false,
+      metricsWatchRetryCount: 3,
+      viewports: ['800x600'],
+    } as unknown as MainOptions;
+    const browser = new CapturingBrowser({ url: 'invalid' } as ManagedStorybookConnection, options, 'managed', 0);
+    const unsubscribe = vi.fn();
+    const page = {
+      startTrace: vi.fn(async () => Promise.reject(new Error('trace start failed'))),
+      stopTrace: vi.fn(async () => Buffer.from('trace')),
+      subscribeConsole: vi.fn(() => unsubscribe),
+    };
+    vi.spyOn(BaseBrowser.prototype, 'page', 'get').mockReturnValue(page as never);
+    Object.assign(browser, { resourceWatcher: { clear: vi.fn() } });
+
+    await expect(
+      browser.screenshot(
+        'fixture--default',
+        { id: 'fixture--default', kind: 'Fixture', story: 'Default', version: 'v5' },
+        { isDefault: true, keys: [] },
+        0,
+        new Logger('silent'),
+        false,
+        true,
+        { saveTrace: vi.fn() } as never,
+      ),
+    ).rejects.toThrow('trace start failed');
+    expect(unsubscribe).toHaveBeenCalledTimes(1);
+    expect(page.stopTrace).not.toHaveBeenCalled();
+  });
 });
 
 describe(main, () => {

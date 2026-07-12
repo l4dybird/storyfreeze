@@ -22,7 +22,6 @@ import {
   ChromiumNotFoundError,
   type BrowserBackend,
   type BrowserConsoleMessage,
-  type BrowserDeviceDescriptor,
   type BrowserInstance,
   type BrowserLaunchOptions,
   type BrowserMetrics,
@@ -211,6 +210,7 @@ export async function findChrome(options: FindChromeOptions): Promise<FindChrome
 
 export class PuppeteerCapturePage implements CapturePage {
   private readonly requests = new WeakMap<HTTPRequest, BrowserRequest>();
+  private traceState: 'idle' | 'starting' | 'active' | 'stopping' | 'failed' = 'idle';
 
   constructor(private readonly rawPage: Page) {}
 
@@ -288,12 +288,32 @@ export class PuppeteerCapturePage implements CapturePage {
     return this.rawPage.setViewport(viewport);
   }
 
-  startTrace() {
-    return this.rawPage.tracing.start();
+  async startTrace() {
+    if (this.traceState === 'failed') {
+      throw new Error('The Chromium trace state is unavailable. Close the browser before tracing again.');
+    }
+    if (this.traceState !== 'idle') throw new Error('A Chromium trace is already running.');
+    this.traceState = 'starting';
+    try {
+      await this.rawPage.tracing.start();
+      this.traceState = 'active';
+    } catch (error) {
+      this.traceState = 'idle';
+      throw error;
+    }
   }
 
-  stopTrace() {
-    return this.rawPage.tracing.stop();
+  async stopTrace() {
+    if (this.traceState !== 'active') throw new Error('A Chromium trace has not been started.');
+    this.traceState = 'stopping';
+    try {
+      const trace = await this.rawPage.tracing.stop();
+      this.traceState = 'idle';
+      return trace;
+    } catch (error) {
+      this.traceState = 'failed';
+      throw error;
+    }
   }
 
   subscribeConsole(listener: (message: BrowserConsoleMessage) => void) {
@@ -360,10 +380,6 @@ class PuppeteerBrowserInstance implements BrowserInstance {
 
 export class PuppeteerBrowserBackend implements BrowserBackend {
   readonly name = 'puppeteer';
-
-  devices(): readonly BrowserDeviceDescriptor[] {
-    return Object.values(puppeteerCore.devices);
-  }
 
   protected locateChrome(options: FindChromeOptions) {
     return findChrome(options);

@@ -11,6 +11,7 @@ import {
 import { renderHeader } from 'gunshi/renderer';
 import { time } from './async-utils.js';
 import { puppeteerBrowserBackend } from './browser.js';
+import { browserDeviceDescriptors } from './browser-device-registry.js';
 import {
   browserBackendNames,
   type BrowserBackend,
@@ -27,7 +28,7 @@ const packageVersion = (
   JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as { version: string }
 ).version;
 
-const defaultPuppeteerLaunchConfig =
+const defaultBrowserLaunchOptions =
   '{ "args": ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"] }';
 const chromiumChannels = ['puppeteer', 'canary', 'stable', '*'] as const;
 
@@ -113,10 +114,13 @@ const storyfreezeCommandArgs = {
     default: 'puppeteer',
     description: 'Browser automation backend.',
   },
+  browserLaunchOptions: {
+    type: 'string',
+    description: `JSON string of browser launch options. (default: ${defaultBrowserLaunchOptions})`,
+  },
   puppeteerLaunchConfig: {
     type: 'string',
-    default: defaultPuppeteerLaunchConfig,
-    description: 'JSON string of launch config for Puppeteer.',
+    description: 'Deprecated alias for --browser-launch-options.',
   },
 } as const;
 
@@ -148,7 +152,8 @@ export interface StoryfreezeCliValues {
   chromiumChannel: ChromeChannel;
   chromiumPath: string;
   browserBackend: BrowserBackendName;
-  puppeteerLaunchConfig: string;
+  browserLaunchOptions?: string;
+  puppeteerLaunchConfig?: string;
 }
 
 export interface SignalHost {
@@ -216,7 +221,12 @@ function toMainOptions(
   logger = createLogger(values),
   env: NodeJS.ProcessEnv = process.env,
 ): MainOptions {
-  const parsedLaunchOptions = JSON.parse(values.puppeteerLaunchConfig) as BrowserLaunchOptions;
+  if (values.browserLaunchOptions !== undefined && values.puppeteerLaunchConfig !== undefined) {
+    throw new Error('--browser-launch-options and --puppeteer-launch-config cannot be used together.');
+  }
+  const parsedLaunchOptions = JSON.parse(
+    values.browserLaunchOptions ?? values.puppeteerLaunchConfig ?? defaultBrowserLaunchOptions,
+  ) as BrowserLaunchOptions;
   return {
     serverOptions: {
       storybookUrl: values.storybookUrl,
@@ -261,6 +271,11 @@ function logError(logger: Logger, error: unknown) {
 
 async function execute(values: StoryfreezeCliValues, dependencies: CliDependencies): Promise<number> {
   const logger = createLogger(values);
+  if (values.listDevices) {
+    browserDeviceDescriptors.forEach(device => logger.log(device.name, JSON.stringify(device.viewport)));
+    return 0;
+  }
+
   let browserBackend: BrowserBackend;
   try {
     browserBackend = await dependencies.resolveBrowserBackend(values.browserBackend);
@@ -269,17 +284,15 @@ async function execute(values: StoryfreezeCliValues, dependencies: CliDependenci
     return 1;
   }
 
-  if (values.listDevices) {
-    browserBackend.devices().forEach(device => logger.log(device.name, JSON.stringify(device.viewport)));
-    return 0;
-  }
-
   let opt: MainOptions;
   try {
     opt = toMainOptions(values, logger, dependencies.env);
   } catch (error) {
     logError(logger, error);
     return 1;
+  }
+  if (values.puppeteerLaunchConfig !== undefined) {
+    logger.warn('--puppeteer-launch-config is deprecated. Use --browser-launch-options instead.');
   }
 
   const { logger: _, ...rest } = opt;

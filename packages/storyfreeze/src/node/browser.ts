@@ -8,6 +8,7 @@ import {
   type CapturePage,
 } from './browser-backend.js';
 import { puppeteerBrowserBackend } from './puppeteer-browser-backend.js';
+import { browserDeviceDescriptors } from './browser-device-registry.js';
 
 export { ChromiumNotFoundError } from './browser-backend.js';
 export type { ChromeChannel } from './browser-backend.js';
@@ -36,7 +37,7 @@ export class BaseBrowser {
   }
 
   protected getDeviceDescriptors() {
-    return this.backend.devices();
+    return browserDeviceDescriptors;
   }
 
   async boot() {
@@ -134,5 +135,5 @@ export class MetricsWatcher {
 }
 
 export function getDeviceDescriptors() {
-  return puppeteerBrowserBackend.devices();
+  return browserDeviceDescriptors;
 }

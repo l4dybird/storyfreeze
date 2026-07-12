@@ -45,7 +45,10 @@ describe(runCli, () => {
       chromiumPath: '',
     });
     expect(received?.logger.level).toBe('silent');
-    expect(received?.launchOptions?.headless).toBe(true);
+    expect(received?.launchOptions).toEqual({
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+      headless: true,
+    });
     expect(main).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ browserBackend: expect.objectContaining({ name: 'puppeteer' }) }),
@@ -53,7 +56,7 @@ describe(runCli, () => {
   });
 
   it('selects the Playwright backend without changing the default parallelism', async () => {
-    const backend = { name: 'playwright', devices: () => [] } as unknown as BrowserBackend;
+    const backend = { name: 'playwright' } as unknown as BrowserBackend;
     const resolveBrowserBackend = vi.fn(async () => backend);
     const main = vi.fn(async (_options: MainOptions) => 0);
 
@@ -138,6 +141,8 @@ describe(runCli, () => {
         '10',
         '--reload-after-change-viewport',
         '--forward-console-logs',
+        '--browser-launch-options',
+        '{"args":["--custom"],"headless":false}',
       ],
       { main },
     );
@@ -152,6 +157,7 @@ describe(runCli, () => {
       stateChangeDelay: 10,
       reloadAfterChangeViewport: true,
       forwardConsoleLogs: true,
+      launchOptions: { args: ['--custom'], headless: false },
     });
     expect(received?.logger.level).toBe('verbose');
   });
@@ -165,6 +171,17 @@ describe(runCli, () => {
 
     await expect(runCli(['--silent', '--no-disable-css-animation'], { main })).resolves.toBe(0);
     expect(received?.disableCssAnimation).toBe(false);
+  });
+
+  it('accepts the deprecated Puppeteer launch alias and warns once', async () => {
+    const main = vi.fn(async (_options: MainOptions) => 0);
+
+    await expect(runCli(['--puppeteer-launch-config', '{"args":["--legacy"]}'], { main })).resolves.toBe(0);
+
+    expect(main.mock.calls[0][0].launchOptions).toEqual({ args: ['--legacy'], headless: true });
+    expect(error.mock.calls.flat().join(' ')).toContain(
+      '--puppeteer-launch-config is deprecated. Use --browser-launch-options instead.',
+    );
   });
 
   it.each([
@@ -207,6 +224,8 @@ describe(runCli, () => {
   it.each([
     ['invalid shard', ['--silent', '--shard', '2/1']],
     ['invalid launch JSON', ['--silent', '--puppeteer-launch-config', '{']],
+    ['invalid browser launch JSON', ['--silent', '--browser-launch-options', '{']],
+    ['conflicting launch options', ['--silent', '--browser-launch-options', '{}', '--puppeteer-launch-config', '{}']],
     ['extra positional', ['--silent', 'https://one.test', 'https://two.test']],
   ])('returns 1 for %s', async (_label, args) => {
     const main = vi.fn(async (_options: MainOptions) => 0);
@@ -218,28 +237,15 @@ describe(runCli, () => {
 
   it('lists devices without calling main', async () => {
     const main = vi.fn(async (_options: MainOptions) => 0);
-    const devices = vi.fn(() => [
-      {
-        name: 'Test Phone',
-        viewport: { width: 320, height: 640, deviceScaleFactor: 1, isMobile: true, hasTouch: true },
-      },
-    ]);
-    const resolveBrowserBackend = vi.fn(
-      async () =>
-        ({
-          name: 'playwright',
-          devices,
-        }) as unknown as BrowserBackend,
-    );
+    const resolveBrowserBackend = vi.fn(async () => ({ name: 'playwright' }) as unknown as BrowserBackend);
 
     await expect(
       runCli(['--list-devices', '--browser-backend', 'playwright'], { main, resolveBrowserBackend }),
     ).resolves.toBe(0);
 
     expect(main).not.toHaveBeenCalled();
-    expect(resolveBrowserBackend).toHaveBeenCalledWith('playwright');
-    expect(devices).toHaveBeenCalledTimes(1);
-    expect(log.mock.calls.flat().join(' ')).toContain('Test Phone');
+    expect(resolveBrowserBackend).not.toHaveBeenCalled();
+    expect(log.mock.calls.flat().join(' ')).toContain('iPad');
   });
 
   it.each([

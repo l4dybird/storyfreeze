@@ -179,7 +179,7 @@ export class CapturingBrowser extends BaseBrowser {
         const [w, h] = opt.viewport.split('x');
         nextViewport = { width: +w, height: +h };
       } else {
-        // Handle as Puppeteer device descriptor.
+        // Handle as a StoryFreeze device descriptor.
         const hit = this.getDeviceDescriptors().find(d => d.name === opt.viewport);
         if (!hit) {
           this.opt.logger.warn(
@@ -187,7 +187,7 @@ export class CapturingBrowser extends BaseBrowser {
               JSON.stringify(this.currentStory),
             )} because the viewport ${this.opt.logger.color.magenta(
               opt.viewport,
-            )} is not registered in 'puppeteer/DeviceDescriptor'.`,
+            )} is not registered in the StoryFreeze device registry.`,
           );
           return false;
         }
@@ -342,16 +342,17 @@ export class CapturingBrowser extends BaseBrowser {
     }
 
     const unsubscribeConsole = this.page.subscribeConsole(onConsoleLog);
-
-    if (trace) {
-      // Begin CPU trace, don't write to file, store it in memory
-      await this.page.startTrace();
-    }
-
-    // Capture this outside so it can be used for the filePath generation for the trace
+    let traceStarted = false;
+    // Capture this outside so it can be used for the filePath generation for the trace.
     let defaultVariantSuffix: string | undefined;
 
     try {
+      if (trace) {
+        // Begin CPU trace, don't write to file, store it in memory.
+        await this.page.startTrace();
+        traceStarted = true;
+      }
+
       try {
         emittedScreenshotOptions = await this.setCurrentStory(story);
       } catch (error) {
@@ -433,7 +434,7 @@ export class CapturingBrowser extends BaseBrowser {
     } finally {
       unsubscribeConsole();
 
-      if (trace) {
+      if (traceStarted) {
         // Finish CPU trace.
         const traceBuffer = await this.page.stopTrace();
 

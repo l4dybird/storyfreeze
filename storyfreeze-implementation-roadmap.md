@@ -837,7 +837,7 @@ PR-510着手前にブラウザ配布方針をADRで決める。
 - timeout率
 - browser crash率
 - wall time
-- story単位p50/p95
+- capture request単位p50/p95
 - peak RSSまたはcgroup memory
 - CPU time
 - child process数
@@ -915,7 +915,7 @@ Context modeをdefaultにする目標:
 
 - process mode比でpeak memoryを20%以上削減
 - wall timeを悪化させない
-- p95 story timeを5%以上悪化させない
+- p95 capture request timeを5%以上悪化させない
 - failure/retry率を悪化させない
 - browser process数を削減
 

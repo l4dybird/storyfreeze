@@ -30,6 +30,20 @@ function run(command, args, options = {}) {
   return result.stdout.trim();
 }
 
+function runFailure(command, args, options = {}) {
+  const result = spawnSync(command, args, {
+    cwd: options.cwd || rootDir,
+    encoding: 'utf8',
+    env: { ...process.env, STORYBOOK_DISABLE_TELEMETRY: '1' },
+    maxBuffer: 20 * 1024 * 1024,
+    shell: process.platform === 'win32' && /\.(cmd|bat)$/.test(command),
+    timeout: options.timeout || 120000,
+  });
+  if (result.error) throw result.error;
+  if (result.status === 0) throw new Error(`${command} unexpectedly exited successfully.`);
+  return `${result.stdout || ''}${result.stderr || ''}`;
+}
+
 function runNpm(args, cwd) {
   const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
   return run(npmCommand, args, { cwd, timeout: 180000 });
@@ -66,6 +80,9 @@ try {
 
   const installedPackageDir = path.join(consumerDir, 'node_modules', 'storyfreeze');
   const installedMetadata = JSON.parse(fs.readFileSync(path.join(installedPackageDir, 'package.json'), 'utf8'));
+  if (!installedMetadata.dependencies?.gunshi || installedMetadata.dependencies?.yargs) {
+    throw new Error('The installed package did not replace its direct yargs dependency with gunshi.');
+  }
   if (
     installedMetadata.dependencies?.storycrawler ||
     fs.existsSync(path.join(consumerDir, 'node_modules', 'storycrawler'))
@@ -117,8 +134,13 @@ try {
   assertEqual(version, packResult.version, 'CLI version');
 
   const help = run(cliPath, ['--help'], { cwd: consumerDir });
-  if (!help.includes('usage: storyfreeze [options] storybook_url')) {
-    throw new Error('CLI help did not contain the expected usage line.');
+  if (!help.includes('USAGE:') || !help.includes('--server-cmd')) {
+    throw new Error('CLI help did not contain the expected Gunshi usage and kebab-case options.');
+  }
+
+  const invalid = runFailure(cliPath, ['--serverCmd', 'echo nope'], { cwd: consumerDir });
+  if (!invalid.includes('Unknown option: --serverCmd')) {
+    throw new Error('CLI did not reject a legacy camelCase option in strict mode.');
   }
 
   console.log(`Package smoke passed for ${packResult.id} with ${actualFiles.length} files.`);

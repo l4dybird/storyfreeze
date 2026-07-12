@@ -68,7 +68,7 @@ It is primarily responsible for image generation necessary for Visual Testing su
 
 ## Install
 
-StoryFreeze requires Node.js 20.19 or newer and Storybook 10. The package is
+StoryFreeze requires Node.js 22 or newer and Storybook 10. The package is
 ESM-only: use `import` or dynamic `import()`. CommonJS `require('storyfreeze')`
 is not supported.
 
@@ -94,17 +94,17 @@ With the simple mode, you don't need to configure your Storybook. All you need i
 $ npx storyfreeze http://localhost:9001
 ```
 
-You can launch your server via `--serverCmd` option.
+You can launch your server via `--server-cmd` option.
 
 ```sh
-$ storyfreeze --serverCmd "start-storybook -p 9001" http://localhost:9001
+$ storyfreeze --server-cmd "start-storybook -p 9001" http://localhost:9001
 ```
 
 Of course, you can use pre-built Storybook:
 
 ```sh
 $ build-storybook -o dist-storybook
-$ storyfreeze --serverCmd "npx http-server dist-storybook -p 9001" http://localhost:9001
+$ storyfreeze --server-cmd "npx http-server dist-storybook -p 9001" http://localhost:9001
 ```
 
 Also, StoryFreeze can crawls built and hosted Storybook pages:
@@ -190,10 +190,10 @@ $ npx start-storybook -p 9009
 $ npx storyfreeze http://localhost:9009
 ```
 
-Or you can exec with one-liner via `--serverCmd` option:
+Or you can exec with one-liner via `--server-cmd` option:
 
 ```sh
-$ npx storyfreeze http://localhost:9009 --serverCmd "start-storybook -p 9009"
+$ npx storyfreeze http://localhost:9009 --server-cmd "start-storybook -p 9009"
 ```
 
 ## API
@@ -326,49 +326,50 @@ Returns whether current process runs in StoryFreeze browser. It's useful to chan
 <!-- inject:clihelp -->
 
 ```txt
-usage: storyfreeze [options] storybook_url
+storyfreeze (storyfreeze v0.1.0-alpha.0)
+USAGE:
+  storyfreeze <OPTIONS> [<storybook-url>]
 
-Options:
-      --help                       Show help                                                                   [boolean]
-      --version                    Show version number                                                         [boolean]
-  -o, --outDir                     Output directory.                               [string] [default: "__screenshots__"]
-  -p, --parallel                   Number of browsers to screenshot.                               [number] [default: 4]
-  -f, --flat                       Flatten output filename.                                   [boolean] [default: false]
-  -i, --include                    Including stories name rule.                                    [array] [default: []]
-  -e, --exclude                    Excluding stories name rule.                                    [array] [default: []]
-      --delay                      Waiting time [msec] before screenshot for each story.           [number] [default: 0]
-  -V, --viewport                   Viewport.                                              [array] [default: ["800x600"]]
-      --disableCssAnimation        Disable CSS animation and transition.                       [boolean] [default: true]
-      --disableWaitAssets          Disable waiting for requested assets                       [boolean] [default: false]
-      --trace                      Emit Chromium trace files per screenshot.                  [boolean] [default: false]
-      --silent                                                                                [boolean] [default: false]
-      --verbose                                                                               [boolean] [default: false]
-      --forwardConsoleLogs         Forward in-page console logs to the user's console.        [boolean] [default: false]
-      --serverCmd                  Command line to launch Storybook server.                       [string] [default: ""]
-      --serverTimeout              Timeout [msec] for starting Storybook server.               [number] [default: 60000]
-      --shard                      The sharding options for this run. In the format <shardNumber>/<totalShards>. <shardN
-                                   umber> is a number between 1 and <totalShards>. <totalShards> is the total number of
-                                   computers working.                                          [string] [default: "1/1"]
-      --captureTimeout             Timeout [msec] for capture a story.                          [number] [default: 5000]
-      --captureMaxRetryCount       Number of count to retry to capture.                            [number] [default: 3]
-      --metricsWatchRetryCount     Number of count to retry until browser metrics stable.       [number] [default: 1000]
-      --viewportDelay              Delay time [msec] between changing viewport and capturing.    [number] [default: 300]
-      --reloadAfterChangeViewport  Whether to reload after viewport changed.                  [boolean] [default: false]
-      --stateChangeDelay           Delay time [msec] after changing element's state.               [number] [default: 0]
-      --listDevices                List available device descriptors.                         [boolean] [default: false]
-  -C, --chromiumChannel            Channel to search local Chromium. One of "puppeteer", "canary", "stable", "*"
-                                                                                                 [string] [default: "*"]
-      --chromiumPath               Executable Chromium path.                                      [string] [default: ""]
-      --puppeteerLaunchConfig      JSON string of launch config for Puppeteer.
-               [string] [default: "{ "args": ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"] }"]
+ARGUMENTS:
+  storybook-url           Storybook URL.
 
-Examples:
+OPTIONS:
+  -h, --help                                                       Display this help message
+  -v, --version                                                    Display this version
+  -o, --out-dir [out-dir]                                          Output directory. (default: __screenshots__)
+  -p, --parallel [parallel]                                        Number of browsers to screenshot. (default: 4)
+  -f, --flat                                                       Flatten output filename. (default: false)
+  -i, --include <include>                                          Including stories name rule.
+  -e, --exclude <exclude>                                          Excluding stories name rule.
+  --delay <delay>                                                  Waiting time [msec] before screenshot for each story. (default: 0)
+  -V, --viewport <viewport>                                        Viewport. (default: 800x600)
+  --disable-css-animation                                          Disable CSS animation and transition. (default: true)
+  --no-disable-css-animation                                       Negatable of --disable-css-animation
+  --disable-wait-assets                                            Disable waiting for requested assets. (default: false)
+  --trace                                                          Emit Chromium trace files per screenshot. (default: false)
+  --silent                                                         Suppress StoryFreeze output. (default: false)
+  --verbose                                                        Enable verbose StoryFreeze output. (default: false)
+  --forward-console-logs                                           Forward in-page console logs to the user's console. (default: false)
+  --server-cmd <server-cmd>                                        Command line to launch Storybook server. (default: )
+  --server-timeout [server-timeout]                                Timeout [msec] for starting Storybook server. (default: 60000)
+  --shard [shard]                                                  The sharding options for this run. In the format <shardNumber>/<totalShards>. <shardNumber> is a number between 1 and <totalShards>. <totalShards> is the total number of computers working. (default: 1/1)
+  --capture-timeout [capture-timeout]                              Timeout [msec] for capturing a story. (default: 5000)
+  --capture-max-retry-count [capture-max-retry-count]              Number of times to retry capture. (default: 3)
+  --metrics-watch-retry-count [metrics-watch-retry-count]          Number of times to retry until browser metrics are stable. (default: 1000)
+  --viewport-delay [viewport-delay]                                Delay time [msec] between changing viewport and capturing. (default: 300)
+  --reload-after-change-viewport                                   Whether to reload after viewport changed. (default: false)
+  --state-change-delay <state-change-delay>                        Delay time [msec] after changing element's state. (default: 0)
+  --list-devices                                                   List available device descriptors. (default: false)
+  -C, --chromium-channel [chromium-channel]                        Channel to search local Chromium. (default: *, choices: puppeteer | canary | stable | *)
+  --chromium-path <chromium-path>                                  Executable Chromium path. (default: )
+  --puppeteer-launch-config [puppeteer-launch-config]              JSON string of launch config for Puppeteer. (default: { "args": ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"] })
+
+EXAMPLES:
   storyfreeze http://localhost:9009
   storyfreeze http://localhost:9009 -V 1024x768 -V 320x568
   storyfreeze http://localhost:9009 -i "some-kind/a-story"
   storyfreeze http://example.com/your-storybook -e "**/default" -V iPad
-  storyfreeze --serverCmd "start-storybook -p 3000" http://localhost:3000
-
+  storyfreeze --server-cmd "start-storybook -p 3000" http://localhost:3000
 ```
 
 <!-- endinject -->
@@ -570,7 +571,7 @@ StoryFreeze searches Chromium binary in the following order:
 1. Canary Chrome installed locally
 1. Stable Chrome installed locally
 
-You can change search channel with `--chromiumChannel` option or set executable Chromium file path with `--chromiumPath` option.
+You can change search channel with `--chromium-channel` option or set executable Chromium file path with `--chromium-path` option.
 
 ## Storybook compatibility
 

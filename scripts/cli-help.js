@@ -2,20 +2,29 @@
 
 const fs = require('fs');
 const path = require('path');
-const { execSync } = require('child_process');
 
 const mark = '```';
 
-const readme = fs.readFileSync(path.join(__dirname, '../README.md'), 'utf8');
-
-const [head, tmp] = readme.split('<!-- inject:clihelp -->');
-const [_, tail] = tmp.split('<!-- endinject -->');
-
-const help = execSync('node packages/storyfreeze/dist/node/cli.js --help');
-const out = `${head}<!-- inject:clihelp -->
+async function main() {
+  const readmePath = path.join(__dirname, '../README.md');
+  const readme = fs.readFileSync(readmePath, 'utf8');
+  const [head, tmp] = readme.split('<!-- inject:clihelp -->');
+  const [, tail] = tmp.split('<!-- endinject -->');
+  const [{ generate }, { storyfreezeCommand, storyfreezeCliOptions }] = await Promise.all([
+    import('gunshi/generator'),
+    import('../packages/storyfreeze/dist/node/cli-command.js'),
+  ]);
+  const help = await generate(null, storyfreezeCommand, storyfreezeCliOptions);
+  const out = `${head}<!-- inject:clihelp -->
 ${mark}txt
-${help}
+${help.trimEnd()}
 ${mark}
 <!-- endinject -->${tail}`;
 
-fs.writeFileSync(path.join(__dirname, '../README.md'), out, 'utf8');
+  fs.writeFileSync(readmePath, out, 'utf8');
+}
+
+main().catch(error => {
+  console.error(error);
+  process.exitCode = 1;
+});

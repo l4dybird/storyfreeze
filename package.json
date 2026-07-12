@@ -1,6 +1,9 @@
 {
   "name": "storyfreeze-root",
   "private": true,
+  "engines": {
+    "node": ">=22"
+  },
   "packageManager": "yarn@1.22.22",
   "scripts": {
     "clean": "lerna run clean",

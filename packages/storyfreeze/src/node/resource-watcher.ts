@@ -1,4 +1,4 @@
-import type { HTTPRequest, Page } from 'puppeteer-core';
+import type { BrowserRequest, CapturePage } from './browser-backend.js';
 
 // Derived from storycrawler. Copyright (c) 2019 reg-viz, MIT licensed.
 // https://github.com/reg-viz/storycap/tree/master/packages/storycrawler
@@ -13,14 +13,15 @@ type InFlightRequest = {
 const ignoredResourceTypes = new Set(['media', 'texttrack', 'websocket', 'eventsource', 'other']);
 
 export class ResourceWatcher {
-  private inFlight = new Map<HTTPRequest, InFlightRequest>();
+  private inFlight = new Map<BrowserRequest, InFlightRequest>();
   private requestedAssetUrls = new Set<string>();
+  private unsubscribe?: () => void;
 
-  constructor(private page: Page) {}
+  constructor(private page: Pick<CapturePage, 'subscribeRequests'>) {}
 
-  private onRequest = (request: HTTPRequest) => {
-    const url = request.url();
-    if (request.method() !== 'GET' || ignoredResourceTypes.has(request.resourceType()) || !url.startsWith('http')) {
+  private onRequest = (request: BrowserRequest) => {
+    const url = request.url;
+    if (request.method !== 'GET' || ignoredResourceTypes.has(request.resourceType) || !url.startsWith('http')) {
       return;
     }
 
@@ -30,7 +31,7 @@ export class ResourceWatcher {
     this.inFlight.set(request, { resolve, resolved });
   };
 
-  private onRequestComplete = (request: HTTPRequest) => {
+  private onRequestComplete = (request: BrowserRequest) => {
     const metadata = this.inFlight.get(request);
     if (!metadata) return;
     this.inFlight.delete(request);
@@ -38,16 +39,16 @@ export class ResourceWatcher {
   };
 
   init() {
-    this.page.on('request', this.onRequest);
-    this.page.on('requestfinished', this.onRequestComplete);
-    this.page.on('requestfailed', this.onRequestComplete);
+    this.unsubscribe = this.page.subscribeRequests({
+      finished: this.onRequestComplete,
+      started: this.onRequest,
+    });
     return this;
   }
 
   dispose() {
-    this.page.off('request', this.onRequest);
-    this.page.off('requestfinished', this.onRequestComplete);
-    this.page.off('requestfailed', this.onRequestComplete);
+    this.unsubscribe?.();
+    this.unsubscribe = undefined;
     this.clear();
   }
 

@@ -1,4 +1,3 @@
-import type { Page } from 'puppeteer-core';
 import { describe, expect, it, vi } from 'vite-plus/test';
 import {
   STORYFREEZE_ADDON_VERSION,
@@ -27,8 +26,8 @@ function pageWithState(getState: () => unknown) {
   return {
     goto: vi.fn(async () => null),
     evaluate: vi.fn(async () => getState()),
-    url: vi.fn(() => 'https://example.test/storybook/iframe.html'),
-  } as unknown as Page;
+    currentUrl: vi.fn(() => 'https://example.test/storybook/iframe.html'),
+  };
 }
 
 describe(createStoryPreviewUrl, () => {

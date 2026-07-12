@@ -71,3 +71,13 @@ export interface Exposed {
   getCurrentVariantKey(): VariantKey;
   waitBrowserMetricsStable(): Promise<void>;
 }
+
+export type PreviewCaptureDiagnostic = {
+  type: 'idle-wait';
+  didTimeout: boolean;
+  elapsedMs: number;
+  requestId: string;
+  storyId: string;
+  variantKey: string[];
+  visibilityState: DocumentVisibilityState;
+};

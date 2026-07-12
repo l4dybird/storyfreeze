@@ -14,9 +14,24 @@ const failureArtifactDir = outputFile
   ? path.join(path.dirname(outputFile), `${path.basename(outputFile, '.json')}-failures`)
   : undefined;
 const sampleIntervalMs = 50;
-const parallel = 4;
-const measuredRuns = 3;
-const warmupRuns = 1;
+const benchmarkProfiles = {
+  pr: { measuredRuns: 3, warmupRuns: 1 },
+  record: { measuredRuns: 10, warmupRuns: 2 },
+};
+const benchmarkProfile = process.env.STORYFREEZE_BENCHMARK_PROFILE || 'pr';
+if (!Object.hasOwn(benchmarkProfiles, benchmarkProfile)) {
+  throw new Error(`Unknown browser benchmark profile: ${benchmarkProfile}`);
+}
+const { measuredRuns, warmupRuns } = benchmarkProfiles[benchmarkProfile];
+const parallel = Number(process.env.STORYFREEZE_BENCHMARK_PARALLEL || 4);
+if (![1, 2, 4].includes(parallel)) throw new Error(`Unsupported benchmark parallel value: ${parallel}`);
+const startingBackend = process.env.STORYFREEZE_BENCHMARK_START_BACKEND || 'puppeteer';
+if (!['puppeteer', 'playwright'].includes(startingBackend)) {
+  throw new Error(`Unsupported starting backend: ${startingBackend}`);
+}
+const includeTrace = process.env.STORYFREEZE_BENCHMARK_TRACE
+  ? process.env.STORYFREEZE_BENCHMARK_TRACE === 'true'
+  : benchmarkProfile === 'pr';
 const expectedStoryCount = 2;
 const expectedPngCount = 9;
 const benchmarkExclude = 'Compatibility/Fixture/Retry';
@@ -24,6 +39,7 @@ const traceStoryCount = 1;
 const tracePngCount = 2;
 const traceInclude = 'Compatibility/Fixture/Console Error';
 const backends = ['puppeteer', 'playwright'];
+const captureDiagnosticPrefix = 'STORYFREEZE_CAPTURE_DIAGNOSTIC=';
 const launchOptions = {
   args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
 };
@@ -142,6 +158,23 @@ function parseCaptureLog(log) {
   const storyDurationsMs = [...plainLog.matchAll(/Screenshot stored: .*? in (\d+) msec\./g)].map(match =>
     Number(match[1]),
   );
+  const captureDiagnostics = plainLog
+    .split(/\r?\n/)
+    .filter(line => line.startsWith(captureDiagnosticPrefix))
+    .map(line => JSON.parse(line.slice(captureDiagnosticPrefix.length)));
+  for (const output of captureDiagnostics.filter(event => event.type === 'capture-output')) {
+    const context = captureDiagnostics.find(
+      event =>
+        event.type === 'capture-complete' &&
+        event.requestId === output.requestId &&
+        event.retryCount === output.retryCount &&
+        JSON.stringify(event.variantKey) === JSON.stringify(output.variantKey),
+    );
+    if (context) {
+      output.backend = context.backend;
+      output.workerId = context.workerId;
+    }
+  }
   return {
     storyCount: storyCounts.at(-1) ?? 0,
     storyDurationsMs,
@@ -151,6 +184,7 @@ function parseCaptureLog(log) {
       plainLog,
       /(?:Target closed|Failed to launch the browser process|browser process.*crash)/gi,
     ),
+    captureDiagnostics,
   };
 }
 
@@ -176,6 +210,9 @@ function measureCapture({
   include,
   iteration,
   label,
+  pairStartingBackend,
+  positionInPair,
+  sequenceIndex,
   trace = false,
 }) {
   if (process.platform !== 'linux') throw new Error('The browser performance benchmark requires Linux /proc.');
@@ -206,7 +243,7 @@ function measureCapture({
     const startedAt = process.hrtime.bigint();
     const child = spawn(process.execPath, args, {
       cwd: fixtureDir,
-      env: { ...process.env, CI: 'true', FORCE_COLOR: '0' },
+      env: { ...process.env, CI: 'true', FORCE_COLOR: '0', STORYFREEZE_CAPTURE_DIAGNOSTICS: '1' },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     let stdout = '';
@@ -268,6 +305,11 @@ function measureCapture({
       if (diagnostics.storyDurationsMs.length !== expectedPngs) {
         errors.push(`Expected ${expectedPngs} capture-request timings, found ${diagnostics.storyDurationsMs.length}.`);
       }
+      if (diagnostics.captureDiagnostics.filter(event => event.type === 'capture-output').length !== expectedPngs) {
+        errors.push(
+          `Expected ${expectedPngs} capture diagnostic output mappings, found ${diagnostics.captureDiagnostics.filter(event => event.type === 'capture-output').length}.`,
+        );
+      }
       if (trace && tracePaths.length !== expectedPngs) {
         errors.push(`Expected ${expectedPngs} trace files, found ${tracePaths.length}.`);
       }
@@ -289,19 +331,23 @@ function measureCapture({
         cpuTimeMs: Math.round(
           ([...cpuTicks.values()].reduce((total, ticks) => total + ticks, 0) / clockTicksPerSecond) * 1000,
         ),
+        captureDiagnostics: diagnostics.captureDiagnostics,
         errors,
         exitCode: code,
         iteration,
         label,
         outputDir,
+        pairStartingBackend,
         peakBrowserRootCount,
         peakChromiumProcessCount,
         peakProcessCount,
         peakTreeRssBytes,
         pngCount: pngPaths.length,
         pngPaths,
+        positionInPair,
         retryCount: diagnostics.retryCount,
         sampleCount: samples,
+        sequenceIndex,
         signal,
         storyCount: diagnostics.storyCount,
         storyDurationsMs: diagnostics.storyDurationsMs,
@@ -504,12 +550,40 @@ function summarizeRuns(runs) {
   const storyDurationsMs = successful.flatMap(run => run.storyDurationsMs);
   const expectedCaptures = expectedPngCount * runs.length;
   const captured = runs.reduce((total, run) => total + Math.min(expectedPngCount, run.pngCount), 0);
+  const diagnosticEvents = successful.flatMap(run => run.captureDiagnostics);
+  const phaseNames = [
+    ...new Set(
+      diagnosticEvents
+        .filter(event => event.type === 'capture-phase' && event.state === 'end')
+        .map(event => event.phase),
+    ),
+  ];
+  const phaseTimings = Object.fromEntries(
+    phaseNames.sort().map(phase => {
+      const values = diagnosticEvents
+        .filter(
+          event => event.type === 'capture-phase' && event.state === 'end' && typeof event.durationMs === 'number',
+        )
+        .map(event => event.durationMs);
+      return [phase, { p50Ms: percentile(values, 0.5), p95Ms: percentile(values, 0.95), samples: values.length }];
+    }),
+  );
+  const idleEvents = diagnosticEvents.filter(event => event.type === 'idle-wait');
   return {
     browserCrashEventCount: runs.reduce((total, run) => total + run.browserCrashCount, 0),
     browserCrashRate: runs.filter(run => run.browserCrashCount > 0).length / runs.length,
     captureFailureRate: (expectedCaptures - captured) / expectedCaptures,
     captureTimeP50Ms: percentile(storyDurationsMs, 0.5),
     captureTimeP95Ms: percentile(storyDurationsMs, 0.95),
+    diagnostics: {
+      idleEventCount: idleEvents.length,
+      idleTimeoutEventCount: idleEvents.filter(event => event.didTimeout).length,
+      idleTimeoutRate: idleEvents.length ? idleEvents.filter(event => event.didTimeout).length / idleEvents.length : 0,
+      phaseTimings,
+      threeSecondTailEventCount: diagnosticEvents.filter(
+        event => typeof event.durationMs === 'number' && event.durationMs >= 3000,
+      ).length,
+    },
     maxChromiumProcessCount: Math.max(...runs.map(run => run.peakChromiumProcessCount)),
     maxPeakTreeRssBytes: Math.max(...runs.map(run => run.peakTreeRssBytes)),
     medianCpuTimeMs: median(successful.map(run => run.cpuTimeMs)),
@@ -623,26 +697,36 @@ async function main() {
   try {
     await waitForServer(server);
     const warmups = { playwright: [], puppeteer: [] };
-    for (const backend of backends) {
-      for (let iteration = 1; iteration <= warmupRuns; iteration += 1) {
-        warmups[backend].push(
-          await measureCapture({
-            backend,
-            browser,
-            exclude: benchmarkExclude,
-            expectedPngs: expectedPngCount,
-            expectedStories: expectedStoryCount,
-            iteration,
-            label: `benchmark-${backend}-warmup`,
-          }),
-        );
+    const warmupExecutionOrder = [];
+    let warmupSequenceIndex = 0;
+    for (let iteration = 1; iteration <= warmupRuns; iteration += 1) {
+      const puppeteerFirst = startingBackend === 'puppeteer' ? iteration % 2 === 1 : iteration % 2 === 0;
+      const order = puppeteerFirst ? backends : [...backends].reverse();
+      for (const [positionInPair, backend] of order.entries()) {
+        const run = await measureCapture({
+          backend,
+          browser,
+          exclude: benchmarkExclude,
+          expectedPngs: expectedPngCount,
+          expectedStories: expectedStoryCount,
+          iteration,
+          label: `benchmark-${backend}-warmup-${iteration}`,
+          pairStartingBackend: order[0],
+          positionInPair,
+          sequenceIndex: ++warmupSequenceIndex,
+        });
+        warmups[backend].push(run);
+        warmupExecutionOrder.push(run);
       }
     }
 
     const runs = { playwright: [], puppeteer: [] };
+    const measuredExecutionOrder = [];
+    let measuredSequenceIndex = 0;
     for (let iteration = 1; iteration <= measuredRuns; iteration += 1) {
-      const order = iteration % 2 === 1 ? backends : [...backends].reverse();
-      for (const backend of order) {
+      const puppeteerFirst = startingBackend === 'puppeteer' ? iteration % 2 === 1 : iteration % 2 === 0;
+      const order = puppeteerFirst ? backends : [...backends].reverse();
+      for (const [positionInPair, backend] of order.entries()) {
         const run = await measureCapture({
           backend,
           browser,
@@ -651,8 +735,12 @@ async function main() {
           expectedStories: expectedStoryCount,
           iteration,
           label: `benchmark-${backend}-${iteration}`,
+          pairStartingBackend: order[0],
+          positionInPair,
+          sequenceIndex: ++measuredSequenceIndex,
         });
         runs[backend].push(run);
+        measuredExecutionOrder.push(run);
         console.log(
           `${backend} ${iteration}/${measuredRuns}: ${run.wallTimeMs} ms, ${Math.round(run.peakTreeRssBytes / 1024 / 1024)} MiB peak RSS.`,
         );
@@ -661,27 +749,29 @@ async function main() {
 
     const traceControls = {};
     const traceRuns = {};
-    for (const backend of backends) {
-      traceControls[backend] = await measureCapture({
-        backend,
-        browser,
-        expectedPngs: tracePngCount,
-        expectedStories: traceStoryCount,
-        include: traceInclude,
-        iteration: 1,
-        label: `benchmark-${backend}-trace-control`,
-        trace: false,
-      });
-      traceRuns[backend] = await measureCapture({
-        backend,
-        browser,
-        expectedPngs: tracePngCount,
-        expectedStories: traceStoryCount,
-        include: traceInclude,
-        iteration: 1,
-        label: `benchmark-${backend}-trace`,
-        trace: true,
-      });
+    if (includeTrace) {
+      for (const backend of backends) {
+        traceControls[backend] = await measureCapture({
+          backend,
+          browser,
+          expectedPngs: tracePngCount,
+          expectedStories: traceStoryCount,
+          include: traceInclude,
+          iteration: 1,
+          label: `benchmark-${backend}-trace-control`,
+          trace: false,
+        });
+        traceRuns[backend] = await measureCapture({
+          backend,
+          browser,
+          expectedPngs: tracePngCount,
+          expectedStories: traceStoryCount,
+          include: traceInclude,
+          iteration: 1,
+          label: `benchmark-${backend}-trace`,
+          trace: true,
+        });
+      }
     }
 
     const pixelComparisons = [];
@@ -705,28 +795,36 @@ async function main() {
         );
       }
     }
-    pixelComparisons.push(
-      compareDirectories('driver-trace', traceRuns.puppeteer.outputDir, traceRuns.playwright.outputDir),
-    );
+    if (includeTrace) {
+      pixelComparisons.push(
+        compareDirectories('driver-trace', traceRuns.puppeteer.outputDir, traceRuns.playwright.outputDir),
+      );
+    }
 
     const summaries = {
       playwright: summarizeRuns(runs.playwright),
       puppeteer: summarizeRuns(runs.puppeteer),
     };
-    const traces = {
-      playwright: analyzeTraceDirectory(traceRuns.playwright),
-      puppeteer: analyzeTraceDirectory(traceRuns.puppeteer),
-    };
+    const traces = includeTrace
+      ? {
+          playwright: analyzeTraceDirectory(traceRuns.playwright),
+          puppeteer: analyzeTraceDirectory(traceRuns.puppeteer),
+        }
+      : {};
     const gateErrors = [];
     for (const backend of backends) {
       for (const run of warmups[backend]) run.errors.forEach(error => gateErrors.push(`${run.label}: ${error}`));
       for (const run of runs[backend]) run.errors.forEach(error => gateErrors.push(`${run.label}: ${error}`));
-      traceControls[backend].errors.forEach(error => gateErrors.push(`${traceControls[backend].label}: ${error}`));
-      traceRuns[backend].errors.forEach(error => gateErrors.push(`${traceRuns[backend].label}: ${error}`));
-      traces[backend].errors.forEach(error => gateErrors.push(`${backend} trace: ${error}`));
+      if (includeTrace) {
+        traceControls[backend].errors.forEach(error => gateErrors.push(`${traceControls[backend].label}: ${error}`));
+        traceRuns[backend].errors.forEach(error => gateErrors.push(`${traceRuns[backend].label}: ${error}`));
+        traces[backend].errors.forEach(error => gateErrors.push(`${backend} trace: ${error}`));
+      }
     }
-    const tracePathSets = backends.map(backend => traceRuns[backend].tracePaths.join('\n'));
-    if (tracePathSets[0] !== tracePathSets[1]) gateErrors.push('Trace output paths differ between browser backends.');
+    if (includeTrace) {
+      const tracePathSets = backends.map(backend => traceRuns[backend].tracePaths.join('\n'));
+      if (tracePathSets[0] !== tracePathSets[1]) gateErrors.push('Trace output paths differ between browser backends.');
+    }
     for (const comparison of pixelComparisons) {
       if (comparison.mismatchCount !== 0)
         gateErrors.push(`${comparison.label}: ${comparison.mismatchCount} PNG mismatch(es).`);
@@ -737,7 +835,7 @@ async function main() {
     );
     const fixturePackage = JSON.parse(fs.readFileSync(path.join(fixtureDir, 'package.json'), 'utf8'));
     const result = {
-      schemaVersion: 2,
+      schemaVersion: 3,
       recordedAt: new Date().toISOString(),
       storyfreezeCommit: process.env.STORYFREEZE_BENCHMARK_COMMIT || 'unknown',
       storyfreezeVersion: storyfreezePackage.version,
@@ -746,15 +844,20 @@ async function main() {
         fixture: fixturePackage.name,
         exclude: benchmarkExclude,
         launchOptions,
+        benchmarkProfile,
+        includeTrace,
         measuredRuns,
         mode: 'managed-static',
         parallel,
         pngs: expectedPngCount,
         sampleIntervalMs,
         stories: expectedStoryCount,
+        startingBackend,
         storybook: fixturePackage.devDependencies.storybook,
-        trace: { include: traceInclude, pngs: tracePngCount, runs: 1, stories: traceStoryCount },
+        trace: includeTrace ? { include: traceInclude, pngs: tracePngCount, runs: 1, stories: traceStoryCount } : null,
         warmupRuns,
+        warmupExecutionOrder: warmupExecutionOrder.map(run => run.label),
+        measuredExecutionOrder: measuredExecutionOrder.map(run => run.label),
       },
       environment: {
         arch: process.arch,
@@ -773,27 +876,31 @@ async function main() {
           warmups: warmups.playwright.map(publicRun),
           runs: runs.playwright.map(publicRun),
           summary: summaries.playwright,
-          traceControl: publicRun(traceControls.playwright),
-          traceRun: publicRun(traceRuns.playwright),
-          traceSummary: traces.playwright,
-          traceOverhead: {
-            cpuTime: ratio(traceRuns.playwright.cpuTimeMs, traceControls.playwright.cpuTimeMs),
-            peakTreeRss: ratio(traceRuns.playwright.peakTreeRssBytes, traceControls.playwright.peakTreeRssBytes),
-            wallTime: ratio(traceRuns.playwright.wallTimeMs, traceControls.playwright.wallTimeMs),
-          },
+          traceControl: includeTrace ? publicRun(traceControls.playwright) : null,
+          traceRun: includeTrace ? publicRun(traceRuns.playwright) : null,
+          traceSummary: includeTrace ? traces.playwright : null,
+          traceOverhead: includeTrace
+            ? {
+                cpuTime: ratio(traceRuns.playwright.cpuTimeMs, traceControls.playwright.cpuTimeMs),
+                peakTreeRss: ratio(traceRuns.playwright.peakTreeRssBytes, traceControls.playwright.peakTreeRssBytes),
+                wallTime: ratio(traceRuns.playwright.wallTimeMs, traceControls.playwright.wallTimeMs),
+              }
+            : null,
         },
         puppeteer: {
           warmups: warmups.puppeteer.map(publicRun),
           runs: runs.puppeteer.map(publicRun),
           summary: summaries.puppeteer,
-          traceControl: publicRun(traceControls.puppeteer),
-          traceRun: publicRun(traceRuns.puppeteer),
-          traceSummary: traces.puppeteer,
-          traceOverhead: {
-            cpuTime: ratio(traceRuns.puppeteer.cpuTimeMs, traceControls.puppeteer.cpuTimeMs),
-            peakTreeRss: ratio(traceRuns.puppeteer.peakTreeRssBytes, traceControls.puppeteer.peakTreeRssBytes),
-            wallTime: ratio(traceRuns.puppeteer.wallTimeMs, traceControls.puppeteer.wallTimeMs),
-          },
+          traceControl: includeTrace ? publicRun(traceControls.puppeteer) : null,
+          traceRun: includeTrace ? publicRun(traceRuns.puppeteer) : null,
+          traceSummary: includeTrace ? traces.puppeteer : null,
+          traceOverhead: includeTrace
+            ? {
+                cpuTime: ratio(traceRuns.puppeteer.cpuTimeMs, traceControls.puppeteer.cpuTimeMs),
+                peakTreeRss: ratio(traceRuns.puppeteer.peakTreeRssBytes, traceControls.puppeteer.peakTreeRssBytes),
+                wallTime: ratio(traceRuns.puppeteer.wallTimeMs, traceControls.puppeteer.wallTimeMs),
+              }
+            : null,
         },
       },
       differential: {
@@ -827,7 +934,7 @@ main().catch(error => {
       outputFile,
       `${JSON.stringify(
         {
-          schemaVersion: 2,
+          schemaVersion: 3,
           recordedAt: new Date().toISOString(),
           fatalError: message,
           gate: { errors: [message], passed: false },

@@ -1,4 +1,4 @@
-import type { ScreenshotOptions, Exposed } from '../shared/types.js';
+import type { ScreenshotOptions, Exposed, PreviewCaptureDiagnostic } from '../shared/types.js';
 import {
   mergeScreenshotOptions,
   pickupWithVariantKey,
@@ -23,6 +23,7 @@ type ExposedFns = {
 type StoryFreezeWindow = typeof window & {
   requestIdleCallback(cb: Function, opt?: { timeout: number }): void;
   optionStore?: { [storyKey: string]: ScreenshotOptions[] };
+  reportCaptureDiagnostic?: (event: PreviewCaptureDiagnostic) => Promise<void>;
   [STORYFREEZE_PREVIEW_STATE_GLOBAL]?: StoryFreezePreviewStateV1;
 } & ExposedFns;
 
@@ -64,7 +65,21 @@ function waitUserFunction(waitFor: undefined | null | string | (() => Promise<an
 }
 
 function waitForNextIdle(win: StoryFreezeWindow) {
-  return new Promise(res => win.requestIdleCallback(res, { timeout: 3000 }));
+  if (!win.reportCaptureDiagnostic) {
+    return new Promise<undefined>(res => win.requestIdleCallback(() => res(undefined), { timeout: 3000 }));
+  }
+  return new Promise<{ didTimeout: boolean; elapsedMs: number; visibilityState: DocumentVisibilityState }>(res => {
+    const startedAt = performance.now();
+    win.requestIdleCallback(
+      (deadline: IdleDeadline) =>
+        res({
+          didTimeout: deadline.didTimeout,
+          elapsedMs: performance.now() - startedAt,
+          visibilityState: document.visibilityState,
+        }),
+      { timeout: 3000 },
+    );
+  });
 }
 
 function pushOptions(win: StoryFreezeWindow, storyKey: string, opt: ScreenshotOptions) {
@@ -137,7 +152,18 @@ export async function finalizeScreenshot(context: { id?: string; abortSignal?: A
       if (context.abortSignal?.aborted) return;
       await waitUserFunction(screenshotOptions.waitFor);
       if (context.abortSignal?.aborted) return;
-      await waitForNextIdle(win);
+      const idleDiagnostic = await waitForNextIdle(win);
+      if (idleDiagnostic) {
+        void Promise.resolve(
+          win.reportCaptureDiagnostic?.({
+            type: 'idle-wait',
+            ...idleDiagnostic,
+            requestId: identity.requestId,
+            storyId: identity.storyId,
+            variantKey: variantKey.keys,
+          }),
+        ).catch(() => {});
+      }
       if (context.abortSignal?.aborted) return;
     }
 

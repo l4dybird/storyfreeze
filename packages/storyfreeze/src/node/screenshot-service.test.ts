@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vite-plus/test';
+import { afterEach, describe, expect, it, vi } from 'vite-plus/test';
 import type { FileSystem } from './file.js';
 import type { Logger } from './logger.js';
 import { createScreenshotService } from './screenshot-service.js';
@@ -13,6 +13,11 @@ const story: Story = {
 };
 
 describe(createScreenshotService, () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
   it('queues a retry before adding all variants from the successful default capture', async () => {
     const hovered: VariantKey = { isDefault: false, keys: ['hovered'] };
     const small: VariantKey = { isDefault: false, keys: ['SMALL'] };
@@ -98,5 +103,43 @@ describe(createScreenshotService, () => {
       'SMALL',
       'hovered',
     ]);
+  });
+
+  it('maps the stored path to the request when capture diagnostics are enabled', async () => {
+    vi.stubEnv('STORYFREEZE_CAPTURE_DIAGNOSTICS', '1');
+    const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    const screenshot = vi.fn(async () => ({
+      buffer: Buffer.from('png'),
+      succeeded: true,
+      variantKeysToPush: [],
+      defaultVariantSuffix: 'LARGE',
+    }));
+    const logger = {
+      log: vi.fn(),
+      color: { magenta: (value: string) => value },
+    } as unknown as Logger;
+
+    const service = createScreenshotService({
+      workers: [{ screenshot }],
+      stories: [story],
+      fileSystem: {
+        saveScreenshot: vi.fn(async () => 'screenshots/Button/Primary_LARGE.png'),
+      } as unknown as FileSystem,
+      logger,
+      forwardConsoleLogs: false,
+      trace: false,
+    });
+
+    await expect(service.execute()).resolves.toBe(1);
+    const line = write.mock.calls.map(call => String(call[0])).find(value => value.includes('"type":"capture-output"'));
+    expect(line).toBeDefined();
+    expect(JSON.parse(line!.slice(line!.indexOf('{')))).toMatchObject({
+      type: 'capture-output',
+      path: 'screenshots/Button/Primary_LARGE.png',
+      requestId: 'button--primary',
+      retryCount: 0,
+      storyId: 'button--primary',
+      variantKey: [],
+    });
   });
 });

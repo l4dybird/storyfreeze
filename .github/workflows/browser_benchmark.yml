@@ -3,6 +3,36 @@ name: Browser differential benchmark
 on:
   workflow_dispatch:
     inputs:
+      profile:
+        description: Benchmark repetition profile
+        required: true
+        type: choice
+        options:
+          - pr
+          - record
+        default: pr
+      parallel:
+        description: Capture worker count
+        required: true
+        type: choice
+        options:
+          - '1'
+          - '2'
+          - '4'
+        default: '4'
+      starting_backend:
+        description: Backend measured first in the first pair
+        required: true
+        type: choice
+        options:
+          - puppeteer
+          - playwright
+        default: puppeteer
+      include_trace:
+        description: Run the separate trace control/on comparison
+        required: false
+        type: boolean
+        default: true
       compare_container:
         description: Compare explicit Chromium install with the pinned Playwright container
         required: false
@@ -49,6 +79,10 @@ jobs:
       - name: Compare Puppeteer and Playwright
         env:
           STORYFREEZE_BENCHMARK_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+          STORYFREEZE_BENCHMARK_PARALLEL: ${{ github.event_name == 'workflow_dispatch' && inputs.parallel || '4' }}
+          STORYFREEZE_BENCHMARK_PROFILE: ${{ github.event_name == 'workflow_dispatch' && inputs.profile || 'pr' }}
+          STORYFREEZE_BENCHMARK_START_BACKEND: ${{ github.event_name == 'workflow_dispatch' && inputs.starting_backend || 'puppeteer' }}
+          STORYFREEZE_BENCHMARK_TRACE: ${{ github.event_name != 'workflow_dispatch' || inputs.include_trace }}
           STORYFREEZE_BROWSER_PROVISIONING: explicit-install
         run: >-
           node scripts/e2e-prestorybook.js examples/react-vite browser-performance-benchmark.js
@@ -92,6 +126,10 @@ jobs:
       - name: Compare Puppeteer and Playwright
         env:
           STORYFREEZE_BENCHMARK_COMMIT: ${{ github.sha }}
+          STORYFREEZE_BENCHMARK_PARALLEL: ${{ inputs.parallel }}
+          STORYFREEZE_BENCHMARK_PROFILE: ${{ inputs.profile }}
+          STORYFREEZE_BENCHMARK_START_BACKEND: ${{ inputs.starting_backend }}
+          STORYFREEZE_BENCHMARK_TRACE: ${{ inputs.include_trace }}
           STORYFREEZE_BROWSER_PROVISIONING: official-container
         run: >-
           node scripts/e2e-prestorybook.js examples/react-vite browser-performance-benchmark.js

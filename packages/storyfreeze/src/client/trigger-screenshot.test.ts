@@ -3,6 +3,7 @@ import { STORYFREEZE_PREVIEW_STATE_GLOBAL } from '../shared/preview-protocol.js'
 import { finalizeScreenshot, triggerScreenshot } from './trigger-screenshot.js';
 
 describe(finalizeScreenshot, () => {
+  const originalDocument = Object.getOwnPropertyDescriptor(globalThis, 'document');
   const originalWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
   const originalLocation = Object.getOwnPropertyDescriptor(globalThis, 'location');
 
@@ -11,13 +12,17 @@ describe(finalizeScreenshot, () => {
       getBaseScreenshotOptions: vi.fn(async () => ({})),
       getCurrentVariantKey: vi.fn(async () => ({ isDefault: true, keys: [] })),
       waitBrowserMetricsStable: vi.fn(async () => {}),
-      requestIdleCallback: (callback: Function) => callback(),
+      requestIdleCallback: (callback: Function) => callback({ didTimeout: false }),
       ...overrides,
     };
     Object.defineProperty(globalThis, 'window', { configurable: true, value: win });
     Object.defineProperty(globalThis, 'location', {
       configurable: true,
       value: { href: 'https://example.test/iframe.html?id=button--primary&storyfreezeRequestId=0-1' },
+    });
+    Object.defineProperty(globalThis, 'document', {
+      configurable: true,
+      value: { visibilityState: 'visible' },
     });
     return win;
   }
@@ -28,6 +33,8 @@ describe(finalizeScreenshot, () => {
     else Reflect.deleteProperty(globalThis, 'window');
     if (originalLocation) Object.defineProperty(globalThis, 'location', originalLocation);
     else Reflect.deleteProperty(globalThis, 'location');
+    if (originalDocument) Object.defineProperty(globalThis, 'document', originalDocument);
+    else Reflect.deleteProperty(globalThis, 'document');
   });
 
   it('does not publish ready from an aborted stale afterEach', async () => {
@@ -62,6 +69,28 @@ describe(finalizeScreenshot, () => {
       status: 'ready',
       options: { fullPage: true, variants: { nested: {} } },
     });
+  });
+
+  it('reports the preview idle result when diagnostics are exposed', async () => {
+    const reportCaptureDiagnostic = vi.fn(async () => {});
+    const win = installWindow({
+      reportCaptureDiagnostic,
+      requestIdleCallback: (callback: Function) => callback({ didTimeout: true }),
+    });
+
+    triggerScreenshot({}, { id: 'button--primary' });
+    await finalizeScreenshot({ id: 'button--primary', abortSignal: new AbortController().signal });
+
+    expect(reportCaptureDiagnostic).toHaveBeenCalledWith({
+      type: 'idle-wait',
+      didTimeout: true,
+      elapsedMs: expect.any(Number),
+      requestId: '0-1',
+      storyId: 'button--primary',
+      variantKey: [],
+      visibilityState: 'visible',
+    });
+    expect((win as Record<string, any>)[STORYFREEZE_PREVIEW_STATE_GLOBAL]).toMatchObject({ status: 'ready' });
   });
 
   it('publishes a serialized error when user readiness fails', async () => {

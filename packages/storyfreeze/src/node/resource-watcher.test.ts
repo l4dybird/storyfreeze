@@ -59,6 +59,11 @@ describe(ResourceWatcher, () => {
     page.start(first);
     page.start(second);
 
+    expect(watcher.getDiagnosticSnapshot()).toEqual({
+      pending: [first, second],
+      requestedUrls: ['https://example.test/font.woff2'],
+    });
+
     let completed = false;
     const waiting = watcher.waitForRequestsComplete().then(() => (completed = true));
     page.finish(first);
@@ -68,5 +73,6 @@ describe(ResourceWatcher, () => {
     page.finish(second);
     await waiting;
     expect(watcher.getRequestedUrls()).toEqual(['https://example.test/font.woff2']);
+    expect(watcher.getDiagnosticSnapshot().pending).toEqual([]);
   });
 });

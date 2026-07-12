@@ -6,7 +6,14 @@ import type { Story } from './story.js';
 import type { ManagedStorybookConnection } from './managed-storybook-connection.js';
 
 import type { MainOptions, RunMode } from './types.js';
-import type { VariantKey, ScreenshotOptions, StrictScreenshotOptions, Exposed, Viewport } from '../shared/types.js';
+import type {
+  VariantKey,
+  ScreenshotOptions,
+  StrictScreenshotOptions,
+  Exposed,
+  Viewport,
+  PreviewCaptureDiagnostic,
+} from '../shared/types.js';
 import { InvalidCurrentStoryStateError, PreviewReadyTimeoutError } from './errors.js';
 import {
   createBaseScreenshotOptions,
@@ -19,6 +26,7 @@ import { Logger } from './logger.js';
 import { FileSystem } from './file.js';
 import { ResourceWatcher } from './resource-watcher.js';
 import { StoryNavigator } from './story-navigator.js';
+import { captureDiagnosticsEnabled, emitCaptureDiagnostic, measureCaptureDiagnostic } from './capture-diagnostics.js';
 
 /**
  *
@@ -53,6 +61,9 @@ export class CapturingBrowser extends BaseBrowser {
   private touched = false;
   private resourceWatcher?: ResourceWatcher;
   private navigator!: StoryNavigator;
+  private diagnosticPreviewIdlePhase: 'preview-ready' | 'reset' = 'preview-ready';
+  private diagnosticLastPhase?: string;
+  private diagnosticOutcome: 'captured' | 'failed' | 'retry' | 'skipped' = 'failed';
 
   /**
    *
@@ -70,7 +81,7 @@ export class CapturingBrowser extends BaseBrowser {
     private readonly idx: number,
     backend?: BrowserBackend,
   ) {
-    super(opt, backend);
+    super(opt, backend, { role: 'capture-worker', workerId: idx });
     this.baseScreenshotOptions = createBaseScreenshotOptions(opt);
   }
 
@@ -124,7 +135,36 @@ export class CapturingBrowser extends BaseBrowser {
       getCurrentVariantKey: () => this.currentVariantKey,
       waitBrowserMetricsStable: () => this.waitBrowserMetricsStable('preEmit'),
     };
-    await Promise.all(Object.entries(exposed).map(([k, f]) => this.page.exposeFunction(k, f)));
+    const diagnosticExposure = captureDiagnosticsEnabled()
+      ? { reportCaptureDiagnostic: (event: PreviewCaptureDiagnostic) => this.reportPreviewDiagnostic(event) }
+      : {};
+    await Promise.all(
+      Object.entries({ ...exposed, ...diagnosticExposure }).map(([k, f]) => this.page.exposeFunction(k, f)),
+    );
+  }
+
+  private diagnosticContext() {
+    return {
+      backend: this.backend.name,
+      requestId: this.currentRequestId,
+      storyId: this.currentStory?.id,
+      variantKey: this.currentVariantKey.keys,
+      workerId: this.idx,
+      retryCount: this.currentStoryRetryCount,
+    };
+  }
+
+  private reportPreviewDiagnostic(event: PreviewCaptureDiagnostic) {
+    emitCaptureDiagnostic({
+      ...event,
+      ...this.diagnosticContext(),
+      phase: this.diagnosticPreviewIdlePhase,
+    });
+  }
+
+  private measurePhase<T>(phase: string, action: () => Promise<T>) {
+    this.diagnosticLastPhase = phase;
+    return measureCaptureDiagnostic({ type: 'capture-phase', phase, ...this.diagnosticContext() }, action);
   }
 
   private async waitIfTouched() {
@@ -146,7 +186,12 @@ export class CapturingBrowser extends BaseBrowser {
     }
     await this.page.resetPointer();
 
-    await this.setCurrentStory(story);
+    this.diagnosticPreviewIdlePhase = 'reset';
+    try {
+      await this.setCurrentStory(story);
+    } finally {
+      this.diagnosticPreviewIdlePhase = 'preview-ready';
+    }
     this.touched = false;
 
     return;
@@ -155,10 +200,14 @@ export class CapturingBrowser extends BaseBrowser {
   private async setCurrentStory(story: Story): Promise<ScreenshotOptions | undefined> {
     this._currentStory = story;
     this.debug('Set story', story.id);
-    await this.navigator.navigate(story.id);
-    await this.addStyles();
+    await this.measurePhase('navigation', async () => {
+      await this.navigator.navigate(story.id);
+      await this.addStyles();
+    });
     if (this.mode === 'managed') {
-      return this.navigator.waitForReady(this.opt.captureTimeout, this.opt.signal);
+      return this.measurePhase('preview-ready', () =>
+        this.navigator.waitForReady(this.opt.captureTimeout, this.opt.signal),
+      );
     }
     return undefined;
   }
@@ -257,8 +306,16 @@ export class CapturingBrowser extends BaseBrowser {
 
   private async waitForResources(screenshotOptions: StrictScreenshotOptions) {
     if (!screenshotOptions.waitAssets && !screenshotOptions.waitImages) return;
+    const before = this.resourceWatcher!.getDiagnosticSnapshot();
     this.debug('Wait for requested resources resolved', this.resourceWatcher!.getRequestedUrls());
-    await this.resourceWatcher!.waitForRequestsComplete();
+    const urls = await this.resourceWatcher!.waitForRequestsComplete();
+    emitCaptureDiagnostic({
+      type: 'resource-summary',
+      before,
+      after: this.resourceWatcher!.getDiagnosticSnapshot(),
+      requestedUrlCount: urls.length,
+      ...this.diagnosticContext(),
+    });
   }
 
   private async waitBrowserMetricsStable(phase: 'preEmit' | 'postEmit') {
@@ -272,6 +329,14 @@ export class CapturingBrowser extends BaseBrowser {
         )}`,
       );
     }
+    emitCaptureDiagnostic({
+      type: 'metrics-summary',
+      phase,
+      sampleCount: mw.sampleCount,
+      samples: mw.samples,
+      stable: checkCountUntillStable < this.opt.metricsWatchRetryCount,
+      ...this.diagnosticContext(),
+    });
   }
 
   private logInvalidVariantKeysReason(reason: InvalidVariantKeysReason | null) {
@@ -315,6 +380,9 @@ export class CapturingBrowser extends BaseBrowser {
     trace: boolean,
     fileSystem: FileSystem,
   ): Promise<ScreenshotResult> {
+    const captureStartedAt = captureDiagnosticsEnabled() ? performance.now() : 0;
+    this.diagnosticLastPhase = undefined;
+    this.diagnosticOutcome = 'failed';
     this.currentRequestId = requestId;
     this.currentVariantKey = variantKey;
     this.currentStoryRetryCount = retryCount;
@@ -358,6 +426,7 @@ export class CapturingBrowser extends BaseBrowser {
       } catch (error) {
         if (error instanceof PreviewReadyTimeoutError && this.currentStoryRetryCount < this.opt.captureMaxRetryCount) {
           this.opt.logger.warn(`${error.message} Retry to screenshot this story after this sequence.`);
+          this.diagnosticOutcome = 'retry';
           return { buffer: null, succeeded: false, variantKeysToPush: [], defaultVariantSuffix: '' };
         }
         throw error;
@@ -390,40 +459,79 @@ export class CapturingBrowser extends BaseBrowser {
       // End this capturing process as success if `skip` set true.
       if (mergedScreenshotOptions.skip) {
         await this.waitForDebugInput();
+        this.diagnosticOutcome = 'skipped';
         return { buffer: null, succeeded: true, variantKeysToPush, defaultVariantSuffix: '' };
       }
 
       this.touched = false;
 
       // Change browser's viewport if needed.
-      const vpChanged = await this.setViewport(mergedScreenshotOptions);
+      const vpChanged = await this.measurePhase('viewport', () => this.setViewport(mergedScreenshotOptions));
       // Skip to capture if the viewport option is invalid.
-      if (!vpChanged) return { buffer: null, succeeded: true, variantKeysToPush: [], defaultVariantSuffix: '' };
+      if (!vpChanged) {
+        this.diagnosticOutcome = 'skipped';
+        return { buffer: null, succeeded: true, variantKeysToPush: [], defaultVariantSuffix: '' };
+      }
 
       // Modify elements state.
-      await this.setHover(mergedScreenshotOptions);
-      await this.setFocus(mergedScreenshotOptions);
-      await this.setClick(mergedScreenshotOptions);
-      await this.waitIfTouched();
-
-      // Wait until browser main thread gets stable.
-      await this.waitForResources(mergedScreenshotOptions);
-      await this.waitBrowserMetricsStable('postEmit');
-
-      await this.page.evaluate(() => new Promise(res => (window as any).requestIdleCallback(res, { timeout: 3000 })));
-
-      // Get PNG image buffer
-      const buffer = await this.page.screenshot({
-        fullPage: emittedScreenshotOptions.fullPage,
-        omitBackground: emittedScreenshotOptions.omitBackground,
-        captureBeyondViewport: emittedScreenshotOptions.captureBeyondViewport,
-        clip: emittedScreenshotOptions.clip ?? undefined,
+      await this.measurePhase('interaction', async () => {
+        await this.setHover(mergedScreenshotOptions);
+        await this.setFocus(mergedScreenshotOptions);
+        await this.setClick(mergedScreenshotOptions);
+        await this.waitIfTouched();
       });
 
+      // Wait until browser main thread gets stable.
+      await this.measurePhase('resource', () => this.waitForResources(mergedScreenshotOptions));
+      await this.measurePhase('metrics', () => this.waitBrowserMetricsStable('postEmit'));
+
+      await this.measurePhase('node-idle', async () => {
+        if (!captureDiagnosticsEnabled()) {
+          await this.page.evaluate(
+            () => new Promise(res => (window as any).requestIdleCallback(res, { timeout: 3000 })),
+          );
+          return;
+        }
+        const idleDiagnostic = await this.page.evaluate(
+          () =>
+            new Promise<{ didTimeout: boolean; elapsedMs: number; visibilityState: DocumentVisibilityState }>(res => {
+              const startedAt = performance.now();
+              (window as any).requestIdleCallback(
+                (deadline: IdleDeadline) =>
+                  res({
+                    didTimeout: deadline.didTimeout,
+                    elapsedMs: performance.now() - startedAt,
+                    visibilityState: document.visibilityState,
+                  }),
+                { timeout: 3000 },
+              );
+            }),
+        );
+        emitCaptureDiagnostic({
+          type: 'idle-wait',
+          phase: 'post-interaction',
+          ...idleDiagnostic,
+          ...this.diagnosticContext(),
+        });
+      });
+
+      // Get PNG image buffer
+      const captureOptions = emittedScreenshotOptions;
+      const buffer = await this.measurePhase('screenshot', () =>
+        this.page.screenshot({
+          fullPage: captureOptions.fullPage,
+          omitBackground: captureOptions.omitBackground,
+          captureBeyondViewport: captureOptions.captureBeyondViewport,
+          clip: captureOptions.clip ?? undefined,
+        }),
+      );
+
       // We should reset elements state(e.g. focusing, hovering, clicking) for future screenshot for this story.
-      await this.resetIfTouched(mergedScreenshotOptions);
+      await this.measurePhase('reset', () => this.resetIfTouched(mergedScreenshotOptions));
 
       await this.waitForDebugInput();
+
+      this.diagnosticOutcome = 'captured';
 
       return {
         buffer,
@@ -434,13 +542,25 @@ export class CapturingBrowser extends BaseBrowser {
     } finally {
       unsubscribeConsole();
 
-      if (traceStarted) {
-        // Finish CPU trace.
-        const traceBuffer = await this.page.stopTrace();
+      try {
+        if (traceStarted) {
+          // Finish CPU trace.
+          await this.measurePhase('trace-flush', async () => {
+            const traceBuffer = await this.page.stopTrace();
 
-        // Calculate the suffix and save the trace to the file.
-        const suffix = variantKey.isDefault && defaultVariantSuffix ? [defaultVariantSuffix] : variantKey.keys;
-        await fileSystem.saveTrace(story.kind, story.story, suffix, traceBuffer);
+            // Calculate the suffix and save the trace to the file.
+            const suffix = variantKey.isDefault && defaultVariantSuffix ? [defaultVariantSuffix] : variantKey.keys;
+            await fileSystem.saveTrace(story.kind, story.story, suffix, traceBuffer);
+          });
+        }
+      } finally {
+        emitCaptureDiagnostic({
+          type: 'capture-complete',
+          durationMs: captureDiagnosticsEnabled() ? performance.now() - captureStartedAt : 0,
+          lastPhase: this.diagnosticLastPhase,
+          outcome: this.diagnosticOutcome,
+          ...this.diagnosticContext(),
+        });
       }
     }
   }

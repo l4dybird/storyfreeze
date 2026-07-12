@@ -8,7 +8,7 @@
 - npm パッケージ候補: `storyfreeze`
 - CLI: `storyfreeze`
 - 対象: Storybook 10 / Chromium / Playwright
-- ステータス: Phase 5A実装中
+- ステータス: Phase 5B準備中
 
 ## 1. 結論
 
@@ -768,7 +768,7 @@ storyfreeze <url> --browser-backend=playwright
 - retry/timeout
 - CDP session
 
-#### Browser distribution ADR
+#### [Browser distribution ADR](docs/adr/009-playwright-browser-distribution.md)
 
 PR-510着手前にブラウザ配布方針をADRで決める。
 
@@ -1084,20 +1084,20 @@ nightly:
 
 少なくとも次をADRとして残す。
 
-| ADR     | 判断内容                                                 |
-| ------- | -------------------------------------------------------- |
-| ADR-001 | StoryFreezeの独立性、名称、互換API                       |
-| ADR-002 | 開発Nodeとconsumer Nodeの分離                            |
-| ADR-003 | Storybook story indexの取得経路                          |
-| ADR-004 | Preview protocol v1                                      |
-| ADR-005 | `storycrawler`を廃止する理由                             |
-| ADR-006 | pnpm 11とworkspace設計                                   |
-| ADR-007 | Vite+をtooling layerに限定しbuildは `tsc` を維持する理由 |
-| ADR-008 | Oxlint/Oxfmtを正としESLint/Prettierを撤去する判断        |
-| ADR-009 | Playwright browser配布方針                               |
-| ADR-010 | `captureBeyondViewport`互換方針                          |
-| ADR-011 | CPU traceとparallelism                                   |
-| ADR-012 | process/context isolationのdefault                       |
+| ADR                                                        | 判断内容                                                 |
+| ---------------------------------------------------------- | -------------------------------------------------------- |
+| ADR-001                                                    | StoryFreezeの独立性、名称、互換API                       |
+| ADR-002                                                    | 開発Nodeとconsumer Nodeの分離                            |
+| ADR-003                                                    | Storybook story indexの取得経路                          |
+| ADR-004                                                    | Preview protocol v1                                      |
+| ADR-005                                                    | `storycrawler`を廃止する理由                             |
+| ADR-006                                                    | pnpm 11とworkspace設計                                   |
+| ADR-007                                                    | Vite+をtooling layerに限定しbuildは `tsc` を維持する理由 |
+| ADR-008                                                    | Oxlint/Oxfmtを正としESLint/Prettierを撤去する判断        |
+| [ADR-009](docs/adr/009-playwright-browser-distribution.md) | Playwright browser配布方針                               |
+| ADR-010                                                    | `captureBeyondViewport`互換方針                          |
+| ADR-011                                                    | CPU traceとparallelism                                   |
+| ADR-012                                                    | process/context isolationのdefault                       |
 
 ## 17. IssueラベルとMilestone
 

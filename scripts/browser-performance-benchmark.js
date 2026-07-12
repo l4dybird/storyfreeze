@@ -164,9 +164,6 @@ function measureCapture(iteration, warmup) {
         return;
       }
 
-      const reportedCaptureMs = Number(
-        `${stdout}\n${stderr}`.match(/Screenshot was ended successfully in (\d+) msec capturing/)?.[1] || 0,
-      );
       resolve({
         iteration,
         peakBrowserRootCount,
@@ -174,7 +171,6 @@ function measureCapture(iteration, warmup) {
         peakProcessCount,
         peakTreeRssBytes,
         pngCount,
-        reportedCaptureMs,
         sampleCount: samples,
         uniqueBrowserLaunchCount: browserLaunches.size,
         wallTimeMs: Math.round(wallTimeMs),

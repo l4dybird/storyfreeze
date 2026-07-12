@@ -58,5 +58,5 @@
     // "emitDecoratorMetadata": true,         /* Enables experimental support for emitting type metadata for decorators. */
     "plugins": [{ "name": "typescript-eslint-language-service" }]
   },
-  "exclude": ["node_modules", "lib", "examples", "jest", "_old"]
+  "exclude": ["node_modules", "lib", "examples", "_old"]
 }

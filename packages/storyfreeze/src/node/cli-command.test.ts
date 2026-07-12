@@ -1,15 +1,15 @@
 import { EventEmitter } from 'node:events';
-import { jest } from '@jest/globals';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vite-plus/test';
 import type { MainOptions } from './types.js';
 import { runCli, type SignalHost } from './cli-command.js';
 
 describe(runCli, () => {
-  let log: ReturnType<typeof jest.spyOn>;
-  let error: ReturnType<typeof jest.spyOn>;
+  let log: ReturnType<typeof vi.spyOn>;
+  let error: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
-    log = jest.spyOn(console, 'log').mockImplementation(() => {});
-    error = jest.spyOn(console, 'error').mockImplementation(() => {});
+    log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    error = vi.spyOn(console, 'error').mockImplementation(() => {});
   });
 
   afterEach(() => {
@@ -19,7 +19,7 @@ describe(runCli, () => {
 
   it('maps defaults to MainOptions', async () => {
     let received: MainOptions | undefined;
-    const main = jest.fn(async (options: MainOptions) => {
+    const main = vi.fn(async (options: MainOptions) => {
       received = options;
       return 0;
     });
@@ -49,7 +49,7 @@ describe(runCli, () => {
 
   it('supports all existing short options and repeated values', async () => {
     let received: MainOptions | undefined;
-    const main = jest.fn(async (options: MainOptions) => {
+    const main = vi.fn(async (options: MainOptions) => {
       received = options;
       return 2;
     });
@@ -94,7 +94,7 @@ describe(runCli, () => {
 
   it('maps kebab-case long options and preserves verbose precedence', async () => {
     let received: MainOptions | undefined;
-    const main = jest.fn(async (options: MainOptions) => {
+    const main = vi.fn(async (options: MainOptions) => {
       received = options;
       return 0;
     });
@@ -139,7 +139,7 @@ describe(runCli, () => {
 
   it('supports the negated default-true boolean', async () => {
     let received: MainOptions | undefined;
-    const main = jest.fn(async (options: MainOptions) => {
+    const main = vi.fn(async (options: MainOptions) => {
       received = options;
       return 0;
     });
@@ -154,7 +154,7 @@ describe(runCli, () => {
     ['invalid number', ['--parallel', 'many']],
     ['invalid enum', ['--chromium-channel', 'nightly']],
   ])('rejects %s before execution', async (_label, args) => {
-    const main = jest.fn(async (_options: MainOptions) => 0);
+    const main = vi.fn(async (_options: MainOptions) => 0);
     await expect(runCli(args, { main })).resolves.toBe(1);
     expect(main).not.toHaveBeenCalled();
   });
@@ -162,8 +162,8 @@ describe(runCli, () => {
   it.each(['--flat=false', '-f=false', '--no-disable-css-animation=true', '--help=false'])(
     'rejects boolean assignment syntax %s without executing the command',
     async assignment => {
-      const main = jest.fn(async (_options: MainOptions) => 0);
-      const writeError = jest.fn((_message: string) => {});
+      const main = vi.fn(async (_options: MainOptions) => 0);
+      const writeError = vi.fn((_message: string) => {});
 
       await expect(runCli([assignment], { main, writeError })).resolves.toBe(1);
 
@@ -173,7 +173,7 @@ describe(runCli, () => {
   );
 
   it('prints a semantic error once', async () => {
-    const main = jest.fn(async (_options: MainOptions) => 0);
+    const main = vi.fn(async (_options: MainOptions) => 0);
 
     await expect(runCli(['--shard', '2/1'], { main })).resolves.toBe(1);
 
@@ -189,16 +189,16 @@ describe(runCli, () => {
     ['invalid launch JSON', ['--silent', '--puppeteer-launch-config', '{']],
     ['extra positional', ['--silent', 'https://one.test', 'https://two.test']],
   ])('returns 1 for %s', async (_label, args) => {
-    const main = jest.fn(async (_options: MainOptions) => 0);
-    const writeError = jest.fn((_message: string) => {});
+    const main = vi.fn(async (_options: MainOptions) => 0);
+    const writeError = vi.fn((_message: string) => {});
 
     await expect(runCli(args, { main, writeError })).resolves.toBe(1);
     expect(main).not.toHaveBeenCalled();
   });
 
   it('lists devices without calling main', async () => {
-    const main = jest.fn(async (_options: MainOptions) => 0);
-    const getDeviceDescriptors = jest.fn(
+    const main = vi.fn(async (_options: MainOptions) => 0);
+    const getDeviceDescriptors = vi.fn(
       () =>
         [
           {
@@ -221,7 +221,7 @@ describe(runCli, () => {
   ] as const)('maps %s to exit code %i and removes listeners', async (signal, expectedCode) => {
     const signalHost = new EventEmitter();
     let received: MainOptions | undefined;
-    const main = jest.fn(
+    const main = vi.fn(
       (options: MainOptions) =>
         new Promise<number>((_resolve, reject) => {
           received = options;
@@ -240,7 +240,7 @@ describe(runCli, () => {
   });
 
   it.each([['--help'], ['--version']])('handles %s without calling main', async option => {
-    const main = jest.fn(async (_options: MainOptions) => 0);
+    const main = vi.fn(async (_options: MainOptions) => 0);
     await expect(runCli([option], { main })).resolves.toBe(0);
     expect(main).not.toHaveBeenCalled();
   });

@@ -1,5 +1,6 @@
 import { EventEmitter } from 'events';
 import type { HTTPRequest, Page } from 'puppeteer-core';
+import { afterEach, beforeEach, describe, expect, it } from 'vite-plus/test';
 import { ResourceWatcher } from './resource-watcher.js';
 
 class FakePage extends EventEmitter {}

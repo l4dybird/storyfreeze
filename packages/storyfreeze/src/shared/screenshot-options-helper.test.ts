@@ -1,3 +1,4 @@
+import { describe, expect, it } from 'vite-plus/test';
 import { expandViewportsOption, pickupWithVariantKey, extractVariantKeys } from './screenshot-options-helper.js';
 
 describe(expandViewportsOption, () => {

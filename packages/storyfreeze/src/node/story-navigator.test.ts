@@ -1,5 +1,5 @@
-import { jest } from '@jest/globals';
 import type { Page } from 'puppeteer-core';
+import { describe, expect, it, vi } from 'vite-plus/test';
 import {
   STORYFREEZE_ADDON_VERSION,
   STORYFREEZE_PREVIEW_PROTOCOL_VERSION,
@@ -25,9 +25,9 @@ function state(
 
 function pageWithState(getState: () => unknown) {
   return {
-    goto: jest.fn(async () => null),
-    evaluate: jest.fn(async () => getState()),
-    url: jest.fn(() => 'https://example.test/storybook/iframe.html'),
+    goto: vi.fn(async () => null),
+    evaluate: vi.fn(async () => getState()),
+    url: vi.fn(() => 'https://example.test/storybook/iframe.html'),
   } as unknown as Page;
 }
 
@@ -84,8 +84,8 @@ describe(StoryNavigator, () => {
     await expect(navigator.waitForReady(100)).resolves.toEqual({ fullPage: true });
 
     expect(page.goto).toHaveBeenCalledTimes(2);
-    expect((page.goto as jest.Mock).mock.calls[0][0]).toContain('storyfreezeRequestId=7-1');
-    expect((page.goto as jest.Mock).mock.calls[1][0]).toContain('storyfreezeRequestId=7-2');
+    expect(vi.mocked(page.goto).mock.calls[0][0]).toContain('storyfreezeRequestId=7-1');
+    expect(vi.mocked(page.goto).mock.calls[1][0]).toContain('storyfreezeRequestId=7-2');
   });
 
   it.each([

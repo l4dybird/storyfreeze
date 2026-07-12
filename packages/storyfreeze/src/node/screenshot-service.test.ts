@@ -1,4 +1,4 @@
-import { jest } from '@jest/globals';
+import { describe, expect, it, vi } from 'vite-plus/test';
 import type { CapturingBrowser } from './capturing-browser.js';
 import type { FileSystem } from './file.js';
 import type { Logger } from './logger.js';
@@ -17,7 +17,7 @@ describe(createScreenshotService, () => {
   it('queues a retry before adding all variants from the successful default capture', async () => {
     const hovered: VariantKey = { isDefault: false, keys: ['hovered'] };
     const small: VariantKey = { isDefault: false, keys: ['SMALL'] };
-    const screenshot = jest.fn(async (_rid: string, _story: Story, variantKey: VariantKey, count: number) => {
+    const screenshot = vi.fn(async (_rid: string, _story: Story, variantKey: VariantKey, count: number) => {
       if (variantKey.isDefault && count === 0) {
         return { buffer: null, succeeded: false, variantKeysToPush: [], defaultVariantSuffix: '' };
       }
@@ -28,9 +28,11 @@ describe(createScreenshotService, () => {
         defaultVariantSuffix: variantKey.isDefault ? 'LARGE' : '',
       };
     });
-    const saveScreenshot = jest.fn(async () => 'screenshot.png');
+    const saveScreenshot = vi.fn(
+      async (_kind: string, _story: string, _suffix: string[], _buffer: Buffer) => 'screenshot.png',
+    );
     const logger = {
-      log: jest.fn(),
+      log: vi.fn(),
       color: { magenta: (value: string) => value },
     } as unknown as Logger;
 
@@ -59,7 +61,7 @@ describe(createScreenshotService, () => {
     const small: VariantKey = { isDefault: false, keys: ['SMALL'] };
     const calls: Array<{ worker: string; variantKey: VariantKey; count: number }> = [];
     const createWorker = (worker: string) => ({
-      screenshot: jest.fn(async (_rid: string, _story: Story, variantKey: VariantKey, count: number) => {
+      screenshot: vi.fn(async (_rid: string, _story: Story, variantKey: VariantKey, count: number) => {
         calls.push({ worker, variantKey, count });
         if (variantKey.isDefault && count === 0) {
           return { buffer: null, succeeded: false, variantKeysToPush: [], defaultVariantSuffix: '' };
@@ -72,9 +74,11 @@ describe(createScreenshotService, () => {
         };
       }),
     });
-    const saveScreenshot = jest.fn(async () => 'screenshot.png');
+    const saveScreenshot = vi.fn(
+      async (_kind: string, _story: string, _suffix: string[], _buffer: Buffer) => 'screenshot.png',
+    );
     const logger = {
-      log: jest.fn(),
+      log: vi.fn(),
       color: { magenta: (value: string) => value },
     } as unknown as Logger;
 

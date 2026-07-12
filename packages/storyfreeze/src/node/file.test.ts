@@ -1,6 +1,7 @@
 import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
+import { afterEach, beforeEach, describe, expect, it } from 'vite-plus/test';
 import { FileSystem } from './file.js';
 import type { MainOptions } from './types.js';
 

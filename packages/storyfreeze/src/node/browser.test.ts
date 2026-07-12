@@ -1,5 +1,5 @@
-import { jest } from '@jest/globals';
 import type { Browser, BrowserLaunchArgumentOptions, LaunchOptions, Metrics, Page } from 'puppeteer-core';
+import { describe, expect, it, vi } from 'vite-plus/test';
 import {
   BaseBrowser,
   ChromiumNotFoundError,
@@ -14,9 +14,9 @@ class TestBrowser extends BaseBrowser {
   findResult: FindChromeResult = { executablePath: '/test/chrome', type: 'user' };
   locatedWith?: FindChromeOptions;
   launchedWith?: LaunchOptions & BrowserLaunchArgumentOptions;
-  readonly closePage = jest.fn(async () => {});
-  readonly closeBrowser = jest.fn(async () => {});
-  readonly exposeFunction = jest.fn(async () => {});
+  readonly closePage = vi.fn(async () => {});
+  readonly closeBrowser = vi.fn(async () => {});
+  readonly exposeFunction = vi.fn(async () => {});
   newPageError?: Error;
 
   protected async locateChrome(options: FindChromeOptions) {
@@ -117,7 +117,7 @@ describe(BaseBrowser, () => {
 describe(MetricsWatcher, () => {
   it('keeps the legacy three-sample stability threshold', async () => {
     const metrics = { Nodes: 1, RecalcStyleCount: 2, LayoutCount: 3 } as Metrics;
-    const page = { metrics: jest.fn(async () => metrics) } as unknown as Page;
+    const page = { metrics: vi.fn(async () => metrics) } as unknown as Page;
 
     await expect(new MetricsWatcher(page, 10).waitForStable()).resolves.toBe(3);
     expect(page.metrics).toHaveBeenCalledTimes(4);
@@ -126,7 +126,7 @@ describe(MetricsWatcher, () => {
   it('returns the retry limit when metrics never become stable', async () => {
     let value = 0;
     const page = {
-      metrics: jest.fn(async () => ({ Nodes: value++, RecalcStyleCount: 0, LayoutCount: 0 }) as Metrics),
+      metrics: vi.fn(async () => ({ Nodes: value++, RecalcStyleCount: 0, LayoutCount: 0 }) as Metrics),
     } as unknown as Page;
 
     await expect(new MetricsWatcher(page, 4).waitForStable()).resolves.toBe(4);

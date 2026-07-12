@@ -48,7 +48,7 @@ complete `package@version` and requires review.
 
 ```sh
 $ pnpm lint     # runs oxlint
-$ pnpm format   # runs prettier --write
+$ pnpm format   # runs oxfmt
 ```
 
 ## Build

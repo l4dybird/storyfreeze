@@ -242,7 +242,7 @@ interface ScreenshotOptions {
 - `variants`: See type `Variants` section below.
 - `waitImages`: Deprecated. Use `waitAssets`. If set true, StoryFreeze waits until `<img>` in the story are loaded.
 - `omitBackground`: If set true, StoryFreeze omits the background of the page allowing for transparent screenshots. Note the storybook theme will need to be transparent as well.
-- `captureBeyondViewport`: If set true, StoryFreeze captures screenshot beyond the viewport. See also [Puppeteer API docs](https://github.com/puppeteer/puppeteer/blob/v13.1.3/docs/api.md#pagescreenshotoptions).
+- `captureBeyondViewport`: If set true, StoryFreeze captures beyond the viewport through the Chromium screenshot protocol. The default is true for both browser backends.
 - `clip`: If set, StoryFreeze captures only the portion of the screen bounded by x/y/width/height.
 
 ### type `Variants`
@@ -274,7 +274,7 @@ type Variants = {
 
 ### type `Viewport`
 
-`Viewport` is compatible for [Puppeteer viewport interface](https://github.com/puppeteer/puppeteer/blob/main/docs/api/puppeteer.viewport.md).
+`Viewport` is StoryFreeze's browser-neutral Chromium viewport interface.
 
 ```ts
 type Viewport =
@@ -290,7 +290,7 @@ type Viewport =
 ```
 
 > [!NOTE]
-> You should choose a valid [device name](https://github.com/puppeteer/puppeteer/blob/main/packages/puppeteer-core/src/common/Device.ts) if set string.
+> Use a device name printed by `storyfreeze --list-devices` when setting a string. StoryFreeze keeps the same fixed registry for both browser backends.
 
 `Viewport` values are available in `viewports` field such as:
 
@@ -365,7 +365,8 @@ OPTIONS:
   -C, --chromium-channel [chromium-channel]                        Channel to search local Chromium. (default: *, choices: puppeteer | canary | stable | *)
   --chromium-path <chromium-path>                                  Executable Chromium path. (default: )
   --browser-backend [browser-backend]                              Browser automation backend. (default: puppeteer, choices: puppeteer | playwright)
-  --puppeteer-launch-config [puppeteer-launch-config]              JSON string of launch config for Puppeteer. (default: { "args": ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"] })
+  --browser-launch-options <browser-launch-options>                JSON string of browser launch options. (default: { "args": ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"] })
+  --puppeteer-launch-config <puppeteer-launch-config>              Deprecated alias for --browser-launch-options.
 
 EXAMPLES:
   storyfreeze http://localhost:9009
@@ -584,6 +585,10 @@ StoryFreeze resolves an explicit `--chromium-path` or `--chromium-channel` first
 1. Stable Chrome installed locally
 
 You can change search channel with `--chromium-channel` option or set executable Chromium file path with `--chromium-path` option.
+
+Use `--browser-launch-options '<json>'` for browser launch arguments shared by both backends. `args`, `headless`, and `executablePath` are supported by the Playwright backend; the Puppeteer backend continues to pass additional fields through. The previous `--puppeteer-launch-config` name remains available as a deprecated alias and emits a warning. Do not specify both names together. An explicit `--chromium-path` takes precedence over `executablePath` in the JSON.
+
+`--trace` writes the existing Chromium CPU trace JSON format. The current one-worker/one-browser topology allows one active trace in each browser process without reducing the configured parallelism.
 
 ## Storybook compatibility
 

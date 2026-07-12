@@ -140,7 +140,42 @@ describe(MetricsWatcher, () => {
 });
 
 describe(getDeviceDescriptors, () => {
-  it('returns Puppeteer 9 device descriptors', () => {
-    expect(getDeviceDescriptors()).toEqual(expect.arrayContaining([expect.objectContaining({ name: 'iPhone 6' })]));
+  it('returns the fixed StoryFreeze device registry', () => {
+    const devices = getDeviceDescriptors();
+    expect(devices).toHaveLength(77);
+    expect(new Set(devices.map(device => device.name))).toHaveProperty('size', 77);
+    expect(
+      devices.every(
+        device =>
+          device.viewport.width > 0 && device.viewport.height > 0 && (device.viewport.deviceScaleFactor ?? 1) > 0,
+      ),
+    ).toBe(true);
+    expect(devices).toEqual(
+      expect.arrayContaining([
+        {
+          name: 'iPhone 6',
+          viewport: {
+            width: 375,
+            height: 667,
+            deviceScaleFactor: 2,
+            isMobile: true,
+            hasTouch: true,
+            isLandscape: false,
+          },
+        },
+        {
+          name: 'iPhone 6 landscape',
+          viewport: {
+            width: 667,
+            height: 375,
+            deviceScaleFactor: 2,
+            isMobile: true,
+            hasTouch: true,
+            isLandscape: true,
+          },
+        },
+        expect.objectContaining({ name: 'iPad' }),
+      ]),
+    );
   });
 });

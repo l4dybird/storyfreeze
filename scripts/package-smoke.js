@@ -160,7 +160,12 @@ try {
   assertEqual(version, packResult.version, 'CLI version');
 
   const help = run(cliPath, ['--help'], { cwd: consumerDir });
-  if (!help.includes('USAGE:') || !help.includes('--server-cmd')) {
+  if (
+    !help.includes('USAGE:') ||
+    !help.includes('--server-cmd') ||
+    !help.includes('--browser-launch-options') ||
+    !help.includes('--puppeteer-launch-config')
+  ) {
     throw new Error('CLI help did not contain the expected Gunshi usage and kebab-case options.');
   }
 

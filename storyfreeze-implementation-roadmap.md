@@ -799,6 +799,19 @@ PR-510着手前にブラウザ配布方針をADRで決める。
 
 `networkidle` だけを撮影準備完了条件にしない。
 
+決定:
+
+- `captureBeyondViewport` は両backendでdefault `true`を維持し、Chromium CDP経路でPuppeteer 9のfull-page、clip、viewport復元契約を再現する
+- metricsは両backendとも `Performance.getMetrics` の `Nodes`、`RecalcStyleCount`、`LayoutCount`を使う
+- traceは既存のChromium CPU trace JSONとcategoryを維持し、1 browser processにつき同時1 traceに制限する。現在の1 worker = 1 browserでは4並列を維持する
+- device名とviewportはPuppeteer 9互換の77件をStoryFreeze registryとして固定し、backend更新で暗黙に増減させない
+- canonical launch optionを `browserLaunchOptions` とし、`puppeteerLaunchConfig` は警告付きaliasとして維持する
+
+判断記録:
+
+- [ADR-010: `captureBeyondViewport` compatibility](docs/adr/010-capture-beyond-viewport-compatibility.md)
+- [ADR-011: Chromium CPU trace and parallelism](docs/adr/011-cpu-trace-parallelism.md)
+
 ### 10.5 5C — Differential test
 
 #### PR-520: 同一条件比較
@@ -828,6 +841,8 @@ PR-510着手前にブラウザ配布方針をADRで決める。
 - peak RSSまたはcgroup memory
 - CPU time
 - child process数
+
+CI環境は現行のbrowser明示installと、version固定したPlaywright公式containerをA/B比較する。containerは再現性を目的とし、image pullを含むwall timeとmemoryの改善を確認できた場合だけ標準CIへ採用する。
 
 画像差は、変更理由を分類する。
 
@@ -1084,20 +1099,20 @@ nightly:
 
 少なくとも次をADRとして残す。
 
-| ADR                                                        | 判断内容                                                 |
-| ---------------------------------------------------------- | -------------------------------------------------------- |
-| ADR-001                                                    | StoryFreezeの独立性、名称、互換API                       |
-| ADR-002                                                    | 開発Nodeとconsumer Nodeの分離                            |
-| ADR-003                                                    | Storybook story indexの取得経路                          |
-| ADR-004                                                    | Preview protocol v1                                      |
-| ADR-005                                                    | `storycrawler`を廃止する理由                             |
-| ADR-006                                                    | pnpm 11とworkspace設計                                   |
-| ADR-007                                                    | Vite+をtooling layerに限定しbuildは `tsc` を維持する理由 |
-| ADR-008                                                    | Oxlint/Oxfmtを正としESLint/Prettierを撤去する判断        |
-| [ADR-009](docs/adr/009-playwright-browser-distribution.md) | Playwright browser配布方針                               |
-| ADR-010                                                    | `captureBeyondViewport`互換方針                          |
-| ADR-011                                                    | CPU traceとparallelism                                   |
-| ADR-012                                                    | process/context isolationのdefault                       |
+| ADR                                                              | 判断内容                                                 |
+| ---------------------------------------------------------------- | -------------------------------------------------------- |
+| ADR-001                                                          | StoryFreezeの独立性、名称、互換API                       |
+| ADR-002                                                          | 開発Nodeとconsumer Nodeの分離                            |
+| ADR-003                                                          | Storybook story indexの取得経路                          |
+| ADR-004                                                          | Preview protocol v1                                      |
+| ADR-005                                                          | `storycrawler`を廃止する理由                             |
+| ADR-006                                                          | pnpm 11とworkspace設計                                   |
+| ADR-007                                                          | Vite+をtooling layerに限定しbuildは `tsc` を維持する理由 |
+| ADR-008                                                          | Oxlint/Oxfmtを正としESLint/Prettierを撤去する判断        |
+| [ADR-009](docs/adr/009-playwright-browser-distribution.md)       | Playwright browser配布方針                               |
+| [ADR-010](docs/adr/010-capture-beyond-viewport-compatibility.md) | `captureBeyondViewport`互換方針                          |
+| [ADR-011](docs/adr/011-cpu-trace-parallelism.md)                 | CPU traceとparallelism                                   |
+| ADR-012                                                          | process/context isolationのdefault                       |
 
 ## 17. IssueラベルとMilestone
 

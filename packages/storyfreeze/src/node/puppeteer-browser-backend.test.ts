@@ -43,14 +43,27 @@ describe(PuppeteerCapturePage, () => {
     expect(screenshot).toHaveBeenCalledWith(options);
   });
 
-  it('delegates Chromium trace start and stop without changing the buffer', async () => {
+  it('delegates Chromium trace start and stop while guarding concurrent and failed states', async () => {
     const trace = Buffer.from('trace');
-    const start = vi.fn(async () => {});
+    let releaseTraceStart = () => {};
+    const start = vi.fn(async () => new Promise<void>(resolve => (releaseTraceStart = resolve)));
     const stop = vi.fn(async () => trace);
     const page = new PuppeteerCapturePage({ tracing: { start, stop } } as unknown as Page);
 
-    await page.startTrace();
+    const startingTrace = page.startTrace();
+    await Promise.resolve();
+    await expect(page.startTrace()).rejects.toThrow('already running');
+    releaseTraceStart();
+    await startingTrace;
     await expect(page.stopTrace()).resolves.toBe(trace);
-    expect(start).toHaveBeenCalledTimes(1);
+    await expect(page.stopTrace()).rejects.toThrow('has not been started');
+    start.mockImplementation(async () => {});
+    start.mockRejectedValueOnce(new Error('trace start failed'));
+    await expect(page.startTrace()).rejects.toThrow('trace start failed');
+    await page.startTrace();
+    stop.mockRejectedValueOnce(new Error('trace stop failed'));
+    await expect(page.stopTrace()).rejects.toThrow('trace stop failed');
+    await expect(page.startTrace()).rejects.toThrow('Close the browser');
+    expect(start).toHaveBeenCalledTimes(3);
   });
 });

@@ -79,6 +79,7 @@ describe(PlaywrightCapturePage, () => {
     const page = new PlaywrightCapturePage(rawPage, rawCdp as unknown as CDPSession);
 
     await expect(page.readMetrics()).resolves.toEqual({ nodes: 10, recalcStyleCount: 20, layoutCount: 30 });
+    expect(rawCdp.send.mock.calls).toEqual([['Performance.getMetrics']]);
     await page.setViewport({
       width: 640,
       height: 360,
@@ -111,40 +112,147 @@ describe(PlaywrightCapturePage, () => {
     expect(rawCdp.send).toHaveBeenLastCalledWith('Emulation.setTouchEmulationEnabled', { enabled: false });
   });
 
-  it('returns PNG bytes and records a Chromium trace through CDP', async () => {
+  it('normalizes Chromium screenshots and records a Chromium trace through CDP', async () => {
     const png = Buffer.from('png');
-    const rawPage = { bringToFront: vi.fn(async () => {}) } as unknown as Page;
+    const rawPage = {
+      bringToFront: vi.fn(async () => {}),
+      setViewportSize: vi.fn(async () => {}),
+    } as unknown as Page;
     const rawCdp = new FakeCdp();
+    let failCapture = false;
+    let readCount = 0;
     rawCdp.send.mockImplementation(async method => {
       if (method === 'Page.getLayoutMetrics') {
-        return { cssContentSize: { x: 0, y: 0, width: 640, height: 960 } };
+        return { contentSize: { x: 0, y: 0, width: 640.2, height: 960.1 } };
       }
-      if (method === 'Page.captureScreenshot') return { data: png.toString('base64') };
+      if (method === 'Page.captureScreenshot') {
+        if (failCapture) throw new Error('capture failed');
+        return { data: png.toString('base64') };
+      }
       if (method === 'Tracing.end') {
         queueMicrotask(() => rawCdp.emit('Tracing.tracingComplete', { stream: 'trace-stream' }));
       }
-      if (method === 'IO.read') return { data: '{"traceEvents":[]}', eof: true };
+      if (method === 'IO.read') {
+        readCount += 1;
+        return readCount === 1
+          ? { data: '{"trace', eof: false }
+          : { data: Buffer.from('Events":[]}').toString('base64'), base64Encoded: true, eof: true };
+      }
       return {};
     });
     const page = new PlaywrightCapturePage(rawPage, rawCdp as unknown as CDPSession);
 
+    await page.setViewport({ width: 375, height: 667, deviceScaleFactor: 2, isMobile: true });
     await expect(
-      page.screenshot({ fullPage: true, omitBackground: true, captureBeyondViewport: true }),
+      page.screenshot({ fullPage: true, omitBackground: true, captureBeyondViewport: false }),
     ).resolves.toEqual(png);
     expect(rawCdp.send).toHaveBeenCalledWith('Page.captureScreenshot', {
       format: 'png',
-      clip: { x: 0, y: 0, width: 640, height: 960, scale: 1 },
+      clip: { x: 0, y: 0, width: 641, height: 961, scale: 1 },
+      captureBeyondViewport: false,
+    });
+    expect(rawCdp.send).toHaveBeenCalledWith('Emulation.setDeviceMetricsOverride', {
+      width: 641,
+      height: 961,
+      deviceScaleFactor: 2,
+      mobile: true,
+      screenOrientation: { type: 'portraitPrimary', angle: 0 },
+    });
+    expect(rawCdp.send).toHaveBeenLastCalledWith('Emulation.setDeviceMetricsOverride', {
+      width: 375,
+      height: 667,
+      deviceScaleFactor: 2,
+      mobile: true,
+      screenOrientation: { type: 'portraitPrimary', angle: 0 },
+    });
+    await page.screenshot({ clip: { x: 0.2, y: 0.8, width: 10.7, height: 20.4 } });
+    expect(rawCdp.send).toHaveBeenLastCalledWith('Page.captureScreenshot', {
+      format: 'png',
+      clip: { x: 0, y: 1, width: 11, height: 20, scale: 1 },
       captureBeyondViewport: true,
     });
+    await expect(page.screenshot({ fullPage: true, clip: { x: 0, y: 0, width: 1, height: 1 } })).rejects.toThrow(
+      'exclusive',
+    );
+    failCapture = true;
+    rawCdp.send.mockClear();
+    await expect(
+      page.screenshot({ fullPage: true, omitBackground: true, captureBeyondViewport: false }),
+    ).rejects.toThrow('capture failed');
+    expect(rawCdp.send.mock.calls).toEqual([
+      ['Page.getLayoutMetrics'],
+      [
+        'Emulation.setDeviceMetricsOverride',
+        {
+          width: 641,
+          height: 961,
+          deviceScaleFactor: 2,
+          mobile: true,
+          screenOrientation: { type: 'portraitPrimary', angle: 0 },
+        },
+      ],
+      ['Emulation.setDefaultBackgroundColorOverride', { color: { r: 0, g: 0, b: 0, a: 0 } }],
+      [
+        'Page.captureScreenshot',
+        {
+          format: 'png',
+          clip: { x: 0, y: 0, width: 641, height: 961, scale: 1 },
+          captureBeyondViewport: false,
+        },
+      ],
+      ['Emulation.setDefaultBackgroundColorOverride'],
+      [
+        'Emulation.setDeviceMetricsOverride',
+        {
+          width: 375,
+          height: 667,
+          deviceScaleFactor: 2,
+          mobile: true,
+          screenOrientation: { type: 'portraitPrimary', angle: 0 },
+        },
+      ],
+    ]);
+    failCapture = false;
+    rawCdp.send.mockClear();
+
+    let releaseTraceStart = () => {};
+    rawCdp.send.mockImplementationOnce(async () => new Promise<void>(resolve => (releaseTraceStart = resolve)));
+    const startingTrace = page.startTrace();
+    await Promise.resolve();
+    await expect(page.startTrace()).rejects.toThrow('already running');
+    releaseTraceStart();
+    await startingTrace;
+    await expect(page.stopTrace()).resolves.toEqual(Buffer.from('{"traceEvents":[]}'));
+    expect(rawCdp.send).toHaveBeenCalledWith('Tracing.start', {
+      categories:
+        '-*,devtools.timeline,v8.execute,disabled-by-default-devtools.timeline,disabled-by-default-devtools.timeline.frame,toplevel,blink.console,blink.user_timing,latencyInfo,disabled-by-default-devtools.timeline.stack,disabled-by-default-v8.cpu_profiler,disabled-by-default-v8.cpu_profiler.hires',
+      transferMode: 'ReturnAsStream',
+    });
+    expect(rawCdp.send).toHaveBeenCalledWith('IO.close', { handle: 'trace-stream' });
+    rawCdp.send.mockRejectedValueOnce(new Error('trace start failed'));
+    await expect(page.startTrace()).rejects.toThrow('trace start failed');
+    await page.startTrace();
+    rawCdp.send.mockRejectedValueOnce(new Error('trace end failed'));
+    await expect(page.stopTrace()).rejects.toThrow('trace end failed');
+    expect(rawCdp.listenerCount('Tracing.tracingComplete')).toBe(0);
+    await expect(page.startTrace()).rejects.toThrow('Close the browser');
+  });
+
+  it('closes a Chromium trace stream when reading fails', async () => {
+    const rawCdp = new FakeCdp();
+    rawCdp.send.mockImplementation(async method => {
+      if (method === 'Tracing.end') {
+        queueMicrotask(() => rawCdp.emit('Tracing.tracingComplete', { stream: 'trace-stream' }));
+      }
+      if (method === 'IO.read') throw new Error('trace read failed');
+      return {};
+    });
+    const page = new PlaywrightCapturePage({} as Page, rawCdp as unknown as CDPSession);
 
     await page.startTrace();
-    await expect(page.startTrace()).rejects.toThrow('already running');
-    await expect(page.stopTrace()).resolves.toEqual(Buffer.from('{"traceEvents":[]}'));
-    expect(rawCdp.send).toHaveBeenCalledWith(
-      'Tracing.start',
-      expect.objectContaining({ transferMode: 'ReturnAsStream' }),
-    );
+    await expect(page.stopTrace()).rejects.toThrow('trace read failed');
     expect(rawCdp.send).toHaveBeenCalledWith('IO.close', { handle: 'trace-stream' });
+    await expect(page.startTrace()).rejects.toThrow('Close the browser');
   });
 });
 
@@ -167,14 +275,6 @@ describe(PlaywrightBrowserBackend, () => {
     const findChrome = vi.fn(async () => ({ executablePath: null, type: null }) as const);
     const backend = new PlaywrightBrowserBackend({
       canAccess: path => path === '/managed/chromium',
-      deviceDescriptors: {
-        'Test Phone': {
-          viewport: { width: 320, height: 640 },
-          deviceScaleFactor: 2,
-          isMobile: true,
-          hasTouch: true,
-        },
-      } as never,
       findChrome,
       launch,
       managedExecutablePath: () => '/managed/chromium',
@@ -194,18 +294,6 @@ describe(PlaywrightBrowserBackend, () => {
     expect(vi.mocked(browser.newContext)).toHaveBeenCalledWith({ viewport: { width: 800, height: 600 } });
     expect(closeContext).toHaveBeenCalledTimes(1);
     expect(closeBrowser).toHaveBeenCalledTimes(1);
-    expect(backend.devices()).toEqual([
-      {
-        name: 'Test Phone',
-        viewport: {
-          width: 320,
-          height: 640,
-          deviceScaleFactor: 2,
-          isMobile: true,
-          hasTouch: true,
-        },
-      },
-    ]);
   });
 
   it('honors an explicitly requested installed channel before managed Chromium', async () => {
@@ -213,7 +301,6 @@ describe(PlaywrightBrowserBackend, () => {
     const findChrome = vi.fn(async () => ({ executablePath: '/stable/chrome', type: 'stable' }) as const);
     const backend = new PlaywrightBrowserBackend({
       canAccess: () => true,
-      deviceDescriptors: {} as never,
       findChrome,
       launch,
       managedExecutablePath: () => '/managed/chromium',
@@ -245,7 +332,6 @@ describe(PlaywrightBrowserBackend, () => {
     );
     const backend = new PlaywrightBrowserBackend({
       canAccess: () => false,
-      deviceDescriptors: {} as never,
       findChrome,
       launch,
       managedExecutablePath: () => '/missing/managed/chromium',

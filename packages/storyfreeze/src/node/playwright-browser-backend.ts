@@ -1,7 +1,6 @@
 import fs from 'node:fs';
 import {
   chromium,
-  devices,
   type Browser,
   type BrowserContext,
   type CDPSession,
@@ -15,7 +14,6 @@ import {
   ChromiumNotFoundError,
   type BrowserBackend,
   type BrowserConsoleMessage,
-  type BrowserDeviceDescriptor,
   type BrowserInstance,
   type BrowserRequest,
   type BrowserRuntimeOptions,
@@ -44,7 +42,6 @@ const traceCategories = [
 
 type PlaywrightBackendDependencies = {
   canAccess(path: string): boolean;
-  deviceDescriptors: typeof devices;
   findChrome(options: FindChromeOptions): Promise<FindChromeResult>;
   launch(options: Parameters<typeof chromium.launch>[0]): Promise<Browser>;
   managedExecutablePath(): string;
@@ -59,13 +56,13 @@ const defaultDependencies: PlaywrightBackendDependencies = {
       return false;
     }
   },
-  deviceDescriptors: devices,
   findChrome,
   launch: options => chromium.launch(options),
   managedExecutablePath: () => chromium.executablePath(),
 };
 
 type CdpClient = {
+  off(event: string, listener: (payload: unknown) => void): unknown;
   once(event: string, listener: (payload: unknown) => void): unknown;
   send(method: string, params?: Record<string, unknown>): Promise<unknown>;
 };
@@ -77,7 +74,8 @@ function asCdpClient(session: CDPSession): CdpClient {
 export class PlaywrightCapturePage implements CapturePage {
   private readonly requests = new WeakMap<Request, BrowserRequest>();
   private readonly cdp: CdpClient;
-  private tracing = false;
+  private traceState: 'idle' | 'starting' | 'active' | 'stopping' | 'failed' = 'idle';
+  private viewport?: Viewport;
 
   constructor(
     private readonly rawPage: Page,
@@ -155,21 +153,40 @@ export class PlaywrightCapturePage implements CapturePage {
   }
 
   async screenshot(options: ScreenshotCaptureOptions) {
-    await this.rawPage.bringToFront();
-    if (options.omitBackground) {
-      await this.cdp.send('Emulation.setDefaultBackgroundColorOverride', {
-        color: { r: 0, g: 0, b: 0, a: 0 },
-      });
+    if (options.clip && options.fullPage) {
+      throw new Error('options.clip and options.fullPage are exclusive');
+    }
+    if (options.clip) {
+      for (const key of ['x', 'y', 'width', 'height'] as const) {
+        if (typeof options.clip[key] !== 'number') {
+          throw new TypeError(`Expected options.clip.${key} to be a number`);
+        }
+      }
+      if (options.clip.width === 0) throw new Error('Expected options.clip.width not to be 0.');
+      if (options.clip.height === 0) throw new Error('Expected options.clip.height not to be 0.');
     }
 
+    await this.rawPage.bringToFront();
+    const captureBeyondViewport =
+      typeof options.captureBeyondViewport === 'boolean' ? options.captureBeyondViewport : true;
+    let clip = options.clip
+      ? {
+          x: Math.round(options.clip.x),
+          y: Math.round(options.clip.y),
+          width: Math.round(options.clip.width + options.clip.x - Math.round(options.clip.x)),
+          height: Math.round(options.clip.height + options.clip.y - Math.round(options.clip.y)),
+          scale: 1,
+        }
+      : undefined;
+    let backgroundOverridden = false;
+    let viewportOverridden = false;
+
     try {
-      let clip = options.clip ? { ...options.clip, scale: 1 } : undefined;
       if (options.fullPage) {
         const metrics = (await this.cdp.send('Page.getLayoutMetrics')) as {
           contentSize: { height: number; width: number };
-          cssContentSize?: { height: number; width: number };
         };
-        const contentSize = metrics.cssContentSize ?? metrics.contentSize;
+        const contentSize = metrics.contentSize;
         clip = {
           x: 0,
           y: 0,
@@ -177,74 +194,118 @@ export class PlaywrightCapturePage implements CapturePage {
           height: Math.ceil(contentSize.height),
           scale: 1,
         };
+        if (!captureBeyondViewport && this.viewport) {
+          await this.applyDeviceMetrics({ ...this.viewport, width: clip.width, height: clip.height });
+          viewportOverridden = true;
+        }
+      }
+      if (options.omitBackground) {
+        await this.cdp.send('Emulation.setDefaultBackgroundColorOverride', {
+          color: { r: 0, g: 0, b: 0, a: 0 },
+        });
+        backgroundOverridden = true;
       }
       const result = (await this.cdp.send('Page.captureScreenshot', {
         format: 'png',
         ...(clip ? { clip } : {}),
-        captureBeyondViewport: options.fullPage || (options.captureBeyondViewport ?? false),
+        captureBeyondViewport,
       })) as { data: string };
       return Buffer.from(result.data, 'base64');
     } finally {
-      if (options.omitBackground) {
-        await this.cdp.send('Emulation.setDefaultBackgroundColorOverride');
+      try {
+        if (backgroundOverridden) {
+          await this.cdp.send('Emulation.setDefaultBackgroundColorOverride');
+        }
+      } finally {
+        if (viewportOverridden && this.viewport) await this.applyDeviceMetrics(this.viewport);
       }
     }
   }
 
   async setViewport(viewport: Viewport) {
     await this.rawPage.setViewportSize({ width: viewport.width, height: viewport.height });
+    await this.applyDeviceMetrics(viewport);
+    const hasTouch = viewport.hasTouch ?? false;
+    await this.cdp.send('Emulation.setTouchEmulationEnabled', {
+      enabled: hasTouch,
+      ...(hasTouch ? { maxTouchPoints: 1 } : {}),
+    });
+    this.viewport = { ...viewport };
+  }
+
+  private applyDeviceMetrics(viewport: Viewport) {
     const orientation = viewport.isLandscape
       ? { type: 'landscapePrimary', angle: 90 }
       : { type: 'portraitPrimary', angle: 0 };
-    await this.cdp.send('Emulation.setDeviceMetricsOverride', {
+    return this.cdp.send('Emulation.setDeviceMetricsOverride', {
       width: viewport.width,
       height: viewport.height,
       deviceScaleFactor: viewport.deviceScaleFactor || 1,
       mobile: viewport.isMobile ?? false,
       screenOrientation: orientation,
     });
-    const hasTouch = viewport.hasTouch ?? false;
-    await this.cdp.send('Emulation.setTouchEmulationEnabled', {
-      enabled: hasTouch,
-      ...(hasTouch ? { maxTouchPoints: 1 } : {}),
-    });
   }
 
   async startTrace() {
-    if (this.tracing) throw new Error('A Chromium trace is already running.');
-    await this.cdp.send('Tracing.start', {
-      categories: traceCategories,
-      transferMode: 'ReturnAsStream',
-    });
-    this.tracing = true;
+    if (this.traceState === 'failed') {
+      throw new Error('The Chromium trace state is unavailable. Close the browser before tracing again.');
+    }
+    if (this.traceState !== 'idle') throw new Error('A Chromium trace is already running.');
+    this.traceState = 'starting';
+    try {
+      await this.cdp.send('Tracing.start', {
+        categories: traceCategories,
+        transferMode: 'ReturnAsStream',
+      });
+      this.traceState = 'active';
+    } catch (error) {
+      this.traceState = 'idle';
+      throw error;
+    }
   }
 
   async stopTrace() {
-    if (!this.tracing) throw new Error('A Chromium trace has not been started.');
+    if (this.traceState !== 'active') throw new Error('A Chromium trace has not been started.');
+    this.traceState = 'stopping';
+    let completedReceived = false;
+    let resolveCompleted!: (result: { stream?: string }) => void;
     const completed = new Promise<{ stream?: string }>(resolve => {
-      this.cdp.once('Tracing.tracingComplete', payload => resolve(payload as { stream?: string }));
+      resolveCompleted = resolve;
     });
-    await this.cdp.send('Tracing.end');
-    this.tracing = false;
-    const { stream } = await completed;
-    if (!stream) throw new Error('Chromium did not provide a trace stream.');
-
-    const chunks: Buffer[] = [];
+    const onCompleted = (payload: unknown) => {
+      completedReceived = true;
+      resolveCompleted(payload as { stream?: string });
+    };
+    this.cdp.once('Tracing.tracingComplete', onCompleted);
     try {
-      let eof = false;
-      while (!eof) {
-        const result = (await this.cdp.send('IO.read', { handle: stream })) as {
-          base64Encoded?: boolean;
-          data: string;
-          eof?: boolean;
-        };
-        chunks.push(Buffer.from(result.data, result.base64Encoded ? 'base64' : 'utf8'));
-        eof = Boolean(result.eof);
+      await this.cdp.send('Tracing.end');
+      const { stream } = await completed;
+      if (!stream) throw new Error('Chromium did not provide a trace stream.');
+
+      const chunks: Buffer[] = [];
+      try {
+        let eof = false;
+        while (!eof) {
+          const result = (await this.cdp.send('IO.read', { handle: stream })) as {
+            base64Encoded?: boolean;
+            data: string;
+            eof?: boolean;
+          };
+          chunks.push(Buffer.from(result.data, result.base64Encoded ? 'base64' : 'utf8'));
+          eof = Boolean(result.eof);
+        }
+      } finally {
+        await this.cdp.send('IO.close', { handle: stream });
       }
+      const buffer = Buffer.concat(chunks);
+      this.traceState = 'idle';
+      return buffer;
+    } catch (error) {
+      this.traceState = 'failed';
+      throw error;
     } finally {
-      await this.cdp.send('IO.close', { handle: stream });
+      if (!completedReceived) this.cdp.off('Tracing.tracingComplete', onCompleted);
     }
-    return Buffer.concat(chunks);
   }
 
   subscribeConsole(listener: (message: BrowserConsoleMessage) => void) {
@@ -338,18 +399,6 @@ export class PlaywrightBrowserBackend implements BrowserBackend {
   readonly name = 'playwright';
 
   constructor(private readonly dependencies: PlaywrightBackendDependencies = defaultDependencies) {}
-
-  devices(): readonly BrowserDeviceDescriptor[] {
-    return Object.entries(this.dependencies.deviceDescriptors).map(([name, descriptor]) => ({
-      name,
-      viewport: {
-        ...descriptor.viewport,
-        deviceScaleFactor: descriptor.deviceScaleFactor,
-        isMobile: descriptor.isMobile,
-        hasTouch: descriptor.hasTouch,
-      },
-    }));
-  }
 
   protected async locateChromium(options: BrowserRuntimeOptions) {
     const explicitPath = options.chromiumPath || options.launchOptions?.executablePath;

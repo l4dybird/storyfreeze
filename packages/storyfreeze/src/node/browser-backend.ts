@@ -101,6 +101,5 @@ export interface BrowserInstance {
 
 export interface BrowserBackend {
   readonly name: BrowserBackendName;
-  devices(): readonly BrowserDeviceDescriptor[];
   launch(options: BrowserRuntimeOptions): Promise<BrowserInstance>;
 }

@@ -11,6 +11,11 @@ import {
 } from 'playwright-core';
 import type { Viewport } from '../shared/types.js';
 import {
+  waitForVisualCommitInPage,
+  waitForVisualCommitWithAbort,
+  type VisualCommitOptions,
+} from '../shared/visual-commit.js';
+import {
   ChromiumNotFoundError,
   type BrowserBackend,
   type BrowserConsoleMessage,
@@ -150,6 +155,10 @@ export class PlaywrightCapturePage implements CapturePage {
   async resetPointer() {
     await this.rawPage.mouse.move(0, 0);
     await this.rawPage.mouse.click(0, 0);
+  }
+
+  waitForVisualCommit(options: VisualCommitOptions, signal?: AbortSignal) {
+    return waitForVisualCommitWithAbort(this.rawPage.evaluate(waitForVisualCommitInPage, options), signal);
   }
 
   async screenshot(options: ScreenshotCaptureOptions) {

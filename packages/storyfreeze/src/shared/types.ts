@@ -73,11 +73,15 @@ export interface Exposed {
 }
 
 export type PreviewCaptureDiagnostic = {
-  type: 'idle-wait';
+  type: 'visual-commit';
   didTimeout: boolean;
   elapsedMs: number;
+  fontsStatus: FontFaceSetLoadStatus | 'unsupported';
+  imageCount: number;
+  imageDecodeFailureCount: number;
   requestId: string;
   storyId: string;
+  usedAnimationFrameFallback: boolean;
   variantKey: string[];
   visibilityState: DocumentVisibilityState;
 };

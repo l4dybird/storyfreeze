@@ -12,6 +12,7 @@ import {
   type SerializedError,
   type StoryFreezePreviewStateV1,
 } from '../shared/preview-protocol.js';
+import { waitForVisualCommitInPage } from '../shared/visual-commit.js';
 
 type Args<T> = T extends (...args: infer A) => any ? A : never;
 type Return<T> = T extends (...args: any) => infer R ? R : never;
@@ -21,7 +22,6 @@ type ExposedFns = {
 };
 
 type StoryFreezeWindow = typeof window & {
-  requestIdleCallback(cb: Function, opt?: { timeout: number }): void;
   optionStore?: { [storyKey: string]: ScreenshotOptions[] };
   reportCaptureDiagnostic?: (event: PreviewCaptureDiagnostic) => Promise<void>;
   [STORYFREEZE_PREVIEW_STATE_GLOBAL]?: StoryFreezePreviewStateV1;
@@ -62,24 +62,6 @@ function waitUserFunction(waitFor: undefined | null | string | (() => Promise<an
     return typeof userDefinedFn === 'function' ? Promise.resolve().then(() => userDefinedFn()) : Promise.resolve();
   }
   return typeof waitFor === 'function' ? waitFor() : Promise.resolve();
-}
-
-function waitForNextIdle(win: StoryFreezeWindow) {
-  if (!win.reportCaptureDiagnostic) {
-    return new Promise<undefined>(res => win.requestIdleCallback(() => res(undefined), { timeout: 3000 }));
-  }
-  return new Promise<{ didTimeout: boolean; elapsedMs: number; visibilityState: DocumentVisibilityState }>(res => {
-    const startedAt = performance.now();
-    win.requestIdleCallback(
-      (deadline: IdleDeadline) =>
-        res({
-          didTimeout: deadline.didTimeout,
-          elapsedMs: performance.now() - startedAt,
-          visibilityState: document.visibilityState,
-        }),
-      { timeout: 3000 },
-    );
-  });
 }
 
 function pushOptions(win: StoryFreezeWindow, storyKey: string, opt: ScreenshotOptions) {
@@ -152,18 +134,19 @@ export async function finalizeScreenshot(context: { id?: string; abortSignal?: A
       if (context.abortSignal?.aborted) return;
       await waitUserFunction(screenshotOptions.waitFor);
       if (context.abortSignal?.aborted) return;
-      const idleDiagnostic = await waitForNextIdle(win);
-      if (idleDiagnostic) {
-        void Promise.resolve(
-          win.reportCaptureDiagnostic?.({
-            type: 'idle-wait',
-            ...idleDiagnostic,
-            requestId: identity.requestId,
-            storyId: identity.storyId,
-            variantKey: variantKey.keys,
-          }),
-        ).catch(() => {});
-      }
+      const visualCommitDiagnostic = await waitForVisualCommitInPage(
+        { paintFallbackMs: 250, timeoutMs: 3000 },
+        context.abortSignal,
+      );
+      void Promise.resolve(
+        win.reportCaptureDiagnostic?.({
+          type: 'visual-commit',
+          ...visualCommitDiagnostic,
+          requestId: identity.requestId,
+          storyId: identity.storyId,
+          variantKey: variantKey.keys,
+        }),
+      ).catch(() => {});
       if (context.abortSignal?.aborted) return;
     }
 

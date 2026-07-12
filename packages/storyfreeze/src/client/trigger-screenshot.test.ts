@@ -6,13 +6,13 @@ describe(finalizeScreenshot, () => {
   const originalDocument = Object.getOwnPropertyDescriptor(globalThis, 'document');
   const originalWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
   const originalLocation = Object.getOwnPropertyDescriptor(globalThis, 'location');
+  const originalRequestAnimationFrame = Object.getOwnPropertyDescriptor(globalThis, 'requestAnimationFrame');
 
   function installWindow(overrides: Record<string, unknown> = {}) {
     const win = {
       getBaseScreenshotOptions: vi.fn(async () => ({})),
       getCurrentVariantKey: vi.fn(async () => ({ isDefault: true, keys: [] })),
       waitBrowserMetricsStable: vi.fn(async () => {}),
-      requestIdleCallback: (callback: Function) => callback({ didTimeout: false }),
       ...overrides,
     };
     Object.defineProperty(globalThis, 'window', { configurable: true, value: win });
@@ -22,7 +22,14 @@ describe(finalizeScreenshot, () => {
     });
     Object.defineProperty(globalThis, 'document', {
       configurable: true,
-      value: { visibilityState: 'visible' },
+      value: { images: [], visibilityState: 'visible' },
+    });
+    Object.defineProperty(globalThis, 'requestAnimationFrame', {
+      configurable: true,
+      value: (callback: FrameRequestCallback) => {
+        callback(0);
+        return 1;
+      },
     });
     return win;
   }
@@ -35,6 +42,9 @@ describe(finalizeScreenshot, () => {
     else Reflect.deleteProperty(globalThis, 'location');
     if (originalDocument) Object.defineProperty(globalThis, 'document', originalDocument);
     else Reflect.deleteProperty(globalThis, 'document');
+    if (originalRequestAnimationFrame) {
+      Object.defineProperty(globalThis, 'requestAnimationFrame', originalRequestAnimationFrame);
+    } else Reflect.deleteProperty(globalThis, 'requestAnimationFrame');
   });
 
   it('does not publish ready from an aborted stale afterEach', async () => {
@@ -71,22 +81,23 @@ describe(finalizeScreenshot, () => {
     });
   });
 
-  it('reports the preview idle result when diagnostics are exposed', async () => {
+  it('reports the preview visual commit result when diagnostics are exposed', async () => {
     const reportCaptureDiagnostic = vi.fn(async () => {});
-    const win = installWindow({
-      reportCaptureDiagnostic,
-      requestIdleCallback: (callback: Function) => callback({ didTimeout: true }),
-    });
+    const win = installWindow({ reportCaptureDiagnostic });
 
     triggerScreenshot({}, { id: 'button--primary' });
     await finalizeScreenshot({ id: 'button--primary', abortSignal: new AbortController().signal });
 
     expect(reportCaptureDiagnostic).toHaveBeenCalledWith({
-      type: 'idle-wait',
-      didTimeout: true,
+      type: 'visual-commit',
+      didTimeout: false,
       elapsedMs: expect.any(Number),
+      fontsStatus: 'unsupported',
+      imageCount: 0,
+      imageDecodeFailureCount: 0,
       requestId: '0-1',
       storyId: 'button--primary',
+      usedAnimationFrameFallback: false,
       variantKey: [],
       visibilityState: 'visible',
     });

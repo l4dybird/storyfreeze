@@ -1,4 +1,5 @@
 import type { Viewport } from '../shared/types.js';
+import type { VisualCommitOptions, VisualCommitResult } from '../shared/visual-commit.js';
 
 export type ChromeChannel = 'puppeteer' | 'canary' | 'stable' | '*';
 export const browserBackendNames = ['puppeteer', 'playwright'] as const;
@@ -86,6 +87,7 @@ export interface CapturePage {
   stopTrace(): Promise<Buffer>;
   subscribeConsole(listener: (message: BrowserConsoleMessage) => void): () => void;
   subscribeRequests(listeners: RequestListeners): () => void;
+  waitForVisualCommit(options: VisualCommitOptions, signal?: AbortSignal): Promise<VisualCommitResult>;
 }
 
 export interface BrowserSession {

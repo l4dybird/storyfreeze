@@ -158,7 +158,7 @@ export async function main(mainOptions: MainOptions, overrides: Partial<MainDepe
     logger.debug('Created to connection.');
 
     // Launch a browser process and fetch names of all stories.
-    storiesBrowser = new BaseBrowser(mainOptions, browserBackend);
+    storiesBrowser = new BaseBrowser(mainOptions, browserBackend, { role: 'story-index' });
     await storiesBrowser.boot();
     throwIfAborted(mainOptions.signal);
     logger.log('Executable Chromium path:', logger.color.magenta(storiesBrowser.executablePath));

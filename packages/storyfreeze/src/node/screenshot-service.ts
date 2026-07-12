@@ -3,6 +3,7 @@ import type { FileSystem } from './file.js';
 import type { Logger } from './logger.js';
 import type { Story } from './story.js';
 import type { VariantKey } from '../shared/types.js';
+import { emitCaptureDiagnostic } from './capture-diagnostics.js';
 
 function createRequest({
   story,
@@ -109,6 +110,15 @@ export function createScreenshotService({
           const suffix = variantKey.isDefault && defaultVariantSuffix ? [defaultVariantSuffix] : variantKey.keys;
           const path = await fileSystem.saveScreenshot(story.kind, story.story, suffix, buffer);
           logger.log(`Screenshot stored: ${logger.color.magenta(path)} in ${elapsedTime} msec.`);
+          emitCaptureDiagnostic({
+            type: 'capture-output',
+            durationMs: elapsedTime,
+            path,
+            requestId: rid,
+            retryCount: count,
+            storyId: story.id,
+            variantKey: variantKey.keys,
+          });
           return true;
         }
       },

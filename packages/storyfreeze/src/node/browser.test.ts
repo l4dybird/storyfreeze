@@ -137,6 +137,16 @@ describe(MetricsWatcher, () => {
     await expect(new MetricsWatcher(page, 4).waitForStable()).resolves.toBe(4);
     expect(page.readMetrics).toHaveBeenCalledTimes(4);
   });
+
+  it('reports the number of metrics samples without changing the stability result', async () => {
+    const metrics: BrowserMetrics = { nodes: 1, recalcStyleCount: 2, layoutCount: 3 };
+    const page = { readMetrics: vi.fn(async () => metrics) } as Pick<CapturePage, 'readMetrics'>;
+    const watcher = new MetricsWatcher(page, 10);
+
+    await expect(watcher.waitForStable()).resolves.toBe(3);
+    expect(watcher.sampleCount).toBe(4);
+    expect(watcher.samples).toEqual([metrics, metrics, metrics]);
+  });
 });
 
 describe(getDeviceDescriptors, () => {

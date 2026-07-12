@@ -62,6 +62,17 @@ export class ResourceWatcher {
     return [...this.requestedAssetUrls];
   }
 
+  getDiagnosticSnapshot() {
+    return {
+      pending: [...this.inFlight.keys()].map(request => ({
+        method: request.method,
+        resourceType: request.resourceType,
+        url: request.url,
+      })),
+      requestedUrls: this.getRequestedUrls(),
+    };
+  }
+
   async waitForRequestsComplete() {
     const urls = this.getRequestedUrls();
     while (this.inFlight.size) {

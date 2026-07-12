@@ -1,5 +1,5 @@
-import type { Page } from 'puppeteer-core';
 import { sleep } from './async-utils.js';
+import type { CapturePage } from './browser-backend.js';
 import type { RunMode } from './types.js';
 import {
   PreviewAddonVersionMismatchError,
@@ -35,7 +35,9 @@ export function createStoryPreviewUrl(baseUrl: URL, storyId: string, requestId: 
   return url;
 }
 
-async function readPreviewState(page: Page): Promise<unknown> {
+type NavigationPage = Pick<CapturePage, 'currentUrl' | 'evaluate' | 'goto'>;
+
+async function readPreviewState(page: NavigationPage): Promise<unknown> {
   return page.evaluate(
     globalName => (window as unknown as Record<string, unknown>)[globalName],
     STORYFREEZE_PREVIEW_STATE_GLOBAL,
@@ -70,7 +72,7 @@ function validatePreviewState(raw: unknown, expected: ExpectedPreviewState): Sto
 }
 
 async function waitForMarker(
-  page: Page,
+  page: NavigationPage,
   expected: ExpectedPreviewState,
   timeout: number,
   signal?: AbortSignal,
@@ -88,7 +90,7 @@ async function waitForMarker(
 }
 
 export async function detectPreviewMode(
-  page: Page,
+  page: NavigationPage,
   baseUrl: URL,
   storyId: string,
   timeout: number,
@@ -105,7 +107,7 @@ export class StoryNavigator {
   private current?: ExpectedPreviewState;
 
   constructor(
-    private readonly page: Page,
+    private readonly page: NavigationPage,
     private readonly baseUrl: URL,
     private readonly workerId: number,
   ) {}
@@ -135,6 +137,6 @@ export class StoryNavigator {
       await sleep(25);
     } while (Date.now() < deadline);
 
-    throw new PreviewReadyTimeoutError(timeout, this.page.url(), this.current, lastState);
+    throw new PreviewReadyTimeoutError(timeout, this.page.currentUrl(), this.current, lastState);
   }
 }

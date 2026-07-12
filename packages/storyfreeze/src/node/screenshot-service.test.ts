@@ -1,5 +1,4 @@
 import { describe, expect, it, vi } from 'vite-plus/test';
-import type { CapturingBrowser } from './capturing-browser.js';
 import type { FileSystem } from './file.js';
 import type { Logger } from './logger.js';
 import { createScreenshotService } from './screenshot-service.js';
@@ -37,7 +36,7 @@ describe(createScreenshotService, () => {
     } as unknown as Logger;
 
     const service = createScreenshotService({
-      workers: [{ screenshot }] as unknown as CapturingBrowser[],
+      workers: [{ screenshot }],
       stories: [story],
       fileSystem: { saveScreenshot } as unknown as FileSystem,
       logger,
@@ -83,7 +82,7 @@ describe(createScreenshotService, () => {
     } as unknown as Logger;
 
     const service = createScreenshotService({
-      workers: [createWorker('one'), createWorker('two')] as unknown as CapturingBrowser[],
+      workers: [createWorker('one'), createWorker('two')],
       stories: [story],
       fileSystem: { saveScreenshot } as unknown as FileSystem,
       logger,

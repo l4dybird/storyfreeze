@@ -1,6 +1,5 @@
 import type { Logger } from './logger.js';
-import type { LaunchOptions } from 'puppeteer-core';
-import type { BaseBrowserOptions, ChromeChannel } from './browser.js';
+import type { BrowserLaunchOptions, BrowserRuntimeOptions, ChromeChannel } from './browser-backend.js';
 import type { StorybookConnectionOptions } from './managed-storybook-connection.js';
 
 /**
@@ -26,7 +25,7 @@ export type ShardOptions = {
  * Almost all of fields are dericed CLI options.
  *
  **/
-export interface MainOptions extends BaseBrowserOptions {
+export interface MainOptions extends BrowserRuntimeOptions {
   signal?: AbortSignal;
   serverOptions: StorybookConnectionOptions;
   captureTimeout: number;
@@ -49,6 +48,6 @@ export interface MainOptions extends BaseBrowserOptions {
   metricsWatchRetryCount: number;
   chromiumChannel: ChromeChannel;
   chromiumPath: string;
-  launchOptions: LaunchOptions;
+  launchOptions: BrowserLaunchOptions;
   logger: Logger;
 }

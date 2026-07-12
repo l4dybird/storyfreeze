@@ -12,22 +12,35 @@ import { createRequire } from 'node:module';
 import puppeteerCore, {
   type Browser,
   type BrowserLaunchArgumentOptions,
+  type ConsoleMessage,
+  type HTTPRequest,
   type LaunchOptions,
-  type Metrics,
   type Page,
 } from 'puppeteer-core';
 import { sleep } from './async-utils.js';
+import type {
+  BrowserBackend,
+  BrowserConsoleMessage,
+  BrowserDeviceDescriptor,
+  BrowserInstance,
+  BrowserLaunchOptions,
+  BrowserMetrics,
+  BrowserRequest,
+  BrowserRuntimeOptions,
+  BrowserSession,
+  CapturePage,
+  NavigationOptions,
+  RequestListeners,
+  ScreenshotCaptureOptions,
+  ChromeChannel,
+} from './browser-backend.js';
+import type { Viewport } from '../shared/types.js';
 
 const require = createRequire(import.meta.url);
 const newLineRegex = /\r?\n/;
 
-export type ChromeChannel = 'puppeteer' | 'canary' | 'stable' | '*';
-
-export interface BaseBrowserOptions {
-  launchOptions?: LaunchOptions & BrowserLaunchArgumentOptions;
-  chromiumChannel?: ChromeChannel;
-  chromiumPath?: string;
-}
+export type { ChromeChannel } from './browser-backend.js';
+export type BaseBrowserOptions = BrowserRuntimeOptions;
 
 export class ChromiumNotFoundError extends Error {
   name = 'ChromiumNotFoundError';
@@ -203,22 +216,160 @@ export async function findChrome(options: FindChromeOptions): Promise<FindChrome
   return { executablePath: null, type: null };
 }
 
-export class BaseBrowser {
-  private browser?: Browser;
-  private _page?: Page;
-  private _executablePath = '';
-  private debugInputResolver = () => {};
-  private debugInputPromise: Promise<void> = Promise.resolve();
+class PuppeteerCapturePage implements CapturePage {
+  private readonly requests = new WeakMap<HTTPRequest, BrowserRequest>();
 
-  constructor(protected opt: BaseBrowserOptions) {}
+  constructor(private readonly rawPage: Page) {}
 
-  get page() {
-    if (!this._page) throw new Error('The browser page is not available before boot completes.');
-    return this._page;
+  addStyleFile(path: string) {
+    return this.rawPage.addStyleTag({ path }).then(() => {});
   }
 
-  get executablePath() {
-    return this._executablePath;
+  blur(selector: string) {
+    return this.rawPage.$eval(selector, (element: unknown) => (element as HTMLElement)?.blur());
+  }
+
+  click(selector: string) {
+    return this.rawPage.click(selector);
+  }
+
+  currentUrl() {
+    return this.rawPage.url();
+  }
+
+  async elementExists(selector: string) {
+    return Boolean(await this.rawPage.$(selector));
+  }
+
+  evaluate<Result>(fn: () => Result | Promise<Result>): Promise<Awaited<Result>>;
+  evaluate<Argument, Result>(
+    fn: (argument: Argument) => Result | Promise<Result>,
+    argument: Argument,
+  ): Promise<Awaited<Result>>;
+  evaluate<Argument, Result>(
+    fn: ((argument: Argument) => Result | Promise<Result>) | (() => Result | Promise<Result>),
+    argument?: Argument,
+  ) {
+    return this.rawPage.evaluate(fn as never, argument as never) as Promise<Awaited<Result>>;
+  }
+
+  exposeFunction<Arguments extends unknown[], Result>(
+    name: string,
+    fn: (...args: Arguments) => Result | Promise<Result>,
+  ) {
+    return this.rawPage.exposeFunction(name, fn as never);
+  }
+
+  focus(selector: string) {
+    return this.rawPage.focus(selector);
+  }
+
+  async goto(url: string, options?: NavigationOptions) {
+    await this.rawPage.goto(url, options);
+  }
+
+  hover(selector: string) {
+    return this.rawPage.hover(selector);
+  }
+
+  async readMetrics(): Promise<BrowserMetrics> {
+    const metrics = await this.rawPage.metrics();
+    return {
+      nodes: metrics.Nodes,
+      recalcStyleCount: metrics.RecalcStyleCount,
+      layoutCount: metrics.LayoutCount,
+    };
+  }
+
+  async resetPointer() {
+    await this.rawPage.mouse.move(0, 0);
+    await this.rawPage.mouse.click(0, 0);
+  }
+
+  async screenshot(options: ScreenshotCaptureOptions) {
+    const result = await this.rawPage.screenshot(options);
+    return Buffer.isBuffer(result) ? result : null;
+  }
+
+  setViewport(viewport: Viewport) {
+    return this.rawPage.setViewport(viewport);
+  }
+
+  startTrace() {
+    return this.rawPage.tracing.start();
+  }
+
+  stopTrace() {
+    return this.rawPage.tracing.stop();
+  }
+
+  subscribeConsole(listener: (message: BrowserConsoleMessage) => void) {
+    const onConsole = (message: ConsoleMessage) => listener({ text: message.text(), type: message.type() });
+    this.rawPage.on('console', onConsole);
+    return () => this.rawPage.off('console', onConsole);
+  }
+
+  subscribeRequests(listeners: RequestListeners) {
+    const toRequest = (request: HTTPRequest) => {
+      let normalized = this.requests.get(request);
+      if (!normalized) {
+        normalized = {
+          method: request.method(),
+          resourceType: request.resourceType(),
+          url: request.url(),
+        };
+        this.requests.set(request, normalized);
+      }
+      return normalized;
+    };
+    const onRequest = (request: HTTPRequest) => listeners.started(toRequest(request));
+    const onRequestComplete = (request: HTTPRequest) => {
+      listeners.finished(toRequest(request));
+      this.requests.delete(request);
+    };
+    this.rawPage.on('request', onRequest);
+    this.rawPage.on('requestfinished', onRequestComplete);
+    this.rawPage.on('requestfailed', onRequestComplete);
+    return () => {
+      this.rawPage.off('request', onRequest);
+      this.rawPage.off('requestfinished', onRequestComplete);
+      this.rawPage.off('requestfailed', onRequestComplete);
+    };
+  }
+}
+
+class PuppeteerBrowserSession implements BrowserSession {
+  readonly page: CapturePage;
+
+  constructor(private readonly rawPage: Page) {
+    this.page = new PuppeteerCapturePage(rawPage);
+  }
+
+  close() {
+    return this.rawPage.close();
+  }
+}
+
+class PuppeteerBrowserInstance implements BrowserInstance {
+  constructor(
+    private readonly rawBrowser: Browser,
+    readonly executablePath: string,
+  ) {}
+
+  close() {
+    return this.rawBrowser.close();
+  }
+
+  async newSession() {
+    return new PuppeteerBrowserSession(await this.rawBrowser.newPage());
+  }
+}
+
+export class PuppeteerBrowserBackend implements BrowserBackend {
+  readonly name = 'puppeteer';
+
+  devices(): readonly BrowserDeviceDescriptor[] {
+    return Object.values(puppeteerCore.devices);
   }
 
   protected locateChrome(options: FindChromeOptions) {
@@ -229,24 +380,58 @@ export class BaseBrowser {
     return puppeteerCore.launch(options);
   }
 
-  async boot() {
-    const baseExecutablePath = this.opt.chromiumPath || this.opt.launchOptions?.executablePath;
+  async launch(options: BrowserRuntimeOptions): Promise<BrowserInstance> {
+    const baseExecutablePath = options.chromiumPath || options.launchOptions?.executablePath;
     const { executablePath } = await this.locateChrome({
       executablePath: baseExecutablePath,
-      channel: this.opt.chromiumChannel,
+      channel: options.chromiumChannel,
     });
     if (!executablePath) throw new ChromiumNotFoundError();
 
-    this._executablePath = executablePath;
-    this.browser = await this.launchBrowser({
-      ...(this.opt.launchOptions || {
-        args: ['--no-sandbox', '--disable-setuid-sandbox'],
-        headless: true,
-      }),
+    const launchOptions: BrowserLaunchOptions = options.launchOptions ?? {
+      args: ['--no-sandbox', '--disable-setuid-sandbox'],
+      headless: true,
+    };
+    const browser = await this.launchBrowser({
+      ...launchOptions,
       executablePath,
-    });
+    } as LaunchOptions & BrowserLaunchArgumentOptions);
+    return new PuppeteerBrowserInstance(browser, executablePath);
+  }
+}
+
+export const puppeteerBrowserBackend = new PuppeteerBrowserBackend();
+
+export class BaseBrowser {
+  private instance?: BrowserInstance;
+  private session?: BrowserSession;
+  private _executablePath = '';
+  private debugInputResolver = () => {};
+  private debugInputPromise: Promise<void> = Promise.resolve();
+
+  constructor(
+    protected opt: BaseBrowserOptions,
+    protected readonly backend: BrowserBackend = puppeteerBrowserBackend,
+  ) {}
+
+  get page() {
+    if (!this.session) throw new Error('The browser page is not available before boot completes.');
+    return this.session.page;
+  }
+
+  get executablePath() {
+    return this._executablePath;
+  }
+
+  protected getDeviceDescriptors() {
+    return this.backend.devices();
+  }
+
+  async boot() {
+    this.instance = await this.backend.launch(this.opt);
+    this._executablePath = this.instance.executablePath;
     try {
-      this._page = await this.browser.newPage();
+      this.session = await this.instance.newSession();
       await this.setupDebugInput();
       return this;
     } catch (error) {
@@ -256,19 +441,19 @@ export class BaseBrowser {
   }
 
   async close() {
-    const page = this._page;
-    const browser = this.browser;
-    this._page = undefined;
-    this.browser = undefined;
+    const session = this.session;
+    const instance = this.instance;
+    this.session = undefined;
+    this.instance = undefined;
 
     try {
-      await page?.close();
+      await session?.close();
     } catch {
       // Page cleanup is best effort; still attempt browser cleanup below.
     }
     try {
       await sleep(50);
-      await browser?.close();
+      await instance?.close();
     } catch {
       // Preserve disposal behavior: browser cleanup is best effort.
     }
@@ -298,10 +483,10 @@ export class BaseBrowser {
 
 export class MetricsWatcher {
   private readonly length = 3;
-  private previous: Metrics[] = [];
+  private previous: BrowserMetrics[] = [];
 
   constructor(
-    private readonly page: Page,
+    private readonly page: Pick<CapturePage, 'readMetrics'>,
     private readonly count = 1000,
   ) {}
 
@@ -314,22 +499,22 @@ export class MetricsWatcher {
   }
 
   private async check() {
-    const current = await this.page.metrics();
+    const current = await this.page.readMetrics();
     if (this.previous.length < this.length) return this.next(current);
-    if (this.diff('Nodes')) return this.next(current);
-    if (this.diff('RecalcStyleCount')) return this.next(current);
-    if (this.diff('LayoutCount')) return this.next(current);
+    if (this.diff('nodes')) return this.next(current);
+    if (this.diff('recalcStyleCount')) return this.next(current);
+    if (this.diff('layoutCount')) return this.next(current);
     return true;
   }
 
-  private diff(key: 'Nodes' | 'RecalcStyleCount' | 'LayoutCount') {
+  private diff(key: keyof BrowserMetrics) {
     for (let index = 1; index < this.previous.length; ++index) {
       if (this.previous[index][key] !== this.previous[0][key]) return true;
     }
     return false;
   }
 
-  private next(metrics: Metrics) {
+  private next(metrics: BrowserMetrics) {
     this.previous.push(metrics);
     this.previous = this.previous.slice(-this.length);
     return false;
@@ -337,5 +522,5 @@ export class MetricsWatcher {
 }
 
 export function getDeviceDescriptors() {
-  return Object.values(puppeteerCore.devices);
+  return puppeteerBrowserBackend.devices();
 }

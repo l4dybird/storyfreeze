@@ -1,5 +1,4 @@
 import { createExecutionService, time } from './async-utils.js';
-import type { CapturingBrowser } from './capturing-browser.js';
 import type { FileSystem } from './file.js';
 import type { Logger } from './logger.js';
 import type { Story } from './story.js';
@@ -39,6 +38,24 @@ export interface ScreenshotService {
   execute(): Promise<number>;
 }
 
+export interface ScreenshotWorker {
+  screenshot(
+    requestId: string,
+    story: Story,
+    variantKey: VariantKey,
+    retryCount: number,
+    logger: Logger,
+    forwardConsoleLogs: boolean,
+    trace: boolean,
+    fileSystem: FileSystem,
+  ): Promise<{
+    buffer: Buffer | null;
+    succeeded: boolean;
+    variantKeysToPush: VariantKey[];
+    defaultVariantSuffix?: string;
+  }>;
+}
+
 /**
  *
  * Parameters for {@link createScreenshotService}.
@@ -46,7 +63,7 @@ export interface ScreenshotService {
  **/
 export type ScreenshotServiceOptions = {
   logger: Logger;
-  workers: CapturingBrowser[];
+  workers: ScreenshotWorker[];
   fileSystem: FileSystem;
   stories: Story[];
   forwardConsoleLogs: boolean;

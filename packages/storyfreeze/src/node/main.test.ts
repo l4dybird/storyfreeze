@@ -1,4 +1,3 @@
-import { EventEmitter } from 'node:events';
 import { afterEach, describe, expect, it, vi } from 'vite-plus/test';
 import { BaseBrowser } from './browser.js';
 import { CapturingBrowser } from './capturing-browser.js';
@@ -135,18 +134,18 @@ describe(CapturingBrowser, () => {
       viewports: ['800x600'],
     } as unknown as MainOptions;
     const browser = new CapturingBrowser({ url: 'invalid' } as ManagedStorybookConnection, options, 'managed', 0);
-    const page = Object.assign(new EventEmitter(), {
+    const unsubscribe = vi.fn();
+    const page = {
       exposeFunction: vi.fn(async () => {}),
-    });
+      subscribeRequests: vi.fn(() => unsubscribe),
+    };
     vi.spyOn(BaseBrowser.prototype, 'boot').mockResolvedValue(browser);
     vi.spyOn(BaseBrowser.prototype, 'page', 'get').mockReturnValue(page as never);
     const close = vi.spyOn(BaseBrowser.prototype, 'close').mockResolvedValue(undefined);
 
     await expect(browser.boot()).rejects.toThrow('Invalid URL');
     expect(close).toHaveBeenCalledTimes(1);
-    expect(page.listenerCount('request')).toBe(0);
-    expect(page.listenerCount('requestfinished')).toBe(0);
-    expect(page.listenerCount('requestfailed')).toBe(0);
+    expect(unsubscribe).toHaveBeenCalledTimes(1);
   });
 });
 

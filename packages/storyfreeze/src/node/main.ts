@@ -1,5 +1,6 @@
 import nanomatch from 'nanomatch';
-import { BaseBrowser, ChromiumNotFoundError } from './browser.js';
+import { BaseBrowser, ChromiumNotFoundError, puppeteerBrowserBackend } from './browser.js';
+import type { BrowserBackend } from './browser-backend.js';
 import type { Story } from './story.js';
 import { CapturingBrowser } from './capturing-browser.js';
 import type { MainOptions, RunMode } from './types.js';
@@ -68,9 +69,14 @@ export async function bootCaptureWorkers<T extends BootableCaptureWorker<T>>(
   return results.map(result => (result as PromiseFulfilledResult<T>).value);
 }
 
-async function bootCapturingBrowserAsWorkers(connection: ManagedStorybookConnection, opt: MainOptions, mode: RunMode) {
+async function bootCapturingBrowserAsWorkers(
+  connection: ManagedStorybookConnection,
+  opt: MainOptions,
+  mode: RunMode,
+  backend: BrowserBackend,
+) {
   const browsers = [...new Array(Math.max(opt.parallel, 1)).keys()].map(
-    i => new CapturingBrowser(connection, opt, mode, i),
+    i => new CapturingBrowser(connection, opt, mode, i, backend),
   );
   await bootCaptureWorkers(browsers, opt.signal);
   opt.logger.debug(`Started ${browsers.length} capture browsers`);
@@ -122,6 +128,14 @@ export async function disposeRuntimeResources(resources: RuntimeResources, logge
   }
 }
 
+export interface MainDependencies {
+  browserBackend: BrowserBackend;
+}
+
+const defaultMainDependencies: MainDependencies = {
+  browserBackend: puppeteerBrowserBackend,
+};
+
 /**
  *
  * Run main process of StoryFreeze.
@@ -129,7 +143,8 @@ export async function disposeRuntimeResources(resources: RuntimeResources, logge
  * @param mainOptions - Parameters for this procedure
  *
  **/
-export async function main(mainOptions: MainOptions) {
+export async function main(mainOptions: MainOptions, overrides: Partial<MainDependencies> = {}) {
+  const { browserBackend } = { ...defaultMainDependencies, ...overrides };
   const logger = mainOptions.logger;
   const fileSystem = new FileSystem(mainOptions);
   let connection: ManagedStorybookConnection | undefined;
@@ -143,7 +158,7 @@ export async function main(mainOptions: MainOptions) {
     logger.debug('Created to connection.');
 
     // Launch Puppeteer process and fetch names of all stories.
-    storiesBrowser = new BaseBrowser(mainOptions);
+    storiesBrowser = new BaseBrowser(mainOptions, browserBackend);
     await storiesBrowser.boot();
     throwIfAborted(mainOptions.signal);
     logger.log('Executable Chromium path:', logger.color.magenta(storiesBrowser.executablePath));
@@ -190,7 +205,7 @@ export async function main(mainOptions: MainOptions) {
     }
 
     // Launch Puppeteer processes to capture each story.
-    workers = await bootCapturingBrowserAsWorkers(connection, mainOptions, mode);
+    workers = await bootCapturingBrowserAsWorkers(connection, mainOptions, mode, browserBackend);
     logger.debug('Created workers.');
 
     // Execution caputuring procedure.

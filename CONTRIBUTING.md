@@ -12,7 +12,7 @@
   - [Test all packages](#test-all-packages)
   - [Test a specific package](#test-a-specific-package)
 - [E2E test](#e2e-test)
-  - [All compatibility fixtures](#all-compatibility-fixtures)
+  - [All fixtures](#all-fixtures)
   - [Single fixture](#single-fixture)
 - [Update documents' ToC and CLI usage section](#update-documents-toc-and-cli-usage-section)
 
@@ -20,7 +20,7 @@
 
 ## Directory structure
 
-This repository adopts mono-repo structure using Lerna.
+This repository is a pnpm workspace.
 
 Each package has the following role:
 
@@ -31,15 +31,23 @@ Each package has the following role:
 Clone this repository and execute the following:
 
 ```sh
-$ yarn --frozen-lockfile
-$ yarn bootstrap
+$ corepack enable
+$ pnpm install --frozen-lockfile
 ```
+
+The workspace only resolves direct and transitive dependency versions that
+have been available from the npm registry for at least 24 hours. The pnpm
+version in `packageManager` is also updated only after it has been published for
+24 hours. If an update is initially rejected or CI fails because it is too new,
+wait until 24 hours after publication and retry; do not bypass the restriction.
+An emergency exception must be proposed in a separate pull request using a
+complete `package@version` and requires review.
 
 ## Lint and format
 
 ```sh
-$ yarn lint     # runs eslint
-$ yarn format   # runs prettier --write
+$ pnpm lint     # runs eslint
+$ pnpm format   # runs prettier --write
 ```
 
 ## Build
@@ -47,16 +55,13 @@ $ yarn format   # runs prettier --write
 ### Build all packages
 
 ```sh
-$ yarn build
+$ pnpm build
 ```
 
 ### Build a specific package
 
 ```sh
-$ cd packages/<package-name>
-$ yarn build
-# or
-$ yarn run tsc -p tsconfig.build.json
+$ pnpm --filter <package-name> build
 ```
 
 ## Unit test
@@ -64,36 +69,32 @@ $ yarn run tsc -p tsconfig.build.json
 ### Test all packages
 
 ```sh
-$ yarn test
+$ pnpm test
 ```
 
 ### Test a specific package
 
 ```sh
-$ cd packages/<package-name>
-$ yarn test
-# or
-$ yarn run jest
+$ pnpm --filter <package-name> test
 ```
 
 ## E2E test
 
-### All compatibility fixtures
+### All fixtures
 
 ```sh
-$ ./e2e.sh
+$ pnpm e2e
 ```
 
-During the Storybook 10 migration, the command succeeds only when each fixture
-reaches its recorded compatibility failure. Once StoryFreeze can capture the
-fixture, this check will be converted back to a screenshot-producing E2E test.
+This runs the existing Storybook 10 fixture against the packed StoryFreeze
+tarball.
 
 ### Single fixture
 
-And `e2e.sh` also accepts a specific storybook example's name. For example:
+Run the fixture script directly to test a single example:
 
 ```sh
-$ ./e2e.sh examples/react-vite
+$ pnpm --dir examples/react-vite test:storybook10-e2e
 ```
 
 ## Update documents' ToC and CLI usage section
@@ -101,5 +102,5 @@ $ ./e2e.sh examples/react-vite
 We insert ToC and CLI usage section to some Markdown files(e.g. README.md) using script. If you touch `*.md` files or add an option to CLI, please exec the following command when you stage the changes:
 
 ```sh
-$ yarn doc
+$ pnpm doc
 ```

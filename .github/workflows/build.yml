@@ -36,7 +36,6 @@ jobs:
       - name: Verify alpha publish metadata
         if: matrix.node-version == '22.18.0'
         run: |
-          test "$(node -p "require('./lerna.json').version")" = "0.1.0-alpha.0"
           test "$(node -p "require('./packages/storyfreeze/package.json').version")" = "0.1.0-alpha.0"
           test "$(node scripts/get-dist-tag.js)" = "next"
       - run: pnpm publish:dry-run

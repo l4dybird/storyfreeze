@@ -562,7 +562,11 @@ function summarizeRuns(runs) {
     phaseNames.sort().map(phase => {
       const values = diagnosticEvents
         .filter(
-          event => event.type === 'capture-phase' && event.state === 'end' && typeof event.durationMs === 'number',
+          event =>
+            event.type === 'capture-phase' &&
+            event.state === 'end' &&
+            event.phase === phase &&
+            typeof event.durationMs === 'number',
         )
         .map(event => event.durationMs);
       return [phase, { p50Ms: percentile(values, 0.5), p95Ms: percentile(values, 0.95), samples: values.length }];

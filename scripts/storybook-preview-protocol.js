@@ -5,7 +5,8 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 
 const fixtureDir = path.resolve(process.cwd(), process.argv[2] || '.');
-const npmCli = process.env.npm_execpath;
+const repoDir = path.resolve(__dirname, '..');
+const pnpmCli = process.env.npm_execpath;
 
 const interactionScreenshotPaths = [
   'Compatibility/Fixture/Interactions_clicked.png',
@@ -30,12 +31,14 @@ const simpleScreenshotPaths = [
 ].sort();
 const retryScreenshotPaths = ['Compatibility/Fixture/Retry_LARGE.png', 'Compatibility/Fixture/Retry_SMALL.png'].sort();
 
-function runNpm(script) {
-  const command = npmCli ? process.execPath : process.platform === 'win32' ? 'npm.cmd' : 'npm';
-  const args = npmCli ? [npmCli, 'run', script] : ['run', script];
+function runPnpm(script) {
+  const inheritedPnpmCli = pnpmCli && /pnpm(?:\.cjs)?$/i.test(path.basename(pnpmCli)) ? pnpmCli : undefined;
+  const command = inheritedPnpmCli ? process.execPath : process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm';
+  const args = inheritedPnpmCli ? [inheritedPnpmCli, 'run', script] : ['--dir', fixtureDir, 'run', script];
   const result = spawnSync(command, args, {
-    cwd: fixtureDir,
+    cwd: inheritedPnpmCli ? fixtureDir : repoDir,
     encoding: 'utf8',
+    shell: process.platform === 'win32' && !inheritedPnpmCli,
     env: {
       ...process.env,
       CI: 'true',
@@ -143,7 +146,7 @@ function assertScreenshots(directoryName, expectedPaths) {
 }
 
 function assertCapture({ script, mode, directoryName, expectedPaths, extraFragments = [] }) {
-  const capture = runNpm(script);
+  const capture = runPnpm(script);
   if (capture.status !== 0) {
     throw new Error(`${script} must complete successfully.`);
   }
@@ -171,7 +174,7 @@ function assertCapture({ script, mode, directoryName, expectedPaths, extraFragme
 }
 
 function requireSuccess(script, message) {
-  const result = runNpm(script);
+  const result = runPnpm(script);
   if (result.status !== 0) throw new Error(message);
 }
 
@@ -180,7 +183,6 @@ function main() {
   requireSuccess('build-storybook:simple', 'The simple Storybook 10 static build must succeed.');
   assertStaticBuild('storybook-static/simple');
 
-  requireSuccess('storyfreeze:prepare', 'Failed to install the local StoryFreeze tarball into the fixture.');
   requireSuccess('build-storybook:managed', 'The managed Storybook 10 static build must succeed.');
   assertStaticBuild('storybook-static/managed');
 

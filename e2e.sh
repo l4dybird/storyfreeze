@@ -4,11 +4,8 @@ set -euo pipefail
 
 function run() {
   local fixture=$1
-  pushd "$fixture" > /dev/null
   echo "Start $fixture"
-  npm ci
-  npm run test:storybook10-e2e
-  popd > /dev/null
+  pnpm --dir "$fixture" run test:storybook10-e2e
   echo "Success $fixture"
   echo ""
 }

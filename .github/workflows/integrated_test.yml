@@ -24,4 +24,6 @@ jobs:
       - uses: pnpm/action-setup@v6
       - run: vp install --frozen-lockfile
       - run: pnpm build
+      - name: Install Playwright Chromium
+        run: pnpm --filter storyfreeze exec playwright-core install --with-deps chromium
       - run: pnpm e2e

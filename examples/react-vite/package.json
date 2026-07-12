@@ -14,6 +14,7 @@
     "build-storybook:managed": "storybook build --test --config-dir .storybook -o storybook-static/managed",
     "storyfreeze:simple-static": "storyfreeze --verbose --parallel 1 --out-dir __screenshots__/simple-static --server-timeout 30000 --server-cmd \"vite preview --outDir storybook-static/simple --host 127.0.0.1 --port 9012 --strictPort\" http://127.0.0.1:9012",
     "storyfreeze:managed-static": "storyfreeze --verbose --parallel 1 --out-dir __screenshots__/managed-static http://127.0.0.1:9013",
+    "storyfreeze:managed-static-playwright": "storyfreeze --verbose --browser-backend playwright --parallel 4 --out-dir __screenshots__/managed-static-playwright http://127.0.0.1:9013",
     "storyfreeze:filter-static": "storyfreeze --verbose --parallel 1 --out-dir __screenshots__/filter-static --include \"Compatibility/Fixture/**\" --exclude \"Compatibility/Fixture/Console Error\" --exclude \"Compatibility/Fixture/Retry\" http://127.0.0.1:9013",
     "storyfreeze:shard-static": "storyfreeze --verbose --parallel 1 --out-dir __screenshots__/shard-static --shard 2/2 http://127.0.0.1:9013",
     "storyfreeze:retry-static": "storyfreeze --verbose --parallel 1 --out-dir __screenshots__/retry-static --include \"Compatibility/Fixture/Retry\" --capture-timeout 3000 --capture-max-retry-count 1 http://127.0.0.1:9013",

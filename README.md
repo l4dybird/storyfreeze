@@ -12,6 +12,7 @@ while it is being migrated to Storybook 10. The package and CLI use the
 
 [storybook]: https://github.com/storybooks/storybook
 [puppeteer]: https://github.com/GoogleChrome/puppeteer
+[playwright]: https://playwright.dev/
 
 The base package was created to support v9 of storybook with [storycap](https://github.com/reg-viz/storycap).
 Special thanks to the author of the [storycap](https://github.com/reg-viz/storycap).
@@ -61,6 +62,7 @@ It is primarily responsible for image generation necessary for Visual Testing su
 ## Features
 
 - :camera: Take screenshots of each stories via [Puppeteer][puppeteer].
+- :performing_arts: Opt in to [Playwright][playwright] while keeping Puppeteer as the default backend.
 - :zap: Extremely fast.
 - :package: Zero configuration.
 - :rocket: Provide flexible screenshot shooting options.
@@ -362,6 +364,7 @@ OPTIONS:
   --list-devices                                                   List available device descriptors. (default: false)
   -C, --chromium-channel [chromium-channel]                        Channel to search local Chromium. (default: *, choices: puppeteer | canary | stable | *)
   --chromium-path <chromium-path>                                  Executable Chromium path. (default: )
+  --browser-backend [browser-backend]                              Browser automation backend. (default: puppeteer, choices: puppeteer | playwright)
   --puppeteer-launch-config [puppeteer-launch-config]              JSON string of launch config for Puppeteer. (default: { "args": ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"] })
 
 EXAMPLES:
@@ -565,9 +568,18 @@ export const parameters = {
 
 ## Chromium version
 
-StoryFreeze searches Chromium binary in the following order:
+Puppeteer remains the default browser backend. To opt in to Playwright, install the Chromium revision matched to StoryFreeze's `playwright-core` dependency and select the backend explicitly:
 
-1. Installed Puppeteer package (if you installed explicitly)
+```sh
+$ npx playwright-core@1.61.1 install chromium
+$ npx storyfreeze --browser-backend playwright http://localhost:9009
+```
+
+Browser installation is explicit; installing StoryFreeze does not automatically download Playwright Chromium.
+
+StoryFreeze resolves an explicit `--chromium-path` or `--chromium-channel` first. Without either override, each backend searches Chromium in the following order:
+
+1. Its managed browser: an installed Puppeteer package for the default backend, or an explicitly installed Playwright Chromium revision for the Playwright backend
 1. Canary Chrome installed locally
 1. Stable Chrome installed locally
 
@@ -592,7 +604,7 @@ StoryFreeze (with both simple and managed mode) is agnostic for specific UI fram
 
 ## How it works
 
-StoryFreeze accesses the launched page using [Puppeteer][puppeteer].
+StoryFreeze accesses the launched page using [Puppeteer][puppeteer] by default or [Playwright][playwright] when selected with `--browser-backend playwright`.
 
 ## Contributing
 

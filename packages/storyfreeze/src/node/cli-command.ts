@@ -10,8 +10,14 @@ import {
 } from 'gunshi';
 import { renderHeader } from 'gunshi/renderer';
 import { time } from './async-utils.js';
-import { getDeviceDescriptors } from './browser.js';
-import type { BrowserLaunchOptions, ChromeChannel } from './browser-backend.js';
+import { puppeteerBrowserBackend } from './browser.js';
+import {
+  browserBackendNames,
+  type BrowserBackend,
+  type BrowserBackendName,
+  type BrowserLaunchOptions,
+  type ChromeChannel,
+} from './browser-backend.js';
 import { Logger } from './logger.js';
 import { main } from './main.js';
 import { parseShardOptions } from './shard-utilities.js';
@@ -101,6 +107,12 @@ const storyfreezeCommandArgs = {
     description: 'Channel to search local Chromium.',
   },
   chromiumPath: { type: 'string', default: '', description: 'Executable Chromium path.' },
+  browserBackend: {
+    type: 'enum',
+    choices: browserBackendNames,
+    default: 'puppeteer',
+    description: 'Browser automation backend.',
+  },
   puppeteerLaunchConfig: {
     type: 'string',
     default: defaultPuppeteerLaunchConfig,
@@ -135,6 +147,7 @@ export interface StoryfreezeCliValues {
   listDevices: boolean;
   chromiumChannel: ChromeChannel;
   chromiumPath: string;
+  browserBackend: BrowserBackendName;
   puppeteerLaunchConfig: string;
 }
 
@@ -145,7 +158,7 @@ export interface SignalHost {
 
 export interface CliDependencies {
   main: typeof main;
-  getDeviceDescriptors: typeof getDeviceDescriptors;
+  resolveBrowserBackend(name: BrowserBackendName): Promise<BrowserBackend>;
   signalHost: SignalHost;
   env: NodeJS.ProcessEnv;
   writeError(message: string): void;
@@ -153,7 +166,12 @@ export interface CliDependencies {
 
 const defaultDependencies: CliDependencies = {
   main,
-  getDeviceDescriptors,
+  resolveBrowserBackend: async name => {
+    if (name === 'playwright') {
+      return (await import('./playwright-browser-backend.js')).playwrightBrowserBackend;
+    }
+    return puppeteerBrowserBackend;
+  },
   signalHost: process,
   env: process.env,
   writeError: message => process.stderr.write(message),
@@ -243,9 +261,16 @@ function logError(logger: Logger, error: unknown) {
 
 async function execute(values: StoryfreezeCliValues, dependencies: CliDependencies): Promise<number> {
   const logger = createLogger(values);
+  let browserBackend: BrowserBackend;
+  try {
+    browserBackend = await dependencies.resolveBrowserBackend(values.browserBackend);
+  } catch (error) {
+    logError(logger, error);
+    return 1;
+  }
 
   if (values.listDevices) {
-    dependencies.getDeviceDescriptors().forEach(device => logger.log(device.name, JSON.stringify(device.viewport)));
+    browserBackend.devices().forEach(device => logger.log(device.name, JSON.stringify(device.viewport)));
     return 0;
   }
 
@@ -273,9 +298,12 @@ async function execute(values: StoryfreezeCliValues, dependencies: CliDependenci
   dependencies.signalHost.once('SIGTERM', handleSigterm);
 
   logger.debug('Option:', rest);
+  logger.debug('Browser backend:', browserBackend.name);
 
   try {
-    const [numberOfCaptured, duration] = await time(dependencies.main({ ...opt, signal: shutdownController.signal }));
+    const [numberOfCaptured, duration] = await time(
+      dependencies.main({ ...opt, signal: shutdownController.signal }, { browserBackend }),
+    );
     logger.log(
       `Screenshot was ended successfully in ${logger.color.green(duration + ' msec')} capturing ${logger.color.green(
         numberOfCaptured + '',
@@ -297,7 +325,7 @@ function createStoryfreezeCommand(
 ): Command {
   return define({
     name: 'storyfreeze',
-    description: 'Capture screenshot images from Storybook stories via Puppeteer.',
+    description: 'Capture screenshot images from Storybook stories via Chromium.',
     toKebab: true,
     args: storyfreezeCommandArgs,
     examples: [

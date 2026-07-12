@@ -1,6 +1,8 @@
 import type { Viewport } from '../shared/types.js';
 
 export type ChromeChannel = 'puppeteer' | 'canary' | 'stable' | '*';
+export const browserBackendNames = ['puppeteer', 'playwright'] as const;
+export type BrowserBackendName = (typeof browserBackendNames)[number];
 
 export class ChromiumNotFoundError extends Error {
   name = 'ChromiumNotFoundError';
@@ -98,7 +100,7 @@ export interface BrowserInstance {
 }
 
 export interface BrowserBackend {
-  readonly name: string;
+  readonly name: BrowserBackendName;
   devices(): readonly BrowserDeviceDescriptor[];
   launch(options: BrowserRuntimeOptions): Promise<BrowserInstance>;
 }

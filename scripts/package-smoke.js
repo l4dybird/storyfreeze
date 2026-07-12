@@ -106,6 +106,9 @@ try {
   if (!installedMetadata.dependencies?.gunshi || installedMetadata.dependencies?.yargs) {
     throw new Error('The installed package did not replace its direct yargs dependency with gunshi.');
   }
+  if (installedMetadata.dependencies?.['playwright-core'] !== '1.61.1') {
+    throw new Error('The installed package did not declare the pinned Playwright runtime.');
+  }
   if (
     installedMetadata.dependencies?.storycrawler ||
     fs.existsSync(path.join(consumerDir, 'node_modules', 'storycrawler'))

@@ -4,21 +4,24 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
-const minimist = require('minimist');
 
-const argv = minimist(process.argv.slice(2));
+function runPnpm(args, options) {
+  const inheritedPnpmCli = process.env.npm_execpath;
+  if (inheritedPnpmCli && /pnpm(?:\.cjs)?$/i.test(path.basename(inheritedPnpmCli))) {
+    return execFileSync(process.execPath, [inheritedPnpmCli, ...args], options);
+  }
+  return execFileSync(process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm', args, {
+    ...options,
+    shell: process.platform === 'win32',
+  });
+}
 
 function runNpm(args, options) {
   const bundledNpmCli = path.join(path.dirname(process.execPath), 'node_modules/npm/bin/npm-cli.js');
-  const inheritedNpmCli = process.env.npm_execpath;
-  const npmCli =
-    inheritedNpmCli && path.basename(inheritedNpmCli) === 'npm-cli.js'
-      ? inheritedNpmCli
-      : fs.existsSync(bundledNpmCli)
-        ? bundledNpmCli
-        : undefined;
-  if (npmCli) return execFileSync(process.execPath, [npmCli, ...args], options);
-  return execFileSync('npm', args, options);
+  if (fs.existsSync(bundledNpmCli)) {
+    return execFileSync(process.execPath, [bundledNpmCli, ...args], options);
+  }
+  return execFileSync(process.platform === 'win32' ? 'npm.cmd' : 'npm', args, options);
 }
 
 /**
@@ -26,45 +29,89 @@ function runNpm(args, options) {
  *
  * This script does:
  *
- * - create the storyfreeze npm tarball
- * - install the tarball under the Storybook example project
+ * - deploy the Storybook example into an isolated directory
+ * - create and install the StoryFreeze tarball there
+ * - run the compatibility protocol against the deployed fixture
  *
  */
 async function main() {
-  const { _ } = argv;
-  const target = _[0];
+  const target = process.argv[2];
   if (!target) {
     console.log(`Usage:\n\t${process.argv[1]} directory`);
     return 0;
   }
-  const prjDir = path.resolve(__dirname, '../packages/storyfreeze');
-  const cwd = process.cwd();
-  const targetDir = path.resolve(cwd, target);
-  const dist = path.resolve(targetDir, 'node_modules/storyfreeze');
-  if (prjDir === dist) {
-    console.error(`target dir shold not be "${prjDir}".`);
-    return 1;
-  }
+
+  const repoDir = path.resolve(__dirname, '..');
+  const packageDir = path.join(repoDir, 'packages/storyfreeze');
+  const sourceFixtureDir = path.resolve(process.cwd(), target);
+  const fixtureMetadata = JSON.parse(fs.readFileSync(path.join(sourceFixtureDir, 'package.json'), 'utf8'));
+  if (!fixtureMetadata.name) throw new Error(`Fixture package is missing a name: ${sourceFixtureDir}.`);
 
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'storyfreeze-e2e-'));
+  const deployedFixtureDir = path.join(tempDir, 'fixture');
   try {
+    runPnpm(['--filter', fixtureMetadata.name, 'deploy', '--legacy', deployedFixtureDir], {
+      cwd: repoDir,
+      stdio: 'inherit',
+    });
+    fs.copyFileSync(path.join(repoDir, 'pnpm-workspace.yaml'), path.join(deployedFixtureDir, 'pnpm-workspace.yaml'));
+
     runNpm(['pack', '--ignore-scripts', '--pack-destination', tempDir], {
-      cwd: prjDir,
+      cwd: packageDir,
       stdio: 'inherit',
     });
     const tarballs = fs.readdirSync(tempDir).filter(file => file.endsWith('.tgz'));
     if (tarballs.length !== 1) throw new Error(`Expected one storyfreeze tarball, found ${tarballs.length}.`);
 
-    runNpm(['install', '--no-save', '--package-lock=false', '--ignore-scripts', path.join(tempDir, tarballs[0])], {
-      cwd: targetDir,
-      stdio: 'inherit',
-    });
+    runPnpm(
+      [
+        '--dir',
+        deployedFixtureDir,
+        'add',
+        '--workspace-root',
+        '--prefer-offline',
+        '--ignore-scripts',
+        '--save-exact',
+        path.join(tempDir, tarballs[0]),
+      ],
+      {
+        cwd: repoDir,
+        stdio: 'inherit',
+      },
+    );
 
-    const sourceMetadata = JSON.parse(fs.readFileSync(path.join(prjDir, 'package.json'), 'utf8'));
+    const dist = path.join(deployedFixtureDir, 'node_modules/storyfreeze');
+    const sourceMetadata = JSON.parse(fs.readFileSync(path.join(packageDir, 'package.json'), 'utf8'));
     const installedMetadata = JSON.parse(fs.readFileSync(path.join(dist, 'package.json'), 'utf8'));
-    if (installedMetadata.version !== sourceMetadata.version || fs.lstatSync(dist).isSymbolicLink()) {
+    const sourceRealpath = fs.realpathSync(packageDir);
+    const installedRealpath = fs.realpathSync(dist);
+    const normalizePath = value => (process.platform === 'win32' ? value.toLowerCase() : value);
+    if (normalizePath(sourceRealpath) === normalizePath(installedRealpath)) {
       throw new Error('StoryFreeze was not installed from the generated package tarball.');
     }
+
+    const metadataKeys = [
+      'name',
+      'version',
+      'type',
+      'main',
+      'types',
+      'exports',
+      'bin',
+      'engines',
+      'dependencies',
+      'peerDependencies',
+    ];
+    for (const key of metadataKeys) {
+      if (JSON.stringify(installedMetadata[key]) !== JSON.stringify(sourceMetadata[key])) {
+        throw new Error(`Installed StoryFreeze metadata did not match the source package: ${key}.`);
+      }
+    }
+
+    execFileSync(process.execPath, [path.join(__dirname, 'storybook-preview-protocol.js'), deployedFixtureDir], {
+      cwd: sourceFixtureDir,
+      stdio: 'inherit',
+    });
     return 0;
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });

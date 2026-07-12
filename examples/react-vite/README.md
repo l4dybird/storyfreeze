@@ -1,13 +1,13 @@
 # React/Vite compatibility fixture
 
 This is StoryFreeze's React/Vite fixture. It targets the supported Storybook 10
-line and deliberately uses npm because Storybook 10 does not support the
-repository's current Yarn 1 toolchain.
+line and is installed as part of the repository's pnpm workspace.
 
 The `.storybook-simple` config represents simple mode and also proves that
 Storybook 10 can build the stories without the StoryFreeze addon. The default
-config represents managed mode, installs the locally packed StoryFreeze tarball,
-and is exercised by `npm run test:storybook10-e2e`.
+config represents managed mode. The E2E harness deploys the fixture to a temporary
+directory, installs the locally packed StoryFreeze tarball there, and exercises it
+with `pnpm run test:storybook10-e2e`.
 
 The E2E gate runs simple and managed modes against both development and static
 servers. It verifies render/play and afterEach completion, filtering, sharding,

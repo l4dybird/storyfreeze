@@ -11,22 +11,23 @@ jobs:
 
     strategy:
       matrix:
-        node-version: [22]
+        node-version: [22.18.0]
 
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v6
       - name: Use Node.js ${{ matrix.node-version }}
         uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
-          cache: 'yarn'
-      - run: yarn install --frozen-lockfile
-      - run: yarn bootstrap
+          cache: 'pnpm'
+          cache-dependency-path: pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
       - name: npm publish
         run: |
           echo "//registry.npmjs.org/:_authToken=${NPM_AUTH_TOKEN}" > ~/.npmrc
           npm whoami
-          yarn deploy:ci
+          pnpm deploy:ci
         env:
           NPM_AUTH_TOKEN: ${{ secrets.NPM_AUTH_TOKEN }}
           CI: true

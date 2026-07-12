@@ -12,28 +12,32 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-24.04]
-        node-version: [22, 24]
+        node-version: [22.18.0, 24.11.0]
 
     runs-on: ${{ matrix.os }}
 
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v6
       - name: Use Node.js ${{ matrix.node-version }}
         uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
-          cache: 'yarn'
-      - run: yarn install --frozen-lockfile
-      - run: yarn bootstrap
-      - run: yarn baseline:verify
-      - run: yarn build
-      - run: yarn test
+          cache: 'pnpm'
+          cache-dependency-path: pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm baseline:verify
+      - run: pnpm build
+      - run: pnpm test
         env:
           CI: true
-      - run: yarn package:smoke
+      - run: pnpm package:smoke
+        if: matrix.node-version == '22.18.0'
       - name: Verify alpha publish metadata
+        if: matrix.node-version == '22.18.0'
         run: |
           test "$(node -p "require('./lerna.json').version")" = "0.1.0-alpha.0"
           test "$(node -p "require('./packages/storyfreeze/package.json').version")" = "0.1.0-alpha.0"
           test "$(node scripts/get-dist-tag.js)" = "next"
-      - run: yarn publish:dry-run
+      - run: pnpm publish:dry-run
+        if: matrix.node-version == '22.18.0'

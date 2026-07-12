@@ -23,6 +23,10 @@ function ratio(numerator, denominator) {
     : null;
 }
 
+function isRatioAtMost(value, limit) {
+  return typeof value === 'number' && Number.isFinite(value) && value <= limit;
+}
+
 function coefficientOfVariation(values) {
   if (!values.length) return null;
   const mean = values.reduce((total, value) => total + value, 0) / values.length;
@@ -261,16 +265,16 @@ const pngMismatchCount = candidateRecords.reduce(
 const acceptance = {
   browserCrashRateIsZero: candidateSummaries.every(summary => summary.browserCrashRate === 0),
   captureFailureRateIsZero: candidateSummaries.every(summary => summary.captureFailureRate === 0),
-  cpuTimeRatioAtMostOne: ratios.cpuTimeP50 <= 1,
+  cpuTimeRatioAtMostOne: isRatioAtMost(ratios.cpuTimeP50, 1),
   idleTimeoutEventCountIsZero: candidateSummaries.every(summary => summary.idleTimeoutEventCount === 0),
   pairedRunsAtLeast40: backends.every(backend => candidate.backends[backend].measuredRuns >= 40),
-  peakTreeRssRatioAtMostPointEight: ratios.peakTreeRssP50 <= 0.8,
+  peakTreeRssRatioAtMostPointEight: isRatioAtMost(ratios.peakTreeRssP50, 0.8),
   pngMismatchCountIsZero: pngMismatchCount === 0,
   retryRateIsZero: candidateSummaries.every(summary => summary.retryRate === 0),
   timeoutRateIsZero: candidateSummaries.every(summary => summary.timeoutRate === 0),
   visualCommitTimeoutCountIsZero: candidateSummaries.every(summary => summary.visualCommitTimeoutCount === 0),
-  wallTimeP50RatioAtMostOnePointZeroFive: ratios.wallTimeP50 <= 1.05,
-  wallTimeP95RatioAtMostOnePointOne: ratios.wallTimeP95 <= 1.1,
+  wallTimeP50RatioAtMostOnePointZeroFive: isRatioAtMost(ratios.wallTimeP50, 1.05),
+  wallTimeP95RatioAtMostOnePointOne: isRatioAtMost(ratios.wallTimeP95, 1.1),
 };
 acceptance.passed = Object.values(acceptance).every(Boolean);
 

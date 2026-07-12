@@ -69,6 +69,26 @@ describe(waitForVisualCommitInPage, () => {
     });
   });
 
+  it('reports the font status after the ready promise settles', async () => {
+    const fonts = { ready: Promise.resolve(), status: 'loading' as FontFaceSetLoadStatus };
+    fonts.ready = fonts.ready.then(() => {
+      fonts.status = 'loaded';
+    });
+    installDocument({ fonts });
+    Object.defineProperty(globalThis, 'requestAnimationFrame', {
+      configurable: true,
+      value: (callback: FrameRequestCallback) => {
+        callback(0);
+        return 1;
+      },
+    });
+
+    await expect(waitForVisualCommitInPage({ paintFallbackMs: 250, timeoutMs: 3000 })).resolves.toMatchObject({
+      didTimeout: false,
+      fontsStatus: 'loaded',
+    });
+  });
+
   it('uses the paint fallback when animation frames stop', async () => {
     vi.useFakeTimers();
     installDocument({});

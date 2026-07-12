@@ -25,7 +25,6 @@ export async function waitForVisualCommitInPage(
   let imageDecodeFailureCount = 0;
   let usedAnimationFrameFallback = false;
   const images = Array.from(document.images);
-  const fontsStatus = 'fonts' in document ? document.fonts.status : 'unsupported';
 
   const abortError = () => controller.signal.reason ?? new Error('Visual commit wait was aborted.');
   const raceWithAbort = <T>(operation: Promise<T>) =>
@@ -128,7 +127,7 @@ export async function waitForVisualCommitInPage(
   return {
     didTimeout,
     elapsedMs: performance.now() - startedAt,
-    fontsStatus,
+    fontsStatus: 'fonts' in document ? document.fonts.status : 'unsupported',
     imageCount: images.length,
     imageDecodeFailureCount,
     usedAnimationFrameFallback,

@@ -1,0 +1,9 @@
+{
+  "mode": "pre",
+  "tag": "alpha",
+  "initialVersions": {
+    "storyfreeze": "0.1.0",
+    "storyfreeze-react-vite-fixture": "0.0.0"
+  },
+  "changesets": []
+}

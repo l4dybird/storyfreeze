@@ -14,6 +14,7 @@
 - [E2E test](#e2e-test)
   - [All fixtures](#all-fixtures)
   - [Single fixture](#single-fixture)
+- [Package changes and releases](#package-changes-and-releases)
 - [Update documents' ToC and CLI usage section](#update-documents-toc-and-cli-usage-section)
 
 <!-- tocstop -->
@@ -96,6 +97,18 @@ Run the fixture script directly to test a single example:
 ```sh
 $ pnpm --dir examples/react-vite test:storybook10-e2e
 ```
+
+## Package changes and releases
+
+Add a Changeset for every user-visible package change:
+
+```sh
+$ pnpm exec changeset
+```
+
+Changesets only creates the version pull request. Do not run `changeset
+publish`: the dedicated release workflow publishes the inspected alpha tarball
+to the `next` dist-tag after the version pull request is merged.
 
 ## Update documents' ToC and CLI usage section
 

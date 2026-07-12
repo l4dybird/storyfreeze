@@ -1,33 +1,182 @@
-name: publish
+name: Publish
 
 on:
   push:
-    tags:
-      - '*'
+    branches:
+      - master
+    paths:
+      - packages/storyfreeze/package.json
+
+concurrency:
+  group: npm-release-storyfreeze
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  id-token: write
 
 jobs:
   publish:
     runs-on: ubuntu-24.04
 
-    strategy:
-      matrix:
-        node-version: [22.18.0]
-
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: pnpm/action-setup@v6
-      - name: Use Node.js ${{ matrix.node-version }}
+      - name: Use Node.js 22.18.0
         uses: actions/setup-node@v4
         with:
-          node-version: ${{ matrix.node-version }}
+          node-version: 22.18.0
           cache: 'pnpm'
           cache-dependency-path: pnpm-lock.yaml
-      - run: pnpm install --frozen-lockfile
-      - name: Publish package
+          registry-url: https://registry.npmjs.org
+      - name: Check package version changed
+        id: release
+        shell: bash
         run: |
-          echo "//registry.npmjs.org/:_authToken=${NPM_AUTH_TOKEN}" > ~/.npmrc
-          npm whoami
-          pnpm deploy:ci
+          set -euo pipefail
+          current_version="$(node -p "require('./packages/storyfreeze/package.json').version")"
+          should_release=true
+
+          before="${{ github.event.before }}"
+          if git cat-file -e "${before}^{commit}" 2>/dev/null; then
+            previous_version="$(git show "${before}:packages/storyfreeze/package.json" | node -e "let input = ''; process.stdin.on('data', chunk => input += chunk); process.stdin.on('end', () => process.stdout.write(JSON.parse(input).version))")"
+            if [[ "$current_version" == "$previous_version" ]]; then
+              should_release=false
+            fi
+          fi
+
+          echo "should_release=$should_release" >> "$GITHUB_OUTPUT"
+      - run: pnpm install --frozen-lockfile
+        if: steps.release.outputs.should_release == 'true'
+      - run: pnpm clean
+        if: steps.release.outputs.should_release == 'true'
+      - run: pnpm build
+        if: steps.release.outputs.should_release == 'true'
+      - name: Pack package once
+        id: pack
+        if: steps.release.outputs.should_release == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          pack_json="$(npm pack ./packages/storyfreeze --ignore-scripts --json --pack-destination "$RUNNER_TEMP")"
+          name="$(PACK_JSON="$pack_json" node -p "JSON.parse(process.env.PACK_JSON)[0].name")"
+          version="$(PACK_JSON="$pack_json" node -p "JSON.parse(process.env.PACK_JSON)[0].version")"
+          filename="$(PACK_JSON="$pack_json" node -p "JSON.parse(process.env.PACK_JSON)[0].filename")"
+          integrity="$(PACK_JSON="$pack_json" node -p "JSON.parse(process.env.PACK_JSON)[0].integrity")"
+          shasum="$(PACK_JSON="$pack_json" node -p "JSON.parse(process.env.PACK_JSON)[0].shasum")"
+          tarball="$RUNNER_TEMP/$filename"
+          manifest_version="$(node -p "require('./packages/storyfreeze/package.json').version")"
+
+          test "$name" = "storyfreeze"
+          test "$version" = "$manifest_version"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+-alpha\.[0-9]+$ ]]
+          test -f "$tarball"
+
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "filename=$filename" >> "$GITHUB_OUTPUT"
+          echo "tarball=$tarball" >> "$GITHUB_OUTPUT"
+          echo "integrity=$integrity" >> "$GITHUB_OUTPUT"
+          echo "shasum=$shasum" >> "$GITHUB_OUTPUT"
+      - name: Smoke test packed tarball
+        if: steps.release.outputs.should_release == 'true'
+        run: pnpm package:smoke --tarball "${{ steps.pack.outputs.tarball }}"
+      - name: Check npm registry
+        id: registry
+        if: steps.release.outputs.should_release == 'true'
+        shell: bash
         env:
-          NPM_AUTH_TOKEN: ${{ secrets.NPM_AUTH_TOKEN }}
-          CI: true
+          PACKAGE_NAME: ${{ steps.pack.outputs.name }}
+          PACKAGE_VERSION: ${{ steps.pack.outputs.version }}
+          LOCAL_INTEGRITY: ${{ steps.pack.outputs.integrity }}
+          LOCAL_SHASUM: ${{ steps.pack.outputs.shasum }}
+        run: |
+          set -euo pipefail
+          error_file="$RUNNER_TEMP/npm-view-error.log"
+          set +e
+          dist_json="$(npm view "$PACKAGE_NAME@$PACKAGE_VERSION" dist --json --registry https://registry.npmjs.org/ 2>"$error_file")"
+          status=$?
+          set -e
+
+          if [[ $status -eq 0 ]]; then
+            DIST_JSON="$dist_json" node -e "const dist = JSON.parse(process.env.DIST_JSON); if (dist.integrity !== process.env.LOCAL_INTEGRITY || dist.shasum !== process.env.LOCAL_SHASUM) throw new Error('The published package differs from the inspected tarball')"
+            echo "already_published=true" >> "$GITHUB_OUTPUT"
+          elif grep -Eq 'E404|404 Not Found' "$error_file"; then
+            echo "already_published=false" >> "$GITHUB_OUTPUT"
+          else
+            cat "$error_file" >&2
+            exit "$status"
+          fi
+      - name: Publish inspected tarball
+        if: steps.release.outputs.should_release == 'true' && steps.registry.outputs.already_published != 'true'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_AUTH_TOKEN }}
+        run: |
+          npm whoami --registry https://registry.npmjs.org/
+          pnpm publish "${{ steps.pack.outputs.tarball }}" --tag next --access public --provenance --registry https://registry.npmjs.org/
+      - name: Verify npm metadata
+        if: steps.release.outputs.should_release == 'true'
+        shell: bash
+        env:
+          PACKAGE_NAME: ${{ steps.pack.outputs.name }}
+          PACKAGE_VERSION: ${{ steps.pack.outputs.version }}
+          LOCAL_INTEGRITY: ${{ steps.pack.outputs.integrity }}
+          LOCAL_SHASUM: ${{ steps.pack.outputs.shasum }}
+        run: |
+          set -euo pipefail
+          verified=false
+
+          for attempt in {1..12}; do
+            set +e
+            dist_json="$(npm view "$PACKAGE_NAME@$PACKAGE_VERSION" dist --json --registry https://registry.npmjs.org/ 2>/dev/null)"
+            dist_status=$?
+            next_json="$(npm view "$PACKAGE_NAME" dist-tags.next --json --registry https://registry.npmjs.org/ 2>/dev/null)"
+            next_status=$?
+            set -e
+
+            if [[ $dist_status -eq 0 && $next_status -eq 0 ]] && DIST_JSON="$dist_json" NEXT_JSON="$next_json" node -e "const dist = JSON.parse(process.env.DIST_JSON); const next = JSON.parse(process.env.NEXT_JSON); const provenance = dist.attestations?.provenance?.predicateType; process.exit(dist.integrity === process.env.LOCAL_INTEGRITY && dist.shasum === process.env.LOCAL_SHASUM && next === process.env.PACKAGE_VERSION && provenance === 'https://slsa.dev/provenance/v1' ? 0 : 1)"; then
+              verified=true
+              break
+            fi
+
+            sleep 5
+          done
+
+          if [[ "$verified" != "true" ]]; then
+            echo "npm metadata did not converge to the inspected tarball, next dist-tag, and provenance." >&2
+            exit 1
+          fi
+      - name: Create Git tag and GitHub Release
+        if: steps.release.outputs.should_release == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PACKAGE_NAME: ${{ steps.pack.outputs.name }}
+          PACKAGE_VERSION: ${{ steps.pack.outputs.version }}
+        run: |
+          set -euo pipefail
+          tag="v$PACKAGE_VERSION"
+          remote_tag="$(git ls-remote origin "refs/tags/$tag" | awk '{print $1}')"
+          remote_commit="$(git ls-remote origin "refs/tags/$tag^{}" | awk '{print $1}')"
+
+          if [[ -n "$remote_tag" ]]; then
+            remote_commit="${remote_commit:-$remote_tag}"
+            if [[ "$remote_commit" != "$GITHUB_SHA" ]]; then
+              echo "$tag already points to $remote_commit instead of $GITHUB_SHA." >&2
+              exit 1
+            fi
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag -a "$tag" "$GITHUB_SHA" -m "$PACKAGE_NAME@$PACKAGE_VERSION"
+            git push origin "$tag"
+          fi
+
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" --verify-tag --title "$PACKAGE_NAME@$PACKAGE_VERSION" --generate-notes --prerelease
+          fi
+
+          release_json="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag")"
+          RELEASE_JSON="$release_json" node -e "const release = JSON.parse(process.env.RELEASE_JSON); if (release.tag_name !== 'v' + process.env.PACKAGE_VERSION || release.name !== process.env.PACKAGE_NAME + '@' + process.env.PACKAGE_VERSION || !release.prerelease) throw new Error('GitHub Release metadata does not match')"

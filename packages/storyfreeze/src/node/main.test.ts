@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vite-plus/test';
 import { BaseBrowser } from './browser.js';
-import { CapturingBrowser } from './capturing-browser.js';
+import { CapturingBrowser, shouldWaitForVisualCommit } from './capturing-browser.js';
 import { Logger } from './logger.js';
 import { ManagedStorybookConnection } from './managed-storybook-connection.js';
 import type { MainOptions } from './types.js';
@@ -180,6 +180,15 @@ describe(CapturingBrowser, () => {
     ).rejects.toThrow('trace start failed');
     expect(unsubscribe).toHaveBeenCalledTimes(1);
     expect(page.stopTrace).not.toHaveBeenCalled();
+  });
+});
+
+describe(shouldWaitForVisualCommit, () => {
+  it('waits for simple mode and managed browser-side mutations only', () => {
+    expect(shouldWaitForVisualCommit('simple', false, false)).toBe(true);
+    expect(shouldWaitForVisualCommit('managed', true, false)).toBe(true);
+    expect(shouldWaitForVisualCommit('managed', false, true)).toBe(true);
+    expect(shouldWaitForVisualCommit('managed', false, false)).toBe(false);
   });
 });
 

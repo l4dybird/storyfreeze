@@ -857,6 +857,24 @@ UNKNOWN
 
 unknown差分をbaseline更新で隠さない。
 
+#### PR-521/522: render wait安定化
+
+PR-521でcapture phase、idle timeout、metrics、resource、出力path、close timingを内部診断JSONとして記録する。通常利用時は診断callbackを公開せず、runtimeの待機挙動を変えない。
+
+PR-522でpreviewとNode側の`requestIdleCallback({ timeout: 3000 })`を、font、image decode、double `requestAnimationFrame`、250ms paint fallbackからなるvisual commit待機へ置換する。Node側はsimple mode、viewport変更、interaction後だけ実行し、managed modeの重複待機を避ける。
+
+同一Chromium、fixture、`parallel=4`で各版40 measured runs/backendを比較した結果:
+
+- Playwright idle timeout: 77 → 0
+- 3秒以上のPlaywright capture request: 51 → 0
+- Playwright wall p50: 8,868ms → 5,821ms
+- Playwright wall p95: 17,351ms → 6,031ms
+- Playwright capture-request p95: 4,437ms → 1,734ms
+- candidateのPlaywright/Puppeteer比: wall p50 1.011、wall p95 0.990、RSS 0.798、CPU 0.863
+- failure、retry、timeout、crash、PNG mismatch、visual commit timeoutは0
+
+この結果だけでdefault backendは変更しない。次は不要なreset navigation、MetricsWatcher/ResourceWatcherのquiet windowとwall timeout、Playwright recoveryの順に分離して進める。BrowserContext共有はその後に評価する。
+
 ### 10.6 5D — Playwright default化
 
 Playwrightをdefaultにする条件:
@@ -1050,38 +1068,40 @@ nightly:
 
 ## 14. PR分割一覧
 
-| PR  | 内容                                | 主な変更対象     |
-| --- | ----------------------------------- | ---------------- |
-| 000 | Fork、由来、project metadata        | docs/repository  |
-| 001 | Baselineとcharacterization tests    | tests/fixtures   |
-| 002 | lifecycle/resource watcher修正      | runtime          |
-| 100 | StoryFreezeへ改名                   | package/CLI/docs |
-| 101 | ESM-only化                          | build/exports    |
-| 102 | Storybook 10 fixtures               | examples/e2e     |
-| 103 | `index.json`列挙                    | storybook/core   |
-| 104 | Preview protocol/navigation         | addon/runtime    |
-| 105 | `storycrawler`削除                  | runtime/deps     |
-| 106 | Storybook 10 addon packaging        | package metadata |
-| 107 | Storybook 10 E2E gateとstatic再利用 | CI               |
-| 200 | pnpm workspace                      | package manager  |
-| 201 | Lerna削除                           | scripts          |
-| 202 | build script approval               | install/CI       |
-| 203 | Changesets/release                  | publish          |
-| 300 | Vite+最小導入                       | tooling          |
-| 301 | Vite+ CI（300と統合）               | CI               |
-| 302 | Jest→Vitest                         | tests            |
-| 303 | `vp pack`評価・見送り               | build            |
-| 400 | Oxlint移行                          | lint             |
-| 401 | Oxfmt移行                           | format           |
-| 403 | lint CI gate                        | CI               |
-| 499 | browser lifecycle hardening         | runtime          |
-| 500 | Browser interfaces                  | architecture     |
-| 501 | Puppeteer adapter                   | browser          |
-| 510 | Playwright process backend          | browser          |
-| 511 | CDP/option compatibility            | browser          |
-| 520 | differential test                   | tests/benchmark  |
-| 530 | BrowserContext mode                 | performance      |
-| 540 | Puppeteer removal                   | dependencies/API |
+| PR  | 内容                                | 主な変更対象      |
+| --- | ----------------------------------- | ----------------- |
+| 000 | Fork、由来、project metadata        | docs/repository   |
+| 001 | Baselineとcharacterization tests    | tests/fixtures    |
+| 002 | lifecycle/resource watcher修正      | runtime           |
+| 100 | StoryFreezeへ改名                   | package/CLI/docs  |
+| 101 | ESM-only化                          | build/exports     |
+| 102 | Storybook 10 fixtures               | examples/e2e      |
+| 103 | `index.json`列挙                    | storybook/core    |
+| 104 | Preview protocol/navigation         | addon/runtime     |
+| 105 | `storycrawler`削除                  | runtime/deps      |
+| 106 | Storybook 10 addon packaging        | package metadata  |
+| 107 | Storybook 10 E2E gateとstatic再利用 | CI                |
+| 200 | pnpm workspace                      | package manager   |
+| 201 | Lerna削除                           | scripts           |
+| 202 | build script approval               | install/CI        |
+| 203 | Changesets/release                  | publish           |
+| 300 | Vite+最小導入                       | tooling           |
+| 301 | Vite+ CI（300と統合）               | CI                |
+| 302 | Jest→Vitest                         | tests             |
+| 303 | `vp pack`評価・見送り               | build             |
+| 400 | Oxlint移行                          | lint              |
+| 401 | Oxfmt移行                           | format            |
+| 403 | lint CI gate                        | CI                |
+| 499 | browser lifecycle hardening         | runtime           |
+| 500 | Browser interfaces                  | architecture      |
+| 501 | Puppeteer adapter                   | browser           |
+| 510 | Playwright process backend          | browser           |
+| 511 | CDP/option compatibility            | browser           |
+| 520 | differential test                   | tests/benchmark   |
+| 521 | capture wait diagnostics            | runtime/benchmark |
+| 522 | visual commit wait                  | runtime           |
+| 530 | BrowserContext mode                 | performance       |
+| 540 | Puppeteer removal                   | dependencies/API  |
 
 ## 15. 同じPRへ入れてはいけない変更
 

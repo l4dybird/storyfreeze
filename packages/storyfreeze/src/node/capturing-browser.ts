@@ -46,6 +46,10 @@ interface ScreenshotResult {
   defaultVariantSuffix?: string;
 }
 
+export function shouldWaitForVisualCommit(mode: RunMode, viewportChanged: boolean, touched: boolean) {
+  return mode === 'simple' || viewportChanged || touched;
+}
+
 /**
  *
  * A worker to capture screenshot images.
@@ -466,6 +470,7 @@ export class CapturingBrowser extends BaseBrowser {
       this.touched = false;
 
       // Change browser's viewport if needed.
+      const previousViewport = JSON.stringify(this.viewport);
       const vpChanged = await this.measurePhase('viewport', () => this.setViewport(mergedScreenshotOptions));
       // Skip to capture if the viewport option is invalid.
       if (!vpChanged) {
@@ -485,35 +490,21 @@ export class CapturingBrowser extends BaseBrowser {
       await this.measurePhase('resource', () => this.waitForResources(mergedScreenshotOptions));
       await this.measurePhase('metrics', () => this.waitBrowserMetricsStable('postEmit'));
 
-      await this.measurePhase('node-idle', async () => {
-        if (!captureDiagnosticsEnabled()) {
-          await this.page.evaluate(
-            () => new Promise(res => (window as any).requestIdleCallback(res, { timeout: 3000 })),
+      const viewportChanged = previousViewport !== JSON.stringify(this.viewport);
+      if (shouldWaitForVisualCommit(this.mode, viewportChanged, this.touched)) {
+        await this.measurePhase('visual-commit', async () => {
+          const visualCommitDiagnostic = await this.page.waitForVisualCommit(
+            { paintFallbackMs: 250, timeoutMs: 3000 },
+            this.opt.signal,
           );
-          return;
-        }
-        const idleDiagnostic = await this.page.evaluate(
-          () =>
-            new Promise<{ didTimeout: boolean; elapsedMs: number; visibilityState: DocumentVisibilityState }>(res => {
-              const startedAt = performance.now();
-              (window as any).requestIdleCallback(
-                (deadline: IdleDeadline) =>
-                  res({
-                    didTimeout: deadline.didTimeout,
-                    elapsedMs: performance.now() - startedAt,
-                    visibilityState: document.visibilityState,
-                  }),
-                { timeout: 3000 },
-              );
-            }),
-        );
-        emitCaptureDiagnostic({
-          type: 'idle-wait',
-          phase: 'post-interaction',
-          ...idleDiagnostic,
-          ...this.diagnosticContext(),
+          emitCaptureDiagnostic({
+            type: 'visual-commit',
+            phase: 'post-mutation',
+            ...visualCommitDiagnostic,
+            ...this.diagnosticContext(),
+          });
         });
-      });
+      }
 
       // Get PNG image buffer
       const captureOptions = emittedScreenshotOptions;

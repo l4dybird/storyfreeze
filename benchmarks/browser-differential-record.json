@@ -1,79 +1,1280 @@
 {
-  "schemaVersion": 1,
-  "recordedAt": "2026-07-12T14:41:35Z",
-  "sourceCommit": "c7712aec081f3569862f551bfc64458c18d5bd4a",
-  "workflowRuns": [
-    "https://github.com/l4dybird/storyfreeze/actions/runs/29196619908",
-    "https://github.com/l4dybird/storyfreeze/actions/runs/29196620776",
-    "https://github.com/l4dybird/storyfreeze/actions/runs/29196621635"
-  ],
+  "schemaVersion": 2,
+  "kind": "browser-differential-aggregate",
+  "recordedAt": "2026-07-12T16:47:30.193Z",
   "conditions": {
-    "browser": "Google Chrome for Testing 149.0.7827.55",
+    "arch": "x64",
     "browserRevision": "1228",
-    "node": "22.18.0",
-    "os": "ubuntu-24.04",
+    "browserVersion": "Google Chrome for Testing 149.0.7827.55",
+    "fixture": "storyfreeze-react-vite-fixture",
+    "launchOptions": {
+      "args": [
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage"
+      ]
+    },
+    "node": "v22.18.0",
+    "os": "ubuntu24",
+    "osRelease": "6.17.0-1018-azure",
     "parallel": 4,
-    "measuredRunsPerDispatch": 3,
-    "stories": 2,
+    "playwrightCore": "1.61.1",
     "pngs": 9,
-    "traceStories": 1,
-    "tracePngs": 2,
-    "container": "mcr.microsoft.com/playwright:v1.61.1-noble@sha256:5b8f294aff9041b7191c34a4bab3ac270157a28774d4b0660e9743297b697e48"
+    "runnerImageVersion": "20260705.232.1",
+    "sampleIntervalMs": 50,
+    "storybook": "10.5.0",
+    "stories": 2
   },
-  "gates": {
-    "passedEnvironmentJobs": 6,
-    "totalEnvironmentJobs": 6,
-    "captureFailureRate": 0,
-    "retryRate": 0,
-    "timeoutRate": 0,
-    "browserCrashRate": 0,
-    "pngMismatchCount": 0,
-    "traceValidationErrors": 0
-  },
-  "explicitInstallDriverComparison": {
-    "sampledRunsPerBackend": 9,
-    "puppeteer": {
-      "wallTimeP50Ms": 8339,
-      "wallTimeP95Ms": 8438,
-      "captureTimeP50Ms": 1470,
-      "captureTimeP95Ms": 3795,
-      "peakTreeRssP50Bytes": 4955402240,
-      "cpuTimeP50Ms": 11480,
-      "maxChromiumProcessCount": 43,
-      "maxBrowserRootCount": 4
-    },
-    "playwright": {
-      "wallTimeP50Ms": 8839,
-      "wallTimeP95Ms": 14485,
-      "captureTimeP50Ms": 1347,
-      "captureTimeP95Ms": 4420,
-      "peakTreeRssP50Bytes": 3699326976,
-      "cpuTimeP50Ms": 10670,
-      "maxChromiumProcessCount": 32,
-      "maxBrowserRootCount": 4
-    },
-    "playwrightToPuppeteerRatios": {
-      "wallTimeP50": 1.0599592277251468,
-      "wallTimeP95": 1.7166390139843566,
-      "captureTimeP50": 0.9163265306122449,
-      "captureTimeP95": 1.1646903820816865,
-      "peakTreeRssP50": 0.7465240553307737,
-      "cpuTimeP50": 0.9294425087108014
-    },
-    "traceOnToControlRatioMedians": {
+  "baseline": {
+    "sourceCommit": "2b644340d1d81152240053439d8f0398a38e7b93",
+    "sourceTree": "3bf5eb06a67ff7f7f7d30d9e8681ecdbd08dfa4d",
+    "workflowRuns": [
+      "https://github.com/l4dybird/storyfreeze/actions/runs/29200246806",
+      "https://github.com/l4dybird/storyfreeze/actions/runs/29200247853",
+      "https://github.com/l4dybird/storyfreeze/actions/runs/29200248879",
+      "https://github.com/l4dybird/storyfreeze/actions/runs/29200249802"
+    ],
+    "backends": {
       "puppeteer": {
-        "wallTime": 2.4552727272727273,
-        "peakTreeRss": 1.109696629042794,
-        "cpuTime": 1.3350083752093802
+        "browserCrashRate": 0,
+        "captureFailureRate": 0,
+        "captureTimeP50Ms": 1410,
+        "captureTimeP95Ms": 3783,
+        "cpuTimeP50Ms": 10340,
+        "idleTimeoutEventCount": 40,
+        "maxBrowserRootCount": 5,
+        "maxChromiumProcessCount": 45,
+        "measuredRuns": 40,
+        "peakTreeRssP50Bytes": 4950519808,
+        "phaseTimings": {
+          "interaction": {
+            "p50Ms": 3.370042999999896,
+            "p95Ms": 23.360883000000285,
+            "samples": 360
+          },
+          "metrics": {
+            "p50Ms": 51.59669299999996,
+            "p95Ms": 59.49850100000003,
+            "samples": 360
+          },
+          "navigation": {
+            "p50Ms": 166.94134099999974,
+            "p95Ms": 346.2460100000003,
+            "samples": 688
+          },
+          "node-idle": {
+            "p50Ms": 0.9803519999995842,
+            "p95Ms": 3001.249892,
+            "samples": 360
+          },
+          "preview-ready": {
+            "p50Ms": 239.15144899999996,
+            "p95Ms": 305.61756200000036,
+            "samples": 688
+          },
+          "reset": {
+            "p50Ms": 294.83618099999967,
+            "p95Ms": 399.3930419999997,
+            "samples": 360
+          },
+          "resource": {
+            "p50Ms": 0.2836040000001958,
+            "p95Ms": 0.5430810000002566,
+            "samples": 360
+          },
+          "screenshot": {
+            "p50Ms": 59.044974000000366,
+            "p95Ms": 99.08661399999983,
+            "samples": 360
+          },
+          "viewport": {
+            "p50Ms": 302.17556300000024,
+            "p95Ms": 947.8384809999998,
+            "samples": 360
+          }
+        },
+        "retryRate": 0,
+        "storyVariants": {
+          "compatibility-fixture--console-error?keys=": {
+            "coefficientOfVariation": 0.0425121053444582,
+            "p50Ms": 895,
+            "p95Ms": 931,
+            "samples": 40
+          },
+          "compatibility-fixture--console-error?keys=SMALL": {
+            "coefficientOfVariation": 0.07137298088690658,
+            "p50Ms": 1558,
+            "p95Ms": 1705,
+            "samples": 40
+          },
+          "compatibility-fixture--interactions?keys=": {
+            "coefficientOfVariation": 0.0443438457221193,
+            "p50Ms": 963,
+            "p95Ms": 1002,
+            "samples": 40
+          },
+          "compatibility-fixture--interactions?keys=LARGE,focused": {
+            "coefficientOfVariation": 0.07003989071148616,
+            "p50Ms": 1001,
+            "p95Ms": 1088,
+            "samples": 40
+          },
+          "compatibility-fixture--interactions?keys=LARGE,hovered": {
+            "coefficientOfVariation": 0.056494327598548374,
+            "p50Ms": 1439,
+            "p95Ms": 1509,
+            "samples": 40
+          },
+          "compatibility-fixture--interactions?keys=SMALL": {
+            "coefficientOfVariation": 0.4376960572707781,
+            "p50Ms": 468,
+            "p95Ms": 1230,
+            "samples": 40
+          },
+          "compatibility-fixture--interactions?keys=SMALL,focused": {
+            "coefficientOfVariation": 0.04984449021279423,
+            "p50Ms": 1584,
+            "p95Ms": 1713,
+            "samples": 40
+          },
+          "compatibility-fixture--interactions?keys=SMALL,hovered": {
+            "coefficientOfVariation": 0.058026654542546616,
+            "p50Ms": 1882,
+            "p95Ms": 2046,
+            "samples": 40
+          },
+          "compatibility-fixture--interactions?keys=clicked": {
+            "coefficientOfVariation": 0.062120780215774885,
+            "p50Ms": 3780,
+            "p95Ms": 4532,
+            "samples": 40
+          }
+        },
+        "threeSecondTailEventCount": 40,
+        "timeoutRate": 0,
+        "visualCommitEventCount": 0,
+        "visualCommitFallbackCount": 0,
+        "visualCommitTimeoutCount": 0,
+        "wallTimeP50Ms": 8355,
+        "wallTimeP95Ms": 8754
       },
       "playwright": {
-        "wallTime": 1.1980664352999504,
-        "peakTreeRss": 1.059657481918506,
-        "cpuTime": 1.2593283582089552
+        "browserCrashRate": 0,
+        "captureFailureRate": 0,
+        "captureTimeP50Ms": 1313,
+        "captureTimeP95Ms": 4437,
+        "cpuTimeP50Ms": 9580,
+        "idleTimeoutEventCount": 77,
+        "maxBrowserRootCount": 4,
+        "maxChromiumProcessCount": 32,
+        "measuredRuns": 40,
+        "peakTreeRssP50Bytes": 3697979392,
+        "phaseTimings": {
+          "interaction": {
+            "p50Ms": 17.10875699999997,
+            "p95Ms": 66.09112699999969,
+            "samples": 360
+          },
+          "metrics": {
+            "p50Ms": 52.103063999999904,
+            "p95Ms": 61.31265300000041,
+            "samples": 360
+          },
+          "navigation": {
+            "p50Ms": 106.03021900000022,
+            "p95Ms": 340.72608200000013,
+            "samples": 754
+          },
+          "node-idle": {
+            "p50Ms": 1.516697000000022,
+            "p95Ms": 3001.7151409999988,
+            "samples": 360
+          },
+          "preview-ready": {
+            "p50Ms": 222.50426200000038,
+            "p95Ms": 299.82995200000005,
+            "samples": 754
+          },
+          "reset": {
+            "p50Ms": 293.7406779999992,
+            "p95Ms": 379.2830840000006,
+            "samples": 360
+          },
+          "resource": {
+            "p50Ms": 0.2807790000006207,
+            "p95Ms": 0.5327769999998964,
+            "samples": 360
+          },
+          "screenshot": {
+            "p50Ms": 44.68982099999994,
+            "p95Ms": 70.3080460000001,
+            "samples": 360
+          },
+          "viewport": {
+            "p50Ms": 585.1669549999997,
+            "p95Ms": 695.692924,
+            "samples": 360
+          }
+        },
+        "retryRate": 0,
+        "storyVariants": {
+          "compatibility-fixture--console-error?keys=": {
+            "coefficientOfVariation": 0.9137216375393213,
+            "p50Ms": 881,
+            "p95Ms": 921,
+            "samples": 40
+          },
+          "compatibility-fixture--console-error?keys=SMALL": {
+            "coefficientOfVariation": 0.6803545768938192,
+            "p50Ms": 1276,
+            "p95Ms": 1402,
+            "samples": 40
+          },
+          "compatibility-fixture--interactions?keys=": {
+            "coefficientOfVariation": 1.0551810292557342,
+            "p50Ms": 952,
+            "p95Ms": 982,
+            "samples": 40
+          },
+          "compatibility-fixture--interactions?keys=LARGE,focused": {
+            "coefficientOfVariation": 0.13294936529621473,
+            "p50Ms": 966,
+            "p95Ms": 1031,
+            "samples": 40
+          },
+          "compatibility-fixture--interactions?keys=LARGE,hovered": {
+            "coefficientOfVariation": 0.8545730957549239,
+            "p50Ms": 1442,
+            "p95Ms": 1580,
+            "samples": 40
+          },
+          "compatibility-fixture--interactions?keys=SMALL": {
+            "coefficientOfVariation": 0.16897166206690373,
+            "p50Ms": 998,
+            "p95Ms": 1054,
+            "samples": 40
+          },
+          "compatibility-fixture--interactions?keys=SMALL,focused": {
+            "coefficientOfVariation": 1.2509002003319762,
+            "p50Ms": 1407,
+            "p95Ms": 10444,
+            "samples": 40
+          },
+          "compatibility-fixture--interactions?keys=SMALL,hovered": {
+            "coefficientOfVariation": 0.06248666312071383,
+            "p50Ms": 1605,
+            "p95Ms": 1789,
+            "samples": 40
+          },
+          "compatibility-fixture--interactions?keys=clicked": {
+            "coefficientOfVariation": 0.4143403921299619,
+            "p50Ms": 4388,
+            "p95Ms": 4472,
+            "samples": 40
+          }
+        },
+        "threeSecondTailEventCount": 51,
+        "timeoutRate": 0,
+        "visualCommitEventCount": 0,
+        "visualCommitFallbackCount": 0,
+        "visualCommitTimeoutCount": 0,
+        "wallTimeP50Ms": 8868,
+        "wallTimeP95Ms": 17351
       }
+    },
+    "playwrightToPuppeteerRatios": {
+      "cpuTimeP50": 0.9264990328820116,
+      "peakTreeRssP50": 0.7469881013351558,
+      "wallTimeP50": 1.0614003590664274,
+      "wallTimeP95": 1.9820653415581448
     }
   },
-  "ciEnvironmentComparison": {
+  "candidate": {
+    "sourceCommit": "ca470b718ecc849abd71c1ed541c43734c5dc233",
+    "sourceTree": "6d32f9b8ab152b7ca069824f883f797de0264ab4",
+    "workflowRuns": [
+      "https://github.com/l4dybird/storyfreeze/actions/runs/29200645092",
+      "https://github.com/l4dybird/storyfreeze/actions/runs/29200645887",
+      "https://github.com/l4dybird/storyfreeze/actions/runs/29200646808",
+      "https://github.com/l4dybird/storyfreeze/actions/runs/29200647648"
+    ],
+    "backends": {
+      "puppeteer": {
+        "browserCrashRate": 0,
+        "captureFailureRate": 0,
+        "captureTimeP50Ms": 1070,
+        "captureTimeP95Ms": 1988,
+        "cpuTimeP50Ms": 10710,
+        "idleTimeoutEventCount": 0,
+        "maxBrowserRootCount": 4,
+        "maxChromiumProcessCount": 41,
+        "measuredRuns": 40,
+        "peakTreeRssP50Bytes": 4644823040,
+        "phaseTimings": {
+          "interaction": {
+            "p50Ms": 3.6220979999998235,
+            "p95Ms": 25.828199999999924,
+            "samples": 360
+          },
+          "metrics": {
+            "p50Ms": 51.63788999999997,
+            "p95Ms": 58.50828799999999,
+            "samples": 360
+          },
+          "navigation": {
+            "p50Ms": 179.64046999999982,
+            "p95Ms": 352.7053589999996,
+            "samples": 688
+          },
+          "preview-ready": {
+            "p50Ms": 247.06108100000074,
+            "p95Ms": 311.62583799999993,
+            "samples": 688
+          },
+          "reset": {
+            "p50Ms": 302.7435989999999,
+            "p95Ms": 410.40460600000006,
+            "samples": 360
+          },
+          "resource": {
+            "p50Ms": 0.3107329999998001,
+            "p95Ms": 0.6071680000000015,
+            "samples": 360
+          },
+          "screenshot": {
+            "p50Ms": 60.97888200000034,
+            "p95Ms": 100.59727000000021,
+            "samples": 360
+          },
+          "viewport": {
+            "p50Ms": 301.88189599999987,
+            "p95Ms": 952.787018,
+            "samples": 360
+          },
+          "visual-commit": {
+            "p50Ms": 16.375904000000446,
+            "p95Ms": 31.532740999999987,
+            "samples": 324
+          }
+        },
+        "retryRate": 0,
+        "storyVariants": {
+          "compatibility-fixture--console-error?keys=": {
+            "coefficientOfVariation": 0.16258605076105417,
+            "p50Ms": 910,
+            "p95Ms": 1001,
+            "samples": 40
+          },
+          "compatibility-fixture--console-error?keys=SMALL": {
+            "coefficientOfVariation": 0.05813178207315876,
+            "p50Ms": 1606,
+            "p95Ms": 1752,
+            "samples": 40
+          },
+          "compatibility-fixture--interactions?keys=": {
+            "coefficientOfVariation": 0.15394411986967493,
+            "p50Ms": 983,
+            "p95Ms": 1169,
+            "samples": 40
+          },
+          "compatibility-fixture--interactions?keys=LARGE,focused": {
+            "coefficientOfVariation": 0.05434522719533014,
+            "p50Ms": 1010,
+            "p95Ms": 1100,
+            "samples": 40
+          },
+          "compatibility-fixture--interactions?keys=LARGE,hovered": {
+            "coefficientOfVariation": 0.04760727147629037,
+            "p50Ms": 1475,
+            "p95Ms": 1548,
+            "samples": 40
+          },
+          "compatibility-fixture--interactions?keys=SMALL": {
+            "coefficientOfVariation": 0.4508268846688408,
+            "p50Ms": 476,
+            "p95Ms": 1289,
+            "samples": 40
+          },
+          "compatibility-fixture--interactions?keys=SMALL,focused": {
+            "coefficientOfVariation": 0.041887474066333016,
+            "p50Ms": 1635,
+            "p95Ms": 1750,
+            "samples": 40
+          },
+          "compatibility-fixture--interactions?keys=SMALL,hovered": {
+            "coefficientOfVariation": 0.04735008461718453,
+            "p50Ms": 1956,
+            "p95Ms": 2083,
+            "samples": 40
+          },
+          "compatibility-fixture--interactions?keys=clicked": {
+            "coefficientOfVariation": 0.26608861917809046,
+            "p50Ms": 840,
+            "p95Ms": 1631,
+            "samples": 40
+          }
+        },
+        "threeSecondTailEventCount": 0,
+        "timeoutRate": 0,
+        "visualCommitEventCount": 1012,
+        "visualCommitFallbackCount": 0,
+        "visualCommitTimeoutCount": 0,
+        "wallTimeP50Ms": 5755,
+        "wallTimeP95Ms": 6089
+      },
+      "playwright": {
+        "browserCrashRate": 0,
+        "captureFailureRate": 0,
+        "captureTimeP50Ms": 1311,
+        "captureTimeP95Ms": 1734,
+        "cpuTimeP50Ms": 9240,
+        "idleTimeoutEventCount": 0,
+        "maxBrowserRootCount": 5,
+        "maxChromiumProcessCount": 32,
+        "measuredRuns": 40,
+        "peakTreeRssP50Bytes": 3704963072,
+        "phaseTimings": {
+          "interaction": {
+            "p50Ms": 17.355961000000207,
+            "p95Ms": 65.49889799999983,
+            "samples": 360
+          },
+          "metrics": {
+            "p50Ms": 52.440172000000075,
+            "p95Ms": 59.363914999999906,
+            "samples": 360
+          },
+          "navigation": {
+            "p50Ms": 109.78049900000042,
+            "p95Ms": 343.1556310000001,
+            "samples": 758
+          },
+          "preview-ready": {
+            "p50Ms": 225.577859,
+            "p95Ms": 285.8303860000001,
+            "samples": 758
+          },
+          "reset": {
+            "p50Ms": 297.1830170000003,
+            "p95Ms": 374.7803870000007,
+            "samples": 360
+          },
+          "resource": {
+            "p50Ms": 0.2982320000000982,
+            "p95Ms": 0.5334670000002006,
+            "samples": 360
+          },
+          "screenshot": {
+            "p50Ms": 52.434948999999506,
+            "p95Ms": 74.56890000000021,
+            "samples": 360
+          },
+          "viewport": {
+            "p50Ms": 592.8942889999998,
+            "p95Ms": 685.4318170000001,
+            "samples": 360
+          },
+          "visual-commit": {
+            "p50Ms": 15.99483199999986,
+            "p95Ms": 28.69093699999985,
+            "samples": 359
+          }
+        },
+        "retryRate": 0,
+        "storyVariants": {
+          "compatibility-fixture--console-error?keys=": {
+            "coefficientOfVariation": 0.031968969392778115,
+            "p50Ms": 878,
+            "p95Ms": 918,
+            "samples": 40
+          },
+          "compatibility-fixture--console-error?keys=SMALL": {
+            "coefficientOfVariation": 0.11956583393954397,
+            "p50Ms": 1314,
+            "p95Ms": 1430,
+            "samples": 40
+          },
+          "compatibility-fixture--interactions?keys=": {
+            "coefficientOfVariation": 0.028666351857443977,
+            "p50Ms": 939,
+            "p95Ms": 975,
+            "samples": 40
+          },
+          "compatibility-fixture--interactions?keys=LARGE,focused": {
+            "coefficientOfVariation": 0.05651785822346903,
+            "p50Ms": 934,
+            "p95Ms": 1033,
+            "samples": 40
+          },
+          "compatibility-fixture--interactions?keys=LARGE,hovered": {
+            "coefficientOfVariation": 0.04094209719188846,
+            "p50Ms": 1468,
+            "p95Ms": 1581,
+            "samples": 40
+          },
+          "compatibility-fixture--interactions?keys=SMALL": {
+            "coefficientOfVariation": 0.0370374782232487,
+            "p50Ms": 1026,
+            "p95Ms": 1083,
+            "samples": 40
+          },
+          "compatibility-fixture--interactions?keys=SMALL,focused": {
+            "coefficientOfVariation": 0.04193963263302597,
+            "p50Ms": 1405,
+            "p95Ms": 1511,
+            "samples": 40
+          },
+          "compatibility-fixture--interactions?keys=SMALL,hovered": {
+            "coefficientOfVariation": 0.053503706443104176,
+            "p50Ms": 1661,
+            "p95Ms": 1813,
+            "samples": 40
+          },
+          "compatibility-fixture--interactions?keys=clicked": {
+            "coefficientOfVariation": 0.06675536528757027,
+            "p50Ms": 1426,
+            "p95Ms": 1506,
+            "samples": 40
+          }
+        },
+        "threeSecondTailEventCount": 0,
+        "timeoutRate": 0,
+        "visualCommitEventCount": 1117,
+        "visualCommitFallbackCount": 0,
+        "visualCommitTimeoutCount": 0,
+        "wallTimeP50Ms": 5821,
+        "wallTimeP95Ms": 6031
+      }
+    },
+    "playwrightToPuppeteerRatios": {
+      "cpuTimeP50": 0.8627450980392157,
+      "peakTreeRssP50": 0.7976543003024718,
+      "wallTimeP50": 1.0114682884448305,
+      "wallTimeP95": 0.9904746263754312
+    }
+  },
+  "diagnostics": {
+    "workflowRuns": [
+      "https://github.com/l4dybird/storyfreeze/actions/runs/29200648435",
+      "https://github.com/l4dybird/storyfreeze/actions/runs/29200649199"
+    ],
+    "results": [
+      {
+        "backends": {
+          "puppeteer": {
+            "browserCrashRate": 0,
+            "captureFailureRate": 0,
+            "captureTimeP50Ms": 1433,
+            "captureTimeP95Ms": 1489,
+            "cpuTimeP50Ms": 7750,
+            "idleTimeoutEventCount": 0,
+            "maxBrowserRootCount": 1,
+            "maxChromiumProcessCount": 12,
+            "measuredRuns": 3,
+            "peakTreeRssP50Bytes": 1667350528,
+            "phaseTimings": {
+              "interaction": {
+                "p50Ms": 3.1274630000007164,
+                "p95Ms": 20.377298000000337,
+                "samples": 27
+              },
+              "metrics": {
+                "p50Ms": 50.57481600000028,
+                "p95Ms": 51.06079799999998,
+                "samples": 27
+              },
+              "navigation": {
+                "p50Ms": 62.29587900000001,
+                "p95Ms": 147.90119900000002,
+                "samples": 63
+              },
+              "preview-ready": {
+                "p50Ms": 234.77138600000035,
+                "p95Ms": 262.34681400000045,
+                "samples": 63
+              },
+              "reset": {
+                "p50Ms": 299.81399599999986,
+                "p95Ms": 337.38459499999954,
+                "samples": 27
+              },
+              "resource": {
+                "p50Ms": 0.27409399999987727,
+                "p95Ms": 0.4788929999999709,
+                "samples": 27
+              },
+              "screenshot": {
+                "p50Ms": 50.92299700000012,
+                "p95Ms": 53.07030200000008,
+                "samples": 27
+              },
+              "viewport": {
+                "p50Ms": 728.9121540000015,
+                "p95Ms": 739.2156020000002,
+                "samples": 27
+              },
+              "visual-commit": {
+                "p50Ms": 15.860626000001503,
+                "p95Ms": 32.40451699999994,
+                "samples": 24
+              }
+            },
+            "retryRate": 0,
+            "storyVariants": {
+              "compatibility-fixture--console-error?keys=": {
+                "coefficientOfVariation": 0.0024372487072349767,
+                "p50Ms": 775,
+                "p95Ms": 775,
+                "samples": 3
+              },
+              "compatibility-fixture--console-error?keys=SMALL": {
+                "coefficientOfVariation": 0.007148973754509981,
+                "p50Ms": 1019,
+                "p95Ms": 1034,
+                "samples": 3
+              },
+              "compatibility-fixture--interactions?keys=": {
+                "coefficientOfVariation": 0.0021486752129677,
+                "p50Ms": 380,
+                "p95Ms": 381,
+                "samples": 3
+              },
+              "compatibility-fixture--interactions?keys=LARGE,focused": {
+                "coefficientOfVariation": 0.011238769180009994,
+                "p50Ms": 1453,
+                "p95Ms": 1473,
+                "samples": 3
+              },
+              "compatibility-fixture--interactions?keys=LARGE,hovered": {
+                "coefficientOfVariation": 0.007337096927765984,
+                "p50Ms": 1472,
+                "p95Ms": 1481,
+                "samples": 3
+              },
+              "compatibility-fixture--interactions?keys=SMALL": {
+                "coefficientOfVariation": 0.007194430469541275,
+                "p50Ms": 1115,
+                "p95Ms": 1131,
+                "samples": 3
+              },
+              "compatibility-fixture--interactions?keys=SMALL,focused": {
+                "coefficientOfVariation": 0.006423052007002129,
+                "p50Ms": 1449,
+                "p95Ms": 1455,
+                "samples": 3
+              },
+              "compatibility-fixture--interactions?keys=SMALL,hovered": {
+                "coefficientOfVariation": 0.02304651275667335,
+                "p50Ms": 1464,
+                "p95Ms": 1527,
+                "samples": 3
+              },
+              "compatibility-fixture--interactions?keys=clicked": {
+                "coefficientOfVariation": 0.0076648410430789835,
+                "p50Ms": 1481,
+                "p95Ms": 1489,
+                "samples": 3
+              }
+            },
+            "threeSecondTailEventCount": 0,
+            "timeoutRate": 0,
+            "visualCommitEventCount": 87,
+            "visualCommitFallbackCount": 0,
+            "visualCommitTimeoutCount": 0,
+            "wallTimeP50Ms": 11800,
+            "wallTimeP95Ms": 12030
+          },
+          "playwright": {
+            "browserCrashRate": 0,
+            "captureFailureRate": 0,
+            "captureTimeP50Ms": 1254,
+            "captureTimeP95Ms": 1331,
+            "cpuTimeP50Ms": 6360,
+            "idleTimeoutEventCount": 0,
+            "maxBrowserRootCount": 1,
+            "maxChromiumProcessCount": 8,
+            "measuredRuns": 3,
+            "peakTreeRssP50Bytes": 1140363264,
+            "phaseTimings": {
+              "interaction": {
+                "p50Ms": 13.407530000000406,
+                "p95Ms": 48.497417999999925,
+                "samples": 27
+              },
+              "metrics": {
+                "p50Ms": 50.980343000001085,
+                "p95Ms": 51.63637800000015,
+                "samples": 27
+              },
+              "navigation": {
+                "p50Ms": 59.084115000000565,
+                "p95Ms": 72.46451399999978,
+                "samples": 63
+              },
+              "preview-ready": {
+                "p50Ms": 215.2367750000003,
+                "p95Ms": 226.53023899999994,
+                "samples": 63
+              },
+              "reset": {
+                "p50Ms": 286.9587100000008,
+                "p95Ms": 294.1873150000001,
+                "samples": 27
+              },
+              "resource": {
+                "p50Ms": 0.25383400000009715,
+                "p95Ms": 0.45873200000005454,
+                "samples": 27
+              },
+              "screenshot": {
+                "p50Ms": 34.66196099999979,
+                "p95Ms": 53.32862599999953,
+                "samples": 27
+              },
+              "viewport": {
+                "p50Ms": 582.2541430000001,
+                "p95Ms": 593.9708129999999,
+                "samples": 27
+              },
+              "visual-commit": {
+                "p50Ms": 12.983170000000428,
+                "p95Ms": 31.140935000000354,
+                "samples": 24
+              }
+            },
+            "retryRate": 0,
+            "storyVariants": {
+              "compatibility-fixture--console-error?keys=": {
+                "coefficientOfVariation": 0.013591043695012508,
+                "p50Ms": 764,
+                "p95Ms": 781,
+                "samples": 3
+              },
+              "compatibility-fixture--console-error?keys=SMALL": {
+                "coefficientOfVariation": 0.00826421365886396,
+                "p50Ms": 918,
+                "p95Ms": 918,
+                "samples": 3
+              },
+              "compatibility-fixture--interactions?keys=": {
+                "coefficientOfVariation": 0.0013010244364057913,
+                "p50Ms": 362,
+                "p95Ms": 363,
+                "samples": 3
+              },
+              "compatibility-fixture--interactions?keys=LARGE,focused": {
+                "coefficientOfVariation": 0.002935254057185029,
+                "p50Ms": 1254,
+                "p95Ms": 1259,
+                "samples": 3
+              },
+              "compatibility-fixture--interactions?keys=LARGE,hovered": {
+                "coefficientOfVariation": 0.0018514661699041404,
+                "p50Ms": 1323,
+                "p95Ms": 1326,
+                "samples": 3
+              },
+              "compatibility-fixture--interactions?keys=SMALL": {
+                "coefficientOfVariation": 0.012644951800962001,
+                "p50Ms": 973,
+                "p95Ms": 991,
+                "samples": 3
+              },
+              "compatibility-fixture--interactions?keys=SMALL,focused": {
+                "coefficientOfVariation": 0.005381880687496499,
+                "p50Ms": 1268,
+                "p95Ms": 1282,
+                "samples": 3
+              },
+              "compatibility-fixture--interactions?keys=SMALL,hovered": {
+                "coefficientOfVariation": 0.0060309687914123136,
+                "p50Ms": 1331,
+                "p95Ms": 1347,
+                "samples": 3
+              },
+              "compatibility-fixture--interactions?keys=clicked": {
+                "coefficientOfVariation": 0.013362079113331083,
+                "p50Ms": 1314,
+                "p95Ms": 1321,
+                "samples": 3
+              }
+            },
+            "threeSecondTailEventCount": 0,
+            "timeoutRate": 0,
+            "visualCommitEventCount": 87,
+            "visualCommitFallbackCount": 0,
+            "visualCommitTimeoutCount": 0,
+            "wallTimeP50Ms": 10943,
+            "wallTimeP95Ms": 10947
+          }
+        },
+        "parallel": 1,
+        "startingBackend": "puppeteer"
+      },
+      {
+        "backends": {
+          "puppeteer": {
+            "browserCrashRate": 0,
+            "captureFailureRate": 0,
+            "captureTimeP50Ms": 899,
+            "captureTimeP95Ms": 1617,
+            "cpuTimeP50Ms": 8910,
+            "idleTimeoutEventCount": 0,
+            "maxBrowserRootCount": 2,
+            "maxChromiumProcessCount": 21,
+            "measuredRuns": 3,
+            "peakTreeRssP50Bytes": 2711339008,
+            "phaseTimings": {
+              "interaction": {
+                "p50Ms": 3.061381000000438,
+                "p95Ms": 30.08917399999973,
+                "samples": 27
+              },
+              "metrics": {
+                "p50Ms": 51.129961000000094,
+                "p95Ms": 53.24745600000006,
+                "samples": 27
+              },
+              "navigation": {
+                "p50Ms": 96.44173200000023,
+                "p95Ms": 253.04608400000006,
+                "samples": 51
+              },
+              "preview-ready": {
+                "p50Ms": 238.52910200000042,
+                "p95Ms": 279.7930359999998,
+                "samples": 51
+              },
+              "reset": {
+                "p50Ms": 313.3950139999997,
+                "p95Ms": 359.3717749999996,
+                "samples": 27
+              },
+              "resource": {
+                "p50Ms": 0.3119329999999536,
+                "p95Ms": 0.5862960000004023,
+                "samples": 27
+              },
+              "screenshot": {
+                "p50Ms": 59.46937800000023,
+                "p95Ms": 66.67786100000012,
+                "samples": 27
+              },
+              "viewport": {
+                "p50Ms": 301.0683979999999,
+                "p95Ms": 805.0753850000001,
+                "samples": 27
+              },
+              "visual-commit": {
+                "p50Ms": 11.688010999999733,
+                "p95Ms": 31.461855999999898,
+                "samples": 24
+              }
+            },
+            "retryRate": 0,
+            "storyVariants": {
+              "compatibility-fixture--console-error?keys=": {
+                "coefficientOfVariation": 0.013262145767042238,
+                "p50Ms": 899,
+                "p95Ms": 917,
+                "samples": 3
+              },
+              "compatibility-fixture--console-error?keys=SMALL": {
+                "coefficientOfVariation": 0.019722001726429503,
+                "p50Ms": 1185,
+                "p95Ms": 1204,
+                "samples": 3
+              },
+              "compatibility-fixture--interactions?keys=": {
+                "coefficientOfVariation": 0.011375243066104285,
+                "p50Ms": 970,
+                "p95Ms": 985,
+                "samples": 3
+              },
+              "compatibility-fixture--interactions?keys=LARGE,focused": {
+                "coefficientOfVariation": 0.015150227829845517,
+                "p50Ms": 1607,
+                "p95Ms": 1630,
+                "samples": 3
+              },
+              "compatibility-fixture--interactions?keys=LARGE,hovered": {
+                "coefficientOfVariation": 0.015148410472768995,
+                "p50Ms": 820,
+                "p95Ms": 840,
+                "samples": 3
+              },
+              "compatibility-fixture--interactions?keys=SMALL": {
+                "coefficientOfVariation": 0.011167515567913887,
+                "p50Ms": 468,
+                "p95Ms": 468,
+                "samples": 3
+              },
+              "compatibility-fixture--interactions?keys=SMALL,focused": {
+                "coefficientOfVariation": 0.005174752022952707,
+                "p50Ms": 776,
+                "p95Ms": 784,
+                "samples": 3
+              },
+              "compatibility-fixture--interactions?keys=SMALL,hovered": {
+                "coefficientOfVariation": 0.011979350488858715,
+                "p50Ms": 1587,
+                "p95Ms": 1617,
+                "samples": 3
+              },
+              "compatibility-fixture--interactions?keys=clicked": {
+                "coefficientOfVariation": 0.007626330999585283,
+                "p50Ms": 814,
+                "p95Ms": 816,
+                "samples": 3
+              }
+            },
+            "threeSecondTailEventCount": 0,
+            "timeoutRate": 0,
+            "visualCommitEventCount": 75,
+            "visualCommitFallbackCount": 0,
+            "visualCommitTimeoutCount": 0,
+            "wallTimeP50Ms": 6226,
+            "wallTimeP95Ms": 6291
+          },
+          "playwright": {
+            "browserCrashRate": 0,
+            "captureFailureRate": 0,
+            "captureTimeP50Ms": 912,
+            "captureTimeP95Ms": 1409,
+            "cpuTimeP50Ms": 8000,
+            "idleTimeoutEventCount": 0,
+            "maxBrowserRootCount": 2,
+            "maxChromiumProcessCount": 16,
+            "measuredRuns": 3,
+            "peakTreeRssP50Bytes": 2001010688,
+            "phaseTimings": {
+              "interaction": {
+                "p50Ms": 17.654593999999634,
+                "p95Ms": 77.68257199999971,
+                "samples": 27
+              },
+              "metrics": {
+                "p50Ms": 52.222765999999865,
+                "p95Ms": 53.95367299999998,
+                "samples": 27
+              },
+              "navigation": {
+                "p50Ms": 78.4493150000003,
+                "p95Ms": 258.4105340000001,
+                "samples": 51
+              },
+              "preview-ready": {
+                "p50Ms": 220.8449129999999,
+                "p95Ms": 277.0916510000002,
+                "samples": 51
+              },
+              "reset": {
+                "p50Ms": 299.0351920000003,
+                "p95Ms": 326.8028239999994,
+                "samples": 27
+              },
+              "resource": {
+                "p50Ms": 0.2798130000001038,
+                "p95Ms": 0.5644649999999274,
+                "samples": 27
+              },
+              "screenshot": {
+                "p50Ms": 47.03300399999989,
+                "p95Ms": 63.764810000000125,
+                "samples": 27
+              },
+              "viewport": {
+                "p50Ms": 304.21448599999985,
+                "p95Ms": 614.9474620000001,
+                "samples": 27
+              },
+              "visual-commit": {
+                "p50Ms": 14.673071000000164,
+                "p95Ms": 30.28425500000003,
+                "samples": 24
+              }
+            },
+            "retryRate": 0,
+            "storyVariants": {
+              "compatibility-fixture--console-error?keys=": {
+                "coefficientOfVariation": 0.018361798214975824,
+                "p50Ms": 912,
+                "p95Ms": 932,
+                "samples": 3
+              },
+              "compatibility-fixture--console-error?keys=SMALL": {
+                "coefficientOfVariation": 0.0036333424398642305,
+                "p50Ms": 1013,
+                "p95Ms": 1018,
+                "samples": 3
+              },
+              "compatibility-fixture--interactions?keys=": {
+                "coefficientOfVariation": 0.012251073103265963,
+                "p50Ms": 943,
+                "p95Ms": 961,
+                "samples": 3
+              },
+              "compatibility-fixture--interactions?keys=LARGE,focused": {
+                "coefficientOfVariation": 0.013987236470263684,
+                "p50Ms": 1371,
+                "p95Ms": 1406,
+                "samples": 3
+              },
+              "compatibility-fixture--interactions?keys=LARGE,hovered": {
+                "coefficientOfVariation": 0.013601361964189658,
+                "p50Ms": 842,
+                "p95Ms": 866,
+                "samples": 3
+              },
+              "compatibility-fixture--interactions?keys=SMALL": {
+                "coefficientOfVariation": 0.040875447558251864,
+                "p50Ms": 392,
+                "p95Ms": 424,
+                "samples": 3
+              },
+              "compatibility-fixture--interactions?keys=SMALL,focused": {
+                "coefficientOfVariation": 0.01136958049515564,
+                "p50Ms": 754,
+                "p95Ms": 765,
+                "samples": 3
+              },
+              "compatibility-fixture--interactions?keys=SMALL,hovered": {
+                "coefficientOfVariation": 0.005490081528475326,
+                "p50Ms": 1409,
+                "p95Ms": 1413,
+                "samples": 3
+              },
+              "compatibility-fixture--interactions?keys=clicked": {
+                "coefficientOfVariation": 0.02265346475604574,
+                "p50Ms": 769,
+                "p95Ms": 801,
+                "samples": 3
+              }
+            },
+            "threeSecondTailEventCount": 0,
+            "timeoutRate": 0,
+            "visualCommitEventCount": 75,
+            "visualCommitFallbackCount": 0,
+            "visualCommitTimeoutCount": 0,
+            "wallTimeP50Ms": 6202,
+            "wallTimeP95Ms": 6206
+          }
+        },
+        "parallel": 2,
+        "startingBackend": "playwright"
+      }
+    ]
+  },
+  "traceValidation": {
+    "gate": {
+      "errors": [],
+      "passed": true
+    },
+    "summaries": {
+      "puppeteer": {
+        "bytes": 10047652,
+        "categories": [
+          "__metadata",
+          "benchmark",
+          "blink",
+          "blink.console",
+          "blink.user_timing",
+          "cc",
+          "devtools.timeline",
+          "disabled-by-default-devtools.timeline",
+          "disabled-by-default-devtools.timeline.frame",
+          "disabled-by-default-v8.compile",
+          "disabled-by-default-v8.cpu_profiler",
+          "disabled-by-default-v8.gc",
+          "loading",
+          "mojom",
+          "rail",
+          "toplevel",
+          "v8",
+          "v8.execute"
+        ],
+        "cpuProfileEventCount": 291,
+        "errors": [],
+        "eventCount": 41928,
+        "files": [
+          {
+            "bytes": 3371952,
+            "categories": [
+              "__metadata",
+              "benchmark",
+              "blink",
+              "blink.console",
+              "blink.user_timing",
+              "cc",
+              "devtools.timeline",
+              "disabled-by-default-devtools.timeline",
+              "disabled-by-default-devtools.timeline.frame",
+              "disabled-by-default-v8.compile",
+              "disabled-by-default-v8.cpu_profiler",
+              "disabled-by-default-v8.gc",
+              "loading",
+              "mojom",
+              "rail",
+              "toplevel",
+              "v8",
+              "v8.execute"
+            ],
+            "cpuProfileEventCount": 90,
+            "errors": [],
+            "eventCount": 14050,
+            "path": "Compatibility/Fixture/Console Error_LARGE_trace.json",
+            "timelineEventCount": 5302
+          },
+          {
+            "bytes": 6675700,
+            "categories": [
+              "__metadata",
+              "benchmark",
+              "blink",
+              "blink.console",
+              "blink.user_timing",
+              "cc",
+              "devtools.timeline",
+              "disabled-by-default-devtools.timeline",
+              "disabled-by-default-devtools.timeline.frame",
+              "disabled-by-default-v8.compile",
+              "disabled-by-default-v8.cpu_profiler",
+              "disabled-by-default-v8.gc",
+              "loading",
+              "mojom",
+              "rail",
+              "toplevel",
+              "v8",
+              "v8.execute"
+            ],
+            "cpuProfileEventCount": 201,
+            "errors": [],
+            "eventCount": 27878,
+            "path": "Compatibility/Fixture/Console Error_SMALL_trace.json",
+            "timelineEventCount": 10117
+          }
+        ],
+        "timelineEventCount": 15419,
+        "traceCount": 2,
+        "valid": true
+      },
+      "playwright": {
+        "bytes": 6931125,
+        "categories": [
+          "__metadata",
+          "benchmark",
+          "blink",
+          "blink.animations",
+          "blink.console",
+          "blink.user_timing",
+          "cc",
+          "devtools.timeline",
+          "disabled-by-default-devtools.timeline",
+          "disabled-by-default-devtools.timeline.frame",
+          "disabled-by-default-v8.compile",
+          "disabled-by-default-v8.cpu_profiler",
+          "disabled-by-default-v8.gc",
+          "loading",
+          "mojom",
+          "rail",
+          "toplevel",
+          "v8",
+          "v8.execute"
+        ],
+        "cpuProfileEventCount": 204,
+        "errors": [],
+        "eventCount": 28661,
+        "files": [
+          {
+            "bytes": 2745738,
+            "categories": [
+              "__metadata",
+              "benchmark",
+              "blink",
+              "blink.animations",
+              "blink.console",
+              "blink.user_timing",
+              "cc",
+              "devtools.timeline",
+              "disabled-by-default-devtools.timeline",
+              "disabled-by-default-devtools.timeline.frame",
+              "disabled-by-default-v8.compile",
+              "disabled-by-default-v8.cpu_profiler",
+              "disabled-by-default-v8.gc",
+              "loading",
+              "mojom",
+              "rail",
+              "toplevel",
+              "v8",
+              "v8.execute"
+            ],
+            "cpuProfileEventCount": 91,
+            "errors": [],
+            "eventCount": 11302,
+            "path": "Compatibility/Fixture/Console Error_LARGE_trace.json",
+            "timelineEventCount": 4572
+          },
+          {
+            "bytes": 4185387,
+            "categories": [
+              "__metadata",
+              "benchmark",
+              "blink",
+              "blink.animations",
+              "blink.console",
+              "blink.user_timing",
+              "cc",
+              "devtools.timeline",
+              "disabled-by-default-devtools.timeline",
+              "disabled-by-default-devtools.timeline.frame",
+              "disabled-by-default-v8.compile",
+              "disabled-by-default-v8.cpu_profiler",
+              "disabled-by-default-v8.gc",
+              "loading",
+              "mojom",
+              "rail",
+              "toplevel",
+              "v8",
+              "v8.execute"
+            ],
+            "cpuProfileEventCount": 113,
+            "errors": [],
+            "eventCount": 17359,
+            "path": "Compatibility/Fixture/Console Error_SMALL_trace.json",
+            "timelineEventCount": 6818
+          }
+        ],
+        "timelineEventCount": 11390,
+        "traceCount": 2,
+        "valid": true
+      }
+    },
+    "workflowRun": "https://github.com/l4dybird/storyfreeze/actions/runs/29200634450"
+  },
+  "candidatePlaywrightChange": {
+    "captureTimeP50": 0.9984767707539984,
+    "captureTimeP95": 0.39080459770114945,
+    "cpuTimeP50": 0.964509394572025,
+    "peakTreeRssP50": 1.0018885124171075,
+    "wallTimeP50": 0.656405051871899,
+    "wallTimeP95": 0.34758803527174226
+  },
+  "acceptance": {
+    "browserCrashRateIsZero": true,
+    "captureFailureRateIsZero": true,
+    "cpuTimeRatioAtMostOne": true,
+    "idleTimeoutEventCountIsZero": true,
+    "pairedRunsAtLeast40": true,
+    "peakTreeRssRatioAtMostPointEight": true,
+    "pngMismatchCountIsZero": true,
+    "retryRateIsZero": true,
+    "timeoutRateIsZero": true,
+    "visualCommitTimeoutCountIsZero": true,
+    "wallTimeP50RatioAtMostOnePointZeroFive": true,
+    "wallTimeP95RatioAtMostOnePointOne": true,
+    "passed": true
+  },
+  "historicalContainerComparison": {
     "dispatches": 3,
     "explicitInstallJobMedianSeconds": 207,
     "officialContainerJobMedianSeconds": 205,

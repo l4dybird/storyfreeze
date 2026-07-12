@@ -573,6 +573,7 @@ function summarizeRuns(runs) {
     }),
   );
   const idleEvents = diagnosticEvents.filter(event => event.type === 'idle-wait');
+  const visualCommitEvents = diagnosticEvents.filter(event => event.type === 'visual-commit');
   return {
     browserCrashEventCount: runs.reduce((total, run) => total + run.browserCrashCount, 0),
     browserCrashRate: runs.filter(run => run.browserCrashCount > 0).length / runs.length,
@@ -585,8 +586,11 @@ function summarizeRuns(runs) {
       idleTimeoutRate: idleEvents.length ? idleEvents.filter(event => event.didTimeout).length / idleEvents.length : 0,
       phaseTimings,
       threeSecondTailEventCount: diagnosticEvents.filter(
-        event => typeof event.durationMs === 'number' && event.durationMs >= 3000,
+        event => event.type === 'capture-output' && typeof event.durationMs === 'number' && event.durationMs >= 3000,
       ).length,
+      visualCommitEventCount: visualCommitEvents.length,
+      visualCommitFallbackCount: visualCommitEvents.filter(event => event.usedAnimationFrameFallback).length,
+      visualCommitTimeoutCount: visualCommitEvents.filter(event => event.didTimeout).length,
     },
     maxChromiumProcessCount: Math.max(...runs.map(run => run.peakChromiumProcessCount)),
     maxPeakTreeRssBytes: Math.max(...runs.map(run => run.peakTreeRssBytes)),

@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vite-plus/test';
+import type { BrowserBackend } from './browser-backend.js';
 import type { MainOptions } from './types.js';
 import { runCli, type SignalHost } from './cli-command.js';
 
@@ -45,6 +46,24 @@ describe(runCli, () => {
     });
     expect(received?.logger.level).toBe('silent');
     expect(received?.launchOptions?.headless).toBe(true);
+    expect(main).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ browserBackend: expect.objectContaining({ name: 'puppeteer' }) }),
+    );
+  });
+
+  it('selects the Playwright backend without changing the default parallelism', async () => {
+    const backend = { name: 'playwright', devices: () => [] } as unknown as BrowserBackend;
+    const resolveBrowserBackend = vi.fn(async () => backend);
+    const main = vi.fn(async (_options: MainOptions) => 0);
+
+    await expect(
+      runCli(['--silent', '--browser-backend', 'playwright'], { main, resolveBrowserBackend }),
+    ).resolves.toBe(0);
+
+    expect(resolveBrowserBackend).toHaveBeenCalledWith('playwright');
+    expect(main.mock.calls[0][0].parallel).toBe(4);
+    expect(main).toHaveBeenCalledWith(expect.anything(), { browserBackend: backend });
   });
 
   it('supports all existing short options and repeated values', async () => {
@@ -153,6 +172,7 @@ describe(runCli, () => {
     ['unknown option', ['--unknown-option']],
     ['invalid number', ['--parallel', 'many']],
     ['invalid enum', ['--chromium-channel', 'nightly']],
+    ['invalid browser backend', ['--browser-backend', 'webkit']],
   ])('rejects %s before execution', async (_label, args) => {
     const main = vi.fn(async (_options: MainOptions) => 0);
     await expect(runCli(args, { main })).resolves.toBe(1);
@@ -198,20 +218,27 @@ describe(runCli, () => {
 
   it('lists devices without calling main', async () => {
     const main = vi.fn(async (_options: MainOptions) => 0);
-    const getDeviceDescriptors = vi.fn(
-      () =>
-        [
-          {
-            name: 'Test Phone',
-            viewport: { width: 320, height: 640, deviceScaleFactor: 1, isMobile: true, hasTouch: true },
-          },
-        ] as never,
+    const devices = vi.fn(() => [
+      {
+        name: 'Test Phone',
+        viewport: { width: 320, height: 640, deviceScaleFactor: 1, isMobile: true, hasTouch: true },
+      },
+    ]);
+    const resolveBrowserBackend = vi.fn(
+      async () =>
+        ({
+          name: 'playwright',
+          devices,
+        }) as unknown as BrowserBackend,
     );
 
-    await expect(runCli(['--list-devices'], { main, getDeviceDescriptors })).resolves.toBe(0);
+    await expect(
+      runCli(['--list-devices', '--browser-backend', 'playwright'], { main, resolveBrowserBackend }),
+    ).resolves.toBe(0);
 
     expect(main).not.toHaveBeenCalled();
-    expect(getDeviceDescriptors).toHaveBeenCalledTimes(1);
+    expect(resolveBrowserBackend).toHaveBeenCalledWith('playwright');
+    expect(devices).toHaveBeenCalledTimes(1);
     expect(log.mock.calls.flat().join(' ')).toContain('Test Phone');
   });
 

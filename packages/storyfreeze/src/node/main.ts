@@ -157,7 +157,7 @@ export async function main(mainOptions: MainOptions, overrides: Partial<MainDepe
     await abortable(connection.connect(), mainOptions.signal);
     logger.debug('Created to connection.');
 
-    // Launch Puppeteer process and fetch names of all stories.
+    // Launch a browser process and fetch names of all stories.
     storiesBrowser = new BaseBrowser(mainOptions, browserBackend);
     await storiesBrowser.boot();
     throwIfAborted(mainOptions.signal);
@@ -204,7 +204,7 @@ export async function main(mainOptions: MainOptions, overrides: Partial<MainDepe
       );
     }
 
-    // Launch Puppeteer processes to capture each story.
+    // Launch browser processes to capture each story.
     workers = await bootCapturingBrowserAsWorkers(connection, mainOptions, mode, browserBackend);
     logger.debug('Created workers.');
 
@@ -224,6 +224,11 @@ export async function main(mainOptions: MainOptions, overrides: Partial<MainDepe
     return captured;
   } catch (error) {
     if (error instanceof ChromiumNotFoundError) {
+      if (browserBackend.name === 'playwright') {
+        throw new Error(
+          'Chromium is not installed. Execute "npx playwright-core@1.61.1 install chromium" or set "--chromium-path" or "--chromium-channel".',
+        );
+      }
       throw new Error(
         `Chromium is not installed. Execute "npm i puppeteer" or install manually and set "--chromium-path" option.`,
       );

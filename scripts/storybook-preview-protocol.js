@@ -318,6 +318,13 @@ async function main() {
       extraFragments: ['Found 3 stories.'],
     });
     assertCapture({
+      script: 'storyfreeze:managed-static-playwright',
+      mode: 'managed',
+      directoryName: '__screenshots__/managed-static-playwright',
+      expectedPaths: managedScreenshotPaths,
+      extraFragments: ['Browser backend: playwright', 'Found 3 stories.'],
+    });
+    assertCapture({
       script: 'storyfreeze:filter-static',
       mode: 'managed',
       directoryName: '__screenshots__/filter-static',

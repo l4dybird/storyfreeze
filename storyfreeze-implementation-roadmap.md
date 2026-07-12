@@ -8,7 +8,7 @@
 - npm パッケージ候補: `storyfreeze`
 - CLI: `storyfreeze`
 - 対象: Storybook 10 / Chromium / Playwright
-- ステータス: Phase 5B準備中
+- ステータス: Phase 5B実装中
 
 ## 1. 結論
 

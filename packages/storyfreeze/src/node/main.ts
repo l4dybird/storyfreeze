@@ -199,7 +199,7 @@ export async function main(mainOptions: MainOptions) {
   } catch (error) {
     if (error instanceof ChromiumNotFoundError) {
       throw new Error(
-        `Chromium is not installed. Execute "npm i puppeteer" or install manually and set "--chromiumPath" option.`,
+        `Chromium is not installed. Execute "npm i puppeteer" or install manually and set "--chromium-path" option.`,
       );
     }
     throw error;

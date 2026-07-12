@@ -3,6 +3,7 @@
 <!-- toc -->
 
 - [From Storycapture 9 to StoryFreeze](#from-storycapture-9-to-storyfreeze)
+- [Migrating the CLI to Gunshi](#migrating-the-cli-to-gunshi)
 - [From storybook-chrome-screenshot 1.x to storyfreeze](#from-storybook-chrome-screenshot-1x-to-storyfreeze)
   - [Replace dependency](#replace-dependency)
   - [Replace decorators](#replace-decorators)
@@ -28,7 +29,7 @@ $ npm uninstall storycapture
 $ npm install --save-dev storyfreeze
 ```
 
-StoryFreeze requires Node.js 20.19 or newer and Storybook 10. It is published
+StoryFreeze requires Node.js 22 or newer and Storybook 10. It is published
 as an ESM-only package, so replace CommonJS `require('storyfreeze')` calls with
 ESM imports.
 
@@ -58,6 +59,19 @@ The `STORYCAP_SHOW` environment variable is now `STORYFREEZE_SHOW`. The
 `parameters.screenshot` APIs are unchanged. The `withScreenshot` export remains
 available for direct integrations but must not be registered alongside the
 addon. Screenshot output paths and filenames are also unchanged.
+
+## Migrating the CLI to Gunshi
+
+The StoryFreeze CLI now uses Gunshi and requires Node.js 22 or newer. Long
+options use kebab-case, so update camelCase invocations such as
+`--serverCmd`, `--outDir`, and `--captureMaxRetryCount` to `--server-cmd`,
+`--out-dir`, and `--capture-max-retry-count`. Legacy camelCase and unknown
+options are rejected.
+
+Repeat `--include`, `--exclude`, or `--viewport` once for each value. Boolean
+options no longer accept `--flag=true` or `--flag=false`; use the flag to
+enable it, and use `--no-disable-css-animation` to override the default-enabled
+CSS animation setting. Gunshi now provides `-h`/`--help` and `-v`/`--version`.
 
 ## From storybook-chrome-screenshot 1.x to storyfreeze
 
@@ -165,7 +179,7 @@ Some fields of `ScreenshotOptions` are deprecated.
 
 ### CLI usage
 
-storyfreeze CLI accepts only Storybook's URL and you can boot local Storybook server with `--serverCmd` option.
+storyfreeze CLI accepts only Storybook's URL and you can boot local Storybook server with `--server-cmd` option.
 
 ```sh
 # Before
@@ -174,14 +188,14 @@ $ storybook-chrome-screenshot -p 8080 -h localhost -s ./public
 
 ```sh
 # After
-$ storyfreeze http://localhost:8080 --serverCmd "start-storybook -p 8080 -h localhost -s ./public"
+$ storyfreeze http://localhost:8080 --server-cmd "start-storybook -p 8080 -h localhost -s ./public"
 ```
 
 ### CLI options
 
 Some CLI options of storybook-chrome-screenshot are deprecated.
 
-- `--browser-timeout`: Use `--serverTimeout` instead of it
+- `--browser-timeout`: Use `--server-timeout` instead of it
 - `--filter-kind`, `--filter-story`: Use `--include` instead of them
 
 ### Other deprecated features

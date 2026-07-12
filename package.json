@@ -14,12 +14,12 @@
     "typedoc:build": "pnpm --filter \"./packages/**\" -r run typedoc",
     "copy:misc": "pnpm copy:misc:storyfreeze",
     "copy:misc:storyfreeze": "cpy README.md CONTRIBUTING.md MIGRATION.md LICENSE packages/storyfreeze",
-    "build": "pnpm --filter \"./packages/**\" -r run build && pnpm doc && pnpm copy:misc",
+    "build": "vp run build:packages && vp run doc && vp run copy:misc",
     "build:pages": "pnpm typedoc:build",
     "format": "prettier --write \"packages/**/src/**/*\" \"scripts/**/*\" \"*.md\" \"packages/*/*.md\"",
     "format:check": "prettier --check \"packages/**/src/**/*\" \"scripts/**/*\"",
     "lint": "eslint \"packages/**/src/**/*.ts\"",
-    "test": "pnpm --filter \"./packages/**\" -r run test",
+    "test": "vp run --filter \"./packages/**\" --fail-if-no-match test",
     "package:smoke": "node scripts/package-smoke.js",
     "publish:dry-run": "pnpm --filter \"./packages/**\" -r publish --dry-run --no-git-checks --config.skip-manifest-obfuscation=true --tag next --access public --registry https://registry.npmjs.org/",
     "baseline:verify": "node scripts/validate-baseline.js",
@@ -58,7 +58,8 @@
     "reg-publish-s3-plugin": "0.14.3",
     "reg-suit": "0.14.3",
     "typescript": "5.7.3",
-    "typescript-eslint-language-service": "5.0.5"
+    "typescript-eslint-language-service": "5.0.5",
+    "vite-plus": "0.2.4"
   },
   "version": "0.0.0"
 }

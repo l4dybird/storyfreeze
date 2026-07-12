@@ -14,13 +14,14 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v6
-      - name: Use Node.js 22.18.0
-        uses: actions/setup-node@v4
+      - name: Set up Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1.15.0
         with:
-          node-version: 22.18.0
-          cache: 'pnpm'
+          node-version: '22.18.0'
+          cache: true
           cache-dependency-path: pnpm-lock.yaml
-      - run: pnpm install --frozen-lockfile
+          run-install: false
+      - uses: pnpm/action-setup@v6
+      - run: vp install --frozen-lockfile
       - run: pnpm build
       - run: pnpm e2e

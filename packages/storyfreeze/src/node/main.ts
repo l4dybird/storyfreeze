@@ -42,23 +42,37 @@ async function detectRunMode(storiesBrowser: BaseBrowser, opt: MainOptions) {
   return mode;
 }
 
-async function bootCapturingBrowserAsWorkers(
-  connection: ManagedStorybookConnection,
-  opt: MainOptions,
-  mode: RunMode,
-  onBoot: (browser: CapturingBrowser) => void,
-) {
-  const browsers = await Promise.all(
-    [...new Array(Math.max(opt.parallel, 1)).keys()].map(async i => {
-      const browser = await new CapturingBrowser(connection, opt, mode, i).boot();
-      if (opt.signal?.aborted) {
-        await browser.close();
-        throw opt.signal.reason instanceof Error ? opt.signal.reason : new Error('StoryFreeze was interrupted.');
-      }
-      onBoot(browser);
-      return browser;
-    }),
+type BootableCaptureWorker<T> = {
+  boot(): Promise<T>;
+  close(): Promise<void>;
+};
+
+export async function bootCaptureWorkers<T extends BootableCaptureWorker<T>>(
+  workers: T[],
+  signal?: AbortSignal,
+): Promise<T[]> {
+  throwIfAborted(signal);
+  const results = await Promise.allSettled(workers.map(worker => worker.boot()));
+  const failure = results.find((result): result is PromiseRejectedResult => result.status === 'rejected');
+  const interrupted = signal?.aborted
+    ? signal.reason instanceof Error
+      ? signal.reason
+      : new Error('StoryFreeze was interrupted.')
+    : undefined;
+
+  if (failure || interrupted) {
+    await Promise.allSettled(workers.map(worker => worker.close()));
+    throw interrupted ?? failure!.reason;
+  }
+
+  return results.map(result => (result as PromiseFulfilledResult<T>).value);
+}
+
+async function bootCapturingBrowserAsWorkers(connection: ManagedStorybookConnection, opt: MainOptions, mode: RunMode) {
+  const browsers = [...new Array(Math.max(opt.parallel, 1)).keys()].map(
+    i => new CapturingBrowser(connection, opt, mode, i),
   );
+  await bootCaptureWorkers(browsers, opt.signal);
   opt.logger.debug(`Started ${browsers.length} capture browsers`);
   return browsers;
 }
@@ -176,10 +190,7 @@ export async function main(mainOptions: MainOptions) {
     }
 
     // Launch Puppeteer processes to capture each story.
-    workers = await abortable(
-      bootCapturingBrowserAsWorkers(connection, mainOptions, mode, browser => workers.push(browser)),
-      mainOptions.signal,
-    );
+    workers = await bootCapturingBrowserAsWorkers(connection, mainOptions, mode);
     logger.debug('Created workers.');
 
     // Execution caputuring procedure.

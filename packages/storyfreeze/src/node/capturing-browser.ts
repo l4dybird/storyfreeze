@@ -51,7 +51,7 @@ export class CapturingBrowser extends BaseBrowser {
   private currentRequestId!: string;
   private currentVariantKey: VariantKey = { isDefault: true, keys: [] };
   private touched = false;
-  private resourceWatcher!: ResourceWatcher;
+  private resourceWatcher?: ResourceWatcher;
   private navigator!: StoryNavigator;
 
   /**
@@ -88,14 +88,26 @@ export class CapturingBrowser extends BaseBrowser {
    **/
   async boot() {
     await super.boot();
-    await this.expose();
-    this.resourceWatcher = new ResourceWatcher(this.page).init();
-    this.navigator = new StoryNavigator(this.page, new URL(this.connection.url), this.idx);
-    return this;
+    try {
+      await this.expose();
+      this.resourceWatcher = new ResourceWatcher(this.page);
+      this.resourceWatcher.init();
+      this.navigator = new StoryNavigator(this.page, new URL(this.connection.url), this.idx);
+      return this;
+    } catch (error) {
+      try {
+        await this.close();
+      } catch {
+        // Preserve the initialization error when cleanup also fails.
+      }
+      throw error;
+    }
   }
 
   async close() {
-    this.resourceWatcher?.dispose();
+    const resourceWatcher = this.resourceWatcher;
+    this.resourceWatcher = undefined;
+    resourceWatcher?.dispose();
     await super.close();
   }
 
@@ -248,8 +260,8 @@ export class CapturingBrowser extends BaseBrowser {
 
   private async waitForResources(screenshotOptions: StrictScreenshotOptions) {
     if (!screenshotOptions.waitAssets && !screenshotOptions.waitImages) return;
-    this.debug('Wait for requested resources resolved', this.resourceWatcher.getRequestedUrls());
-    await this.resourceWatcher.waitForRequestsComplete();
+    this.debug('Wait for requested resources resolved', this.resourceWatcher!.getRequestedUrls());
+    await this.resourceWatcher!.waitForRequestsComplete();
   }
 
   private async waitBrowserMetricsStable(phase: 'preEmit' | 'postEmit') {
@@ -310,7 +322,7 @@ export class CapturingBrowser extends BaseBrowser {
     this.currentVariantKey = variantKey;
     this.currentStoryRetryCount = retryCount;
     let emittedScreenshotOptions: ScreenshotOptions | undefined;
-    this.resourceWatcher.clear();
+    this.resourceWatcher!.clear();
 
     function onConsoleLog(msg: ConsoleMessage) {
       const niceMessage = `From ${requestId} (${msg.type()}): ${msg.text()}`;

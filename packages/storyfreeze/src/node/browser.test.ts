@@ -88,6 +88,7 @@ describe(BaseBrowser, () => {
     await browser.boot();
 
     await browser.close();
+    await browser.close();
 
     expect(browser.closePage).toHaveBeenCalledTimes(1);
     expect(browser.closeBrowser).toHaveBeenCalledTimes(1);

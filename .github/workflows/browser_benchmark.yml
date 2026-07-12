@@ -1,0 +1,39 @@
+name: Browser performance benchmark
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/browser_benchmark.yml'
+      - 'benchmarks/**'
+      - 'scripts/browser-performance-benchmark.js'
+      - 'scripts/e2e-prestorybook.js'
+
+permissions:
+  contents: read
+
+jobs:
+  puppeteer-process-baseline:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1.15.0
+        with:
+          node-version: '22.18.0'
+          cache: true
+          cache-dependency-path: pnpm-lock.yaml
+          run-install: false
+      - uses: pnpm/action-setup@v6
+      - run: vp install --frozen-lockfile
+      - run: pnpm build
+      - name: Measure Puppeteer process baseline
+        env:
+          STORYFREEZE_BENCHMARK_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: >-
+          node scripts/e2e-prestorybook.js examples/react-vite browser-performance-benchmark.js
+          "$RUNNER_TEMP/browser-performance.json"
+      - name: Print benchmark record
+        run: cat "$RUNNER_TEMP/browser-performance.json"

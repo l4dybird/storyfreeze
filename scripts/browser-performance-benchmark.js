@@ -34,9 +34,9 @@ function runPnpm(args) {
 
 function readLinuxProcesses() {
   const processes = new Map();
-  for (const entry of fs.readdirSync('/proc', { withFileTypes: true })) {
-    if (!entry.isDirectory() || !/^\d+$/.test(entry.name)) continue;
-    const pid = Number(entry.name);
+  for (const entry of fs.readdirSync('/proc')) {
+    if (!/^\d+$/.test(entry)) continue;
+    const pid = Number(entry);
     try {
       const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf8');
       const fields = stat.slice(stat.lastIndexOf(')') + 2).split(' ');

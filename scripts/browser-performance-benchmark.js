@@ -521,6 +521,14 @@ function summarizeRuns(runs) {
     successfulRuns: successful.length,
     timeoutRate: runs.reduce((total, run) => total + run.timeoutCount, 0) / expectedCaptures,
     totalRuns: runs.length,
+    wallTimeP50Ms: percentile(
+      successful.map(run => run.wallTimeMs),
+      0.5,
+    ),
+    wallTimeP95Ms: percentile(
+      successful.map(run => run.wallTimeMs),
+      0.95,
+    ),
   };
 }
 

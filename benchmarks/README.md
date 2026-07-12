@@ -28,6 +28,26 @@ The blocking differential gate requires the same observed Chromium executable, s
 
 The workflow runs the explicit-install differential when benchmark-related files change. A pinned official Playwright container comparison is available only through `workflow_dispatch` with `compare_container=true`. Its separate timing artifact uses GitHub job start/end timestamps so container initialization and image pull are included. Compare at least three dispatches and use medians on comparable runner hardware before changing the standard CI environment.
 
+## Current browser differential
+
+The [aggregated browser differential record](./browser-differential-record.json) uses three successful paired dispatches from commit `c7712ae`. All six environment jobs passed the executable, capture, PNG, and trace gates with Chromium 149.0.7827.55.
+
+Across the nine explicit-install measured runs per backend:
+
+| Metric                    |           Puppeteer |          Playwright | Playwright change |
+| ------------------------- | ------------------: | ------------------: | ----------------: |
+| wall p50                  |            8,339 ms |            8,839 ms |             +6.0% |
+| wall p95                  |            8,438 ms |           14,485 ms |            +71.7% |
+| capture-request p50       |            1,470 ms |            1,347 ms |             -8.4% |
+| capture-request p95       |            3,795 ms |            4,420 ms |            +16.5% |
+| peak process-tree RSS p50 | 4,955,402,240 bytes | 3,699,326,976 bytes |            -25.3% |
+| sampled CPU time p50      |           11,480 ms |           10,670 ms |             -7.1% |
+| max Chromium processes    |                  43 |                  32 |            -25.6% |
+
+The p50 wall, memory, and CPU results are favorable enough to continue the Playwright evaluation, but the wall and capture-request tails do not yet support changing the default backend.
+
+For the CI environment A/B, the explicit-install job median was 207 seconds and the pinned official-container job median was 205 seconds. The paired container/explicit ratio median was 1.020, container initialization took a median 27 seconds, and process-tree RSS was about 3–4% higher in the container runs. The difference is not a material improvement, so explicit installation remains the standard CI environment and the [official Playwright container](https://playwright.dev/docs/docker) remains a manual comparison only.
+
 ## Current baseline
 
 The [Puppeteer process baseline](./puppeteer-process-baseline.json) was recorded on GitHub Actions with Node 22.18.0 and Google Chrome 150. Its three-run medians are 10,398 ms wall time and 4,282,707,968 bytes (3.99 GiB) summed peak RSS. The run observed four simultaneous browser roots, five browser launches in total (one enumeration process followed by four capture workers), and 38 simultaneous Chromium processes.

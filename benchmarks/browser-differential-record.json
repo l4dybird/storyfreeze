@@ -1,0 +1,88 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-07-12T14:41:35Z",
+  "sourceCommit": "c7712aec081f3569862f551bfc64458c18d5bd4a",
+  "workflowRuns": [
+    "https://github.com/l4dybird/storyfreeze/actions/runs/29196619908",
+    "https://github.com/l4dybird/storyfreeze/actions/runs/29196620776",
+    "https://github.com/l4dybird/storyfreeze/actions/runs/29196621635"
+  ],
+  "conditions": {
+    "browser": "Google Chrome for Testing 149.0.7827.55",
+    "browserRevision": "1228",
+    "node": "22.18.0",
+    "os": "ubuntu-24.04",
+    "parallel": 4,
+    "measuredRunsPerDispatch": 3,
+    "stories": 2,
+    "pngs": 9,
+    "traceStories": 1,
+    "tracePngs": 2,
+    "container": "mcr.microsoft.com/playwright:v1.61.1-noble@sha256:5b8f294aff9041b7191c34a4bab3ac270157a28774d4b0660e9743297b697e48"
+  },
+  "gates": {
+    "passedEnvironmentJobs": 6,
+    "totalEnvironmentJobs": 6,
+    "captureFailureRate": 0,
+    "retryRate": 0,
+    "timeoutRate": 0,
+    "browserCrashRate": 0,
+    "pngMismatchCount": 0,
+    "traceValidationErrors": 0
+  },
+  "explicitInstallDriverComparison": {
+    "sampledRunsPerBackend": 9,
+    "puppeteer": {
+      "wallTimeP50Ms": 8339,
+      "wallTimeP95Ms": 8438,
+      "captureTimeP50Ms": 1470,
+      "captureTimeP95Ms": 3795,
+      "peakTreeRssP50Bytes": 4955402240,
+      "cpuTimeP50Ms": 11480,
+      "maxChromiumProcessCount": 43,
+      "maxBrowserRootCount": 4
+    },
+    "playwright": {
+      "wallTimeP50Ms": 8839,
+      "wallTimeP95Ms": 14485,
+      "captureTimeP50Ms": 1347,
+      "captureTimeP95Ms": 4420,
+      "peakTreeRssP50Bytes": 3699326976,
+      "cpuTimeP50Ms": 10670,
+      "maxChromiumProcessCount": 32,
+      "maxBrowserRootCount": 4
+    },
+    "playwrightToPuppeteerRatios": {
+      "wallTimeP50": 1.0599592277251468,
+      "wallTimeP95": 1.7166390139843566,
+      "captureTimeP50": 0.9163265306122449,
+      "captureTimeP95": 1.1646903820816865,
+      "peakTreeRssP50": 0.7465240553307737,
+      "cpuTimeP50": 0.9294425087108014
+    },
+    "traceOnToControlRatioMedians": {
+      "puppeteer": {
+        "wallTime": 2.4552727272727273,
+        "peakTreeRss": 1.109696629042794,
+        "cpuTime": 1.3350083752093802
+      },
+      "playwright": {
+        "wallTime": 1.1980664352999504,
+        "peakTreeRss": 1.059657481918506,
+        "cpuTime": 1.2593283582089552
+      }
+    }
+  },
+  "ciEnvironmentComparison": {
+    "dispatches": 3,
+    "explicitInstallJobMedianSeconds": 207,
+    "officialContainerJobMedianSeconds": 205,
+    "pairedContainerToExplicitJobRatioMedian": 1.0199004975124377,
+    "explicitInstallBenchmarkStepMedianSeconds": 135,
+    "officialContainerBenchmarkStepMedianSeconds": 128,
+    "officialContainerInitializationMedianSeconds": 27,
+    "playwrightProcessTreeRssContainerToExplicitRatio": 1.0375649389474244,
+    "puppeteerProcessTreeRssContainerToExplicitRatio": 1.0295623711063262,
+    "decision": "retain-explicit-install"
+  }
+}

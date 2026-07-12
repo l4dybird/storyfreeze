@@ -9,9 +9,9 @@ import {
   type CommandContext,
 } from 'gunshi';
 import { renderHeader } from 'gunshi/renderer';
-import type { BrowserLaunchArgumentOptions, LaunchOptions } from 'puppeteer-core';
 import { time } from './async-utils.js';
-import { getDeviceDescriptors, type ChromeChannel } from './browser.js';
+import { getDeviceDescriptors } from './browser.js';
+import type { BrowserLaunchOptions, ChromeChannel } from './browser-backend.js';
 import { Logger } from './logger.js';
 import { main } from './main.js';
 import { parseShardOptions } from './shard-utilities.js';
@@ -198,7 +198,7 @@ function toMainOptions(
   logger = createLogger(values),
   env: NodeJS.ProcessEnv = process.env,
 ): MainOptions {
-  const parsedLaunchOptions = JSON.parse(values.puppeteerLaunchConfig) as LaunchOptions & BrowserLaunchArgumentOptions;
+  const parsedLaunchOptions = JSON.parse(values.puppeteerLaunchConfig) as BrowserLaunchOptions;
   return {
     serverOptions: {
       storybookUrl: values.storybookUrl,

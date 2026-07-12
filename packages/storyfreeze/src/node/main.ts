@@ -1,5 +1,6 @@
 import nanomatch from 'nanomatch';
-import { BaseBrowser, ChromiumNotFoundError } from './browser.js';
+import { BaseBrowser, ChromiumNotFoundError, puppeteerBrowserBackend } from './browser.js';
+import type { BrowserBackend } from './browser-backend.js';
 import type { Story } from './story.js';
 import { CapturingBrowser } from './capturing-browser.js';
 import type { MainOptions, RunMode } from './types.js';
@@ -42,23 +43,42 @@ async function detectRunMode(storiesBrowser: BaseBrowser, opt: MainOptions) {
   return mode;
 }
 
+type BootableCaptureWorker<T> = {
+  boot(): Promise<T>;
+  close(): Promise<void>;
+};
+
+export async function bootCaptureWorkers<T extends BootableCaptureWorker<T>>(
+  workers: T[],
+  signal?: AbortSignal,
+): Promise<T[]> {
+  throwIfAborted(signal);
+  const results = await Promise.allSettled(workers.map(worker => worker.boot()));
+  const failure = results.find((result): result is PromiseRejectedResult => result.status === 'rejected');
+  const interrupted = signal?.aborted
+    ? signal.reason instanceof Error
+      ? signal.reason
+      : new Error('StoryFreeze was interrupted.')
+    : undefined;
+
+  if (failure || interrupted) {
+    await Promise.allSettled(workers.map(worker => worker.close()));
+    throw interrupted ?? failure!.reason;
+  }
+
+  return results.map(result => (result as PromiseFulfilledResult<T>).value);
+}
+
 async function bootCapturingBrowserAsWorkers(
   connection: ManagedStorybookConnection,
   opt: MainOptions,
   mode: RunMode,
-  onBoot: (browser: CapturingBrowser) => void,
+  backend: BrowserBackend,
 ) {
-  const browsers = await Promise.all(
-    [...new Array(Math.max(opt.parallel, 1)).keys()].map(async i => {
-      const browser = await new CapturingBrowser(connection, opt, mode, i).boot();
-      if (opt.signal?.aborted) {
-        await browser.close();
-        throw opt.signal.reason instanceof Error ? opt.signal.reason : new Error('StoryFreeze was interrupted.');
-      }
-      onBoot(browser);
-      return browser;
-    }),
+  const browsers = [...new Array(Math.max(opt.parallel, 1)).keys()].map(
+    i => new CapturingBrowser(connection, opt, mode, i, backend),
   );
+  await bootCaptureWorkers(browsers, opt.signal);
   opt.logger.debug(`Started ${browsers.length} capture browsers`);
   return browsers;
 }
@@ -108,6 +128,14 @@ export async function disposeRuntimeResources(resources: RuntimeResources, logge
   }
 }
 
+export interface MainDependencies {
+  browserBackend: BrowserBackend;
+}
+
+const defaultMainDependencies: MainDependencies = {
+  browserBackend: puppeteerBrowserBackend,
+};
+
 /**
  *
  * Run main process of StoryFreeze.
@@ -115,7 +143,8 @@ export async function disposeRuntimeResources(resources: RuntimeResources, logge
  * @param mainOptions - Parameters for this procedure
  *
  **/
-export async function main(mainOptions: MainOptions) {
+export async function main(mainOptions: MainOptions, overrides: Partial<MainDependencies> = {}) {
+  const { browserBackend } = { ...defaultMainDependencies, ...overrides };
   const logger = mainOptions.logger;
   const fileSystem = new FileSystem(mainOptions);
   let connection: ManagedStorybookConnection | undefined;
@@ -129,7 +158,7 @@ export async function main(mainOptions: MainOptions) {
     logger.debug('Created to connection.');
 
     // Launch Puppeteer process and fetch names of all stories.
-    storiesBrowser = new BaseBrowser(mainOptions);
+    storiesBrowser = new BaseBrowser(mainOptions, browserBackend);
     await storiesBrowser.boot();
     throwIfAborted(mainOptions.signal);
     logger.log('Executable Chromium path:', logger.color.magenta(storiesBrowser.executablePath));
@@ -176,10 +205,7 @@ export async function main(mainOptions: MainOptions) {
     }
 
     // Launch Puppeteer processes to capture each story.
-    workers = await abortable(
-      bootCapturingBrowserAsWorkers(connection, mainOptions, mode, browser => workers.push(browser)),
-      mainOptions.signal,
-    );
+    workers = await bootCapturingBrowserAsWorkers(connection, mainOptions, mode, browserBackend);
     logger.debug('Created workers.');
 
     // Execution caputuring procedure.

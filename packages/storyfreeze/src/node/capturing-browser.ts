@@ -1,12 +1,12 @@
 import { fileURLToPath } from 'node:url';
-import type { ConsoleMessage, Viewport } from 'puppeteer-core';
-import { BaseBrowser, MetricsWatcher, getDeviceDescriptors } from './browser.js';
+import { BaseBrowser, MetricsWatcher } from './browser.js';
+import type { BrowserBackend, BrowserConsoleMessage } from './browser-backend.js';
 import { sleep } from './async-utils.js';
 import type { Story } from './story.js';
 import type { ManagedStorybookConnection } from './managed-storybook-connection.js';
 
 import type { MainOptions, RunMode } from './types.js';
-import type { VariantKey, ScreenshotOptions, StrictScreenshotOptions, Exposed } from '../shared/types.js';
+import type { VariantKey, ScreenshotOptions, StrictScreenshotOptions, Exposed, Viewport } from '../shared/types.js';
 import { InvalidCurrentStoryStateError, PreviewReadyTimeoutError } from './errors.js';
 import {
   createBaseScreenshotOptions,
@@ -51,7 +51,7 @@ export class CapturingBrowser extends BaseBrowser {
   private currentRequestId!: string;
   private currentVariantKey: VariantKey = { isDefault: true, keys: [] };
   private touched = false;
-  private resourceWatcher!: ResourceWatcher;
+  private resourceWatcher?: ResourceWatcher;
   private navigator!: StoryNavigator;
 
   /**
@@ -68,8 +68,9 @@ export class CapturingBrowser extends BaseBrowser {
     protected opt: MainOptions,
     private mode: RunMode,
     private readonly idx: number,
+    backend?: BrowserBackend,
   ) {
-    super(opt);
+    super(opt, backend);
     this.baseScreenshotOptions = createBaseScreenshotOptions(opt);
   }
 
@@ -88,22 +89,32 @@ export class CapturingBrowser extends BaseBrowser {
    **/
   async boot() {
     await super.boot();
-    await this.expose();
-    this.resourceWatcher = new ResourceWatcher(this.page).init();
-    this.navigator = new StoryNavigator(this.page, new URL(this.connection.url), this.idx);
-    return this;
+    try {
+      await this.expose();
+      this.resourceWatcher = new ResourceWatcher(this.page);
+      this.resourceWatcher.init();
+      this.navigator = new StoryNavigator(this.page, new URL(this.connection.url), this.idx);
+      return this;
+    } catch (error) {
+      try {
+        await this.close();
+      } catch {
+        // Preserve the initialization error when cleanup also fails.
+      }
+      throw error;
+    }
   }
 
   async close() {
-    this.resourceWatcher?.dispose();
+    const resourceWatcher = this.resourceWatcher;
+    this.resourceWatcher = undefined;
+    resourceWatcher?.dispose();
     await super.close();
   }
 
   private async addStyles() {
     if (this.opt.disableCssAnimation) {
-      await this.page.addStyleTag({
-        path: fileURLToPath(new URL('../../assets/disable-animation.css', import.meta.url)),
-      });
+      await this.page.addStyleFile(fileURLToPath(new URL('../../assets/disable-animation.css', import.meta.url)));
     }
   }
 
@@ -128,13 +139,12 @@ export class CapturingBrowser extends BaseBrowser {
 
     // Clear the browser's mouse state.
     if (screenshotOptions.click) {
-      await this.page.$eval(screenshotOptions.click, (e: unknown) => (e as HTMLElement)?.blur());
+      await this.page.blur(screenshotOptions.click);
     }
     if (screenshotOptions.focus) {
-      await this.page.$eval(screenshotOptions.focus, (e: unknown) => (e as HTMLElement)?.blur());
+      await this.page.blur(screenshotOptions.focus);
     }
-    await this.page.mouse.move(0, 0);
-    await this.page.mouse.click(0, 0);
+    await this.page.resetPointer();
 
     await this.setCurrentStory(story);
     this.touched = false;
@@ -170,7 +180,7 @@ export class CapturingBrowser extends BaseBrowser {
         nextViewport = { width: +w, height: +h };
       } else {
         // Handle as Puppeteer device descriptor.
-        const hit = getDeviceDescriptors().find(d => d.name === opt.viewport);
+        const hit = this.getDeviceDescriptors().find(d => d.name === opt.viewport);
         if (!hit) {
           this.opt.logger.warn(
             `Skip screenshot for ${this.opt.logger.color.yellow(
@@ -214,8 +224,7 @@ export class CapturingBrowser extends BaseBrowser {
   }
 
   private async warnIfTargetElementNotFound(selector: string) {
-    const targetElement = await this.page.$(selector);
-    if (this.currentStory && !targetElement) {
+    if (this.currentStory && !(await this.page.elementExists(selector))) {
       this.opt.logger.warn(
         `No matched element for "${this.opt.logger.color.yellow(selector)}" in story "${this.currentStory.id}".`,
       );
@@ -248,8 +257,8 @@ export class CapturingBrowser extends BaseBrowser {
 
   private async waitForResources(screenshotOptions: StrictScreenshotOptions) {
     if (!screenshotOptions.waitAssets && !screenshotOptions.waitImages) return;
-    this.debug('Wait for requested resources resolved', this.resourceWatcher.getRequestedUrls());
-    await this.resourceWatcher.waitForRequestsComplete();
+    this.debug('Wait for requested resources resolved', this.resourceWatcher!.getRequestedUrls());
+    await this.resourceWatcher!.waitForRequestsComplete();
   }
 
   private async waitBrowserMetricsStable(phase: 'preEmit' | 'postEmit') {
@@ -310,13 +319,13 @@ export class CapturingBrowser extends BaseBrowser {
     this.currentVariantKey = variantKey;
     this.currentStoryRetryCount = retryCount;
     let emittedScreenshotOptions: ScreenshotOptions | undefined;
-    this.resourceWatcher.clear();
+    this.resourceWatcher!.clear();
 
-    function onConsoleLog(msg: ConsoleMessage) {
-      const niceMessage = `From ${requestId} (${msg.type()}): ${msg.text()}`;
+    function onConsoleLog(msg: BrowserConsoleMessage) {
+      const niceMessage = `From ${requestId} (${msg.type}): ${msg.text}`;
 
       if (forwardConsoleLogs) {
-        switch (msg.type()) {
+        switch (msg.type) {
           case 'warning':
             logger.warn(niceMessage);
             break;
@@ -332,11 +341,11 @@ export class CapturingBrowser extends BaseBrowser {
       }
     }
 
-    this.page.on('console', onConsoleLog);
+    const unsubscribeConsole = this.page.subscribeConsole(onConsoleLog);
 
     if (trace) {
       // Begin CPU trace, don't write to file, store it in memory
-      await this.page.tracing.start();
+      await this.page.startTrace();
     }
 
     // Capture this outside so it can be used for the filePath generation for the trace
@@ -403,17 +412,12 @@ export class CapturingBrowser extends BaseBrowser {
       await this.page.evaluate(() => new Promise(res => (window as any).requestIdleCallback(res, { timeout: 3000 })));
 
       // Get PNG image buffer
-      const rawBuffer = await this.page.screenshot({
+      const buffer = await this.page.screenshot({
         fullPage: emittedScreenshotOptions.fullPage,
         omitBackground: emittedScreenshotOptions.omitBackground,
         captureBeyondViewport: emittedScreenshotOptions.captureBeyondViewport,
         clip: emittedScreenshotOptions.clip ?? undefined,
       });
-
-      let buffer: Buffer | null = null;
-      if (Buffer.isBuffer(rawBuffer)) {
-        buffer = rawBuffer;
-      }
 
       // We should reset elements state(e.g. focusing, hovering, clicking) for future screenshot for this story.
       await this.resetIfTouched(mergedScreenshotOptions);
@@ -427,11 +431,11 @@ export class CapturingBrowser extends BaseBrowser {
         defaultVariantSuffix,
       };
     } finally {
-      this.page.off('console', onConsoleLog);
+      unsubscribeConsole();
 
       if (trace) {
         // Finish CPU trace.
-        const traceBuffer = await this.page.tracing.stop();
+        const traceBuffer = await this.page.stopTrace();
 
         // Calculate the suffix and save the trace to the file.
         const suffix = variantKey.isDefault && defaultVariantSuffix ? [defaultVariantSuffix] : variantKey.keys;

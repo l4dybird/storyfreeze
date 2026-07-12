@@ -18,14 +18,23 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v6
-      - name: Use Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v4
+      - name: Set up Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1.15.0
         with:
           node-version: ${{ matrix.node-version }}
-          cache: 'pnpm'
+          cache: true
           cache-dependency-path: pnpm-lock.yaml
-      - run: pnpm install --frozen-lockfile
+          run-install: false
+      - uses: pnpm/action-setup@v6
+      - run: vp install --frozen-lockfile
+      - name: Restore Vite Task cache
+        id: vite-task-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: node_modules/.vite/task-cache
+          key: vite-task-${{ runner.os }}-${{ runner.arch }}-node-${{ matrix.node-version }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            vite-task-${{ runner.os }}-${{ runner.arch }}-node-${{ matrix.node-version }}-
       - run: pnpm baseline:verify
       - run: pnpm build
       - run: pnpm test
@@ -40,3 +49,9 @@ jobs:
           test "$(node scripts/get-dist-tag.js)" = "next"
       - run: pnpm publish:dry-run
         if: matrix.node-version == '22.18.0'
+      - name: Save Vite Task cache
+        if: success()
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: node_modules/.vite/task-cache
+          key: ${{ steps.vite-task-cache.outputs.cache-primary-key }}

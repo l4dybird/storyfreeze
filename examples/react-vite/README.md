@@ -9,11 +9,12 @@ config represents managed mode. The E2E harness deploys the fixture to a tempora
 directory, installs the locally packed StoryFreeze tarball there, and exercises it
 with `pnpm run test:storybook10-e2e`.
 
-The E2E gate runs simple and managed modes against both development and static
-servers. It verifies render/play and afterEach completion, filtering, sharding,
-variants, viewports, retry behavior, expected PNG paths and dimensions, and clean
-server shutdown. Storybook loads the packaged preview annotations automatically
-from the addon entry.
+The E2E gate builds the simple and managed static Storybooks once, then reuses the
+managed preview server for the managed, filtering, sharding, and retry captures.
+The simple capture retains an owned preview server to verify clean server
+shutdown. The gate also verifies render/play and afterEach completion, variants,
+viewports, retry behavior, and the expected PNG paths and dimensions. Storybook
+loads the packaged preview annotations automatically from the addon entry.
 
 The fixture covers a docs entry, asynchronous rendering, local font and image
 assets, a play function, screenshot parameters, viewports, variants, pointer

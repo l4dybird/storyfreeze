@@ -2,7 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { spawnSync } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 
 const fixtureDir = path.resolve(process.cwd(), process.argv[2] || '.');
 const repoDir = path.resolve(__dirname, '..');
@@ -145,7 +145,14 @@ function assertScreenshots(directoryName, expectedPaths) {
   }
 }
 
-function assertCapture({ script, mode, directoryName, expectedPaths, extraFragments = [] }) {
+function assertCapture({
+  script,
+  mode,
+  directoryName,
+  expectedPaths,
+  extraFragments = [],
+  expectServerShutdown = false,
+}) {
   const capture = runPnpm(script);
   if (capture.status !== 0) {
     throw new Error(`${script} must complete successfully.`);
@@ -153,8 +160,8 @@ function assertCapture({ script, mode, directoryName, expectedPaths, extraFragme
 
   const expectedFragments = [
     `StoryFreeze runs with ${mode} mode`,
-    'Shutdown storybook server',
     `capturing ${expectedPaths.length} PNGs`,
+    expectServerShutdown ? 'Shutdown storybook server' : 'Found Storybook server',
     ...extraFragments,
   ];
   const missingFragments = expectedFragments.filter(fragment => !capture.output.includes(fragment));
@@ -178,7 +185,111 @@ function requireSuccess(script, message) {
   if (result.status !== 0) throw new Error(message);
 }
 
-function main() {
+function startVitePreview(directoryName, port) {
+  const vitePackagePath = require.resolve('vite/package.json', { paths: [fixtureDir] });
+  const vitePackage = JSON.parse(fs.readFileSync(vitePackagePath, 'utf8'));
+  const viteBin = typeof vitePackage.bin === 'string' ? vitePackage.bin : vitePackage.bin.vite;
+  const child = spawn(
+    process.execPath,
+    [
+      path.resolve(path.dirname(vitePackagePath), viteBin),
+      'preview',
+      '--outDir',
+      directoryName,
+      '--host',
+      '127.0.0.1',
+      '--port',
+      String(port),
+      '--strictPort',
+    ],
+    {
+      cwd: fixtureDir,
+      env: {
+        ...process.env,
+        CI: 'true',
+        FORCE_COLOR: '0',
+      },
+      stdio: 'inherit',
+    },
+  );
+
+  let spawnError;
+  child.once('error', error => {
+    spawnError = error;
+  });
+
+  return { child, getSpawnError: () => spawnError };
+}
+
+function delay(milliseconds) {
+  return new Promise(resolve => setTimeout(resolve, milliseconds));
+}
+
+async function waitForServer(server, url, timeout = 30000) {
+  const deadline = Date.now() + timeout;
+  let lastError;
+
+  while (Date.now() < deadline) {
+    const spawnError = server.getSpawnError();
+    if (spawnError) throw spawnError;
+    if (server.child.exitCode !== null || server.child.signalCode !== null) {
+      const reason =
+        server.child.exitCode !== null ? `code ${server.child.exitCode}` : `signal ${server.child.signalCode}`;
+      throw new Error(`Vite preview exited with ${reason} before becoming ready.`);
+    }
+
+    try {
+      const response = await fetch(url, { signal: AbortSignal.timeout(1000) });
+      if (response.ok) {
+        await response.body?.cancel();
+        return;
+      }
+      lastError = new Error(`${url} returned HTTP ${response.status}.`);
+    } catch (error) {
+      lastError = error;
+    }
+
+    await delay(250);
+  }
+
+  throw new Error(`Vite preview did not become ready within ${timeout} msec.`, { cause: lastError });
+}
+
+function isServerStopped(server) {
+  return server.getSpawnError() || server.child.exitCode !== null || server.child.signalCode !== null;
+}
+
+function waitForServerStop(server, timeout) {
+  if (isServerStopped(server)) return Promise.resolve(true);
+
+  return new Promise(resolve => {
+    let timer;
+    const finish = stopped => {
+      clearTimeout(timer);
+      server.child.off('exit', onStop);
+      server.child.off('error', onStop);
+      resolve(stopped);
+    };
+    const onStop = () => finish(true);
+
+    server.child.once('exit', onStop);
+    server.child.once('error', onStop);
+    timer = setTimeout(() => finish(false), timeout);
+    if (isServerStopped(server)) finish(true);
+  });
+}
+
+async function stopServer(server) {
+  if (isServerStopped(server)) return;
+
+  server.child.kill('SIGTERM');
+  if (await waitForServerStop(server, 5000)) return;
+
+  server.child.kill('SIGKILL');
+  if (!(await waitForServerStop(server, 5000))) throw new Error('Vite preview did not stop after SIGKILL.');
+}
+
+async function main() {
   requireSuccess('clear', 'Failed to clear the Storybook 10 fixture.');
   requireSuccess('build-storybook:simple', 'The simple Storybook 10 static build must succeed.');
   assertStaticBuild('storybook-static/simple');
@@ -187,84 +298,56 @@ function main() {
   assertStaticBuild('storybook-static/managed');
 
   assertCapture({
-    script: 'storyfreeze:simple-dev',
-    mode: 'simple',
-    directoryName: '__screenshots__/simple-dev',
-    expectedPaths: simpleScreenshotPaths,
-    extraFragments: ['Found 3 stories.'],
-  });
-  assertCapture({
-    script: 'storyfreeze:managed-dev',
-    mode: 'managed',
-    directoryName: '__screenshots__/managed-dev',
-    expectedPaths: managedScreenshotPaths,
-    extraFragments: ['Found 3 stories.'],
-  });
-  assertCapture({
     script: 'storyfreeze:simple-static',
     mode: 'simple',
     directoryName: '__screenshots__/simple-static',
     expectedPaths: simpleScreenshotPaths,
     extraFragments: ['Found 3 stories.'],
-  });
-  assertCapture({
-    script: 'storyfreeze:managed-static',
-    mode: 'managed',
-    directoryName: '__screenshots__/managed-static',
-    expectedPaths: managedScreenshotPaths,
-    extraFragments: ['Found 3 stories.'],
-  });
-  assertCapture({
-    script: 'storyfreeze:filter-dev',
-    mode: 'managed',
-    directoryName: '__screenshots__/filter-dev',
-    expectedPaths: interactionScreenshotPaths,
-    extraFragments: ['Found 1 stories.'],
-  });
-  assertCapture({
-    script: 'storyfreeze:filter-static',
-    mode: 'managed',
-    directoryName: '__screenshots__/filter-static',
-    expectedPaths: interactionScreenshotPaths,
-    extraFragments: ['Found 1 stories.'],
-  });
-  assertCapture({
-    script: 'storyfreeze:shard-dev',
-    mode: 'managed',
-    directoryName: '__screenshots__/shard-dev',
-    expectedPaths: interactionScreenshotPaths,
-    extraFragments: ['Found 3 stories. 1 are being processed by this shard (number 2 of 2).'],
-  });
-  assertCapture({
-    script: 'storyfreeze:shard-static',
-    mode: 'managed',
-    directoryName: '__screenshots__/shard-static',
-    expectedPaths: interactionScreenshotPaths,
-    extraFragments: ['Found 3 stories. 1 are being processed by this shard (number 2 of 2).'],
-  });
-  assertCapture({
-    script: 'storyfreeze:retry-dev',
-    mode: 'managed',
-    directoryName: '__screenshots__/retry-dev',
-    expectedPaths: retryScreenshotPaths,
-    extraFragments: ['Found 1 stories.', 'Retry to screenshot this story after this sequence.'],
-  });
-  assertCapture({
-    script: 'storyfreeze:retry-static',
-    mode: 'managed',
-    directoryName: '__screenshots__/retry-static',
-    expectedPaths: retryScreenshotPaths,
-    extraFragments: ['Found 1 stories.', 'Retry to screenshot this story after this sequence.'],
+    expectServerShutdown: true,
   });
 
+  const managedPreview = startVitePreview('storybook-static/managed', 9013);
+  try {
+    await waitForServer(managedPreview, 'http://127.0.0.1:9013/index.json');
+
+    assertCapture({
+      script: 'storyfreeze:managed-static',
+      mode: 'managed',
+      directoryName: '__screenshots__/managed-static',
+      expectedPaths: managedScreenshotPaths,
+      extraFragments: ['Found 3 stories.'],
+    });
+    assertCapture({
+      script: 'storyfreeze:filter-static',
+      mode: 'managed',
+      directoryName: '__screenshots__/filter-static',
+      expectedPaths: interactionScreenshotPaths,
+      extraFragments: ['Found 1 stories.'],
+    });
+    assertCapture({
+      script: 'storyfreeze:shard-static',
+      mode: 'managed',
+      directoryName: '__screenshots__/shard-static',
+      expectedPaths: interactionScreenshotPaths,
+      extraFragments: ['Found 3 stories. 1 are being processed by this shard (number 2 of 2).'],
+    });
+    assertCapture({
+      script: 'storyfreeze:retry-static',
+      mode: 'managed',
+      directoryName: '__screenshots__/retry-static',
+      expectedPaths: retryScreenshotPaths,
+      extraFragments: ['Found 1 stories.', 'Retry to screenshot this story after this sequence.'],
+    });
+  } finally {
+    await stopServer(managedPreview);
+  }
+
   console.log(
-    'Verified Storybook 10 dev/static, simple/managed, filtering, sharding, retry, and packaged CLI execution.',
+    'Verified Storybook 10 static build reuse, simple/managed, filtering, sharding, retry, and packaged CLI execution.',
   );
 }
 
-try {
-  main();
-} catch (error) {
+main().catch(error => {
   console.error(error);
   process.exitCode = 1;
-}
+});

@@ -1,4 +1,4 @@
-import { jest } from '@jest/globals';
+import { afterEach, describe, expect, it, vi } from 'vite-plus/test';
 import { STORYFREEZE_PREVIEW_STATE_GLOBAL } from '../shared/preview-protocol.js';
 import { finalizeScreenshot, triggerScreenshot } from './trigger-screenshot.js';
 
@@ -8,9 +8,9 @@ describe(finalizeScreenshot, () => {
 
   function installWindow(overrides: Record<string, unknown> = {}) {
     const win = {
-      getBaseScreenshotOptions: jest.fn(async () => ({})),
-      getCurrentVariantKey: jest.fn(async () => ({ isDefault: true, keys: [] })),
-      waitBrowserMetricsStable: jest.fn(async () => {}),
+      getBaseScreenshotOptions: vi.fn(async () => ({})),
+      getCurrentVariantKey: vi.fn(async () => ({ isDefault: true, keys: [] })),
+      waitBrowserMetricsStable: vi.fn(async () => {}),
       requestIdleCallback: (callback: Function) => callback(),
       ...overrides,
     };
@@ -23,7 +23,7 @@ describe(finalizeScreenshot, () => {
   }
 
   afterEach(() => {
-    jest.restoreAllMocks();
+    vi.restoreAllMocks();
     if (originalWindow) Object.defineProperty(globalThis, 'window', originalWindow);
     else Reflect.deleteProperty(globalThis, 'window');
     if (originalLocation) Object.defineProperty(globalThis, 'location', originalLocation);
@@ -33,7 +33,7 @@ describe(finalizeScreenshot, () => {
   it('does not publish ready from an aborted stale afterEach', async () => {
     let releaseMetrics = () => {};
     const win = installWindow({
-      waitBrowserMetricsStable: jest.fn(() => new Promise<void>(resolve => (releaseMetrics = resolve))),
+      waitBrowserMetricsStable: vi.fn(() => new Promise<void>(resolve => (releaseMetrics = resolve))),
     });
     const controller = new AbortController();
 

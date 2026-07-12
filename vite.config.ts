@@ -1,6 +1,13 @@
 import { defineConfig } from 'vite-plus';
 
 export default defineConfig({
+  test: {
+    environment: 'node',
+    include: [
+      'packages/storyfreeze/src/**/__tests__/*.{ts,tsx}',
+      'packages/storyfreeze/src/**/*.test.{ts,tsx}',
+    ],
+  },
   run: {
     tasks: {
       'build:packages': {

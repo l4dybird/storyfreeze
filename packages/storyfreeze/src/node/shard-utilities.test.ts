@@ -1,3 +1,4 @@
+import { describe, expect, it } from 'vite-plus/test';
 import type { Story } from './story.js';
 import { parseShardOptions, sortStories, shardStories } from './shard-utilities.js';
 

@@ -7,7 +7,10 @@ const withScreenshotDecorator = makeDecorator({
   parameterName: 'screenshot',
   skipIfNoParametersOrOptions: false,
   wrapper: (getStory, context, { parameters, options }) => {
-    if (typeof process !== 'undefined' && process?.env.JEST_WORKER_ID !== undefined) {
+    if (
+      typeof process !== 'undefined' &&
+      (process?.env.JEST_WORKER_ID !== undefined || process?.env.VITEST_POOL_ID !== undefined)
+    ) {
       return getStory(context);
     }
     const screenshotOptions = parameters || options;

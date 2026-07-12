@@ -1,11 +1,11 @@
-import { jest } from '@jest/globals';
+import { afterEach, describe, expect, it, vi } from 'vite-plus/test';
 import { StorybookStoryIndexProvider } from './story-index-provider.js';
 
 describe(StorybookStoryIndexProvider, () => {
-  afterEach(() => jest.restoreAllMocks());
+  afterEach(() => vi.restoreAllMocks());
 
   it('loads story entries from index.json, excludes docs, and sorts by id', async () => {
-    const fetchMock = jest.spyOn(globalThis, 'fetch').mockResolvedValue(
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response(
         JSON.stringify({
           entries: {
@@ -51,13 +51,13 @@ describe(StorybookStoryIndexProvider, () => {
   });
 
   it('rejects unsuccessful HTTP responses', async () => {
-    jest.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 404 }));
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 404 }));
 
     await expect(new StorybookStoryIndexProvider().load(new URL('https://example.test'))).rejects.toThrow('HTTP 404');
   });
 
   it('rejects invalid JSON', async () => {
-    jest.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{'));
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{'));
 
     await expect(new StorybookStoryIndexProvider().load(new URL('https://example.test'))).rejects.toThrow(
       'Invalid JSON',
@@ -86,7 +86,7 @@ describe(StorybookStoryIndexProvider, () => {
       },
     ],
   ])('rejects %s', async (_label, body) => {
-    jest.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify(body)));
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify(body)));
 
     await expect(new StorybookStoryIndexProvider().load(new URL('https://example.test'))).rejects.toThrow(
       'Invalid Storybook index',
@@ -94,7 +94,7 @@ describe(StorybookStoryIndexProvider, () => {
   });
 
   it('rejects duplicate story IDs', async () => {
-    jest.spyOn(globalThis, 'fetch').mockResolvedValue(
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response(
         JSON.stringify({
           entries: {

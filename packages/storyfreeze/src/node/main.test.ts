@@ -1,4 +1,4 @@
-import { jest } from '@jest/globals';
+import { afterEach, describe, expect, it, vi } from 'vite-plus/test';
 import { BaseBrowser } from './browser.js';
 import { Logger } from './logger.js';
 import { ManagedStorybookConnection } from './managed-storybook-connection.js';
@@ -36,10 +36,10 @@ describe(disposeRuntimeResources, () => {
   it('calls and awaits worker close before disconnecting', async () => {
     let releaseWorker = () => {};
     const worker = {
-      close: jest.fn(() => new Promise<void>(resolve => (releaseWorker = resolve))),
+      close: vi.fn(() => new Promise<void>(resolve => (releaseWorker = resolve))),
     };
-    const storiesBrowser = { close: jest.fn(async () => {}) };
-    const connection = { disconnect: jest.fn(async () => {}) };
+    const storiesBrowser = { close: vi.fn(async () => {}) };
+    const connection = { disconnect: vi.fn(async () => {}) };
 
     const disposing = disposeRuntimeResources({ workers: [worker], storiesBrowser, connection }, logger);
     await Promise.resolve();
@@ -56,9 +56,9 @@ describe(disposeRuntimeResources, () => {
   });
 
   it('continues cleanup when a close operation fails', async () => {
-    const worker = { close: jest.fn(async () => Promise.reject(new Error('close failed'))) };
-    const storiesBrowser = { close: jest.fn(async () => {}) };
-    const connection = { disconnect: jest.fn(async () => {}) };
+    const worker = { close: vi.fn(async () => Promise.reject(new Error('close failed'))) };
+    const storiesBrowser = { close: vi.fn(async () => {}) };
+    const connection = { disconnect: vi.fn(async () => {}) };
 
     await expect(disposeRuntimeResources({ workers: [worker], storiesBrowser, connection }, logger)).resolves.toBe(
       undefined,
@@ -80,20 +80,20 @@ describe(main, () => {
     shard: { shardNumber: 1, totalShards: 1 },
   } as unknown as MainOptions;
 
-  afterEach(() => jest.restoreAllMocks());
+  afterEach(() => vi.restoreAllMocks());
 
   it('closes the enumeration browser and connection when story enumeration fails', async () => {
-    jest.spyOn(ManagedStorybookConnection.prototype, 'connect').mockImplementation(async function (
+    vi.spyOn(ManagedStorybookConnection.prototype, 'connect').mockImplementation(async function (
       this: ManagedStorybookConnection,
     ) {
       return this;
     });
-    const disconnect = jest.spyOn(ManagedStorybookConnection.prototype, 'disconnect').mockResolvedValue();
-    jest.spyOn(BaseBrowser.prototype, 'boot').mockImplementation(async function (this: BaseBrowser) {
+    const disconnect = vi.spyOn(ManagedStorybookConnection.prototype, 'disconnect').mockResolvedValue(undefined);
+    vi.spyOn(BaseBrowser.prototype, 'boot').mockImplementation(async function (this: BaseBrowser) {
       return this;
     });
-    jest.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('enumeration failed'));
-    const close = jest.spyOn(BaseBrowser.prototype, 'close').mockResolvedValue();
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('enumeration failed'));
+    const close = vi.spyOn(BaseBrowser.prototype, 'close').mockResolvedValue(undefined);
 
     await expect(main(options)).rejects.toThrow('enumeration failed');
 
@@ -102,20 +102,20 @@ describe(main, () => {
   });
 
   it('disconnects after an early return when no stories match', async () => {
-    jest.spyOn(ManagedStorybookConnection.prototype, 'connect').mockImplementation(async function (
+    vi.spyOn(ManagedStorybookConnection.prototype, 'connect').mockImplementation(async function (
       this: ManagedStorybookConnection,
     ) {
       return this;
     });
-    const disconnect = jest.spyOn(ManagedStorybookConnection.prototype, 'disconnect').mockResolvedValue();
-    jest.spyOn(BaseBrowser.prototype, 'boot').mockImplementation(async function (this: BaseBrowser) {
+    const disconnect = vi.spyOn(ManagedStorybookConnection.prototype, 'disconnect').mockResolvedValue(undefined);
+    vi.spyOn(BaseBrowser.prototype, 'boot').mockImplementation(async function (this: BaseBrowser) {
       return this;
     });
-    jest.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ entries: {} })));
-    const close = jest.spyOn(BaseBrowser.prototype, 'close').mockResolvedValue();
-    jest.spyOn(BaseBrowser.prototype, 'page', 'get').mockReturnValue({
-      goto: jest.fn(async () => {}),
-      evaluate: jest.fn(async () => false),
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ entries: {} })));
+    const close = vi.spyOn(BaseBrowser.prototype, 'close').mockResolvedValue(undefined);
+    vi.spyOn(BaseBrowser.prototype, 'page', 'get').mockReturnValue({
+      goto: vi.fn(async () => {}),
+      evaluate: vi.fn(async () => false),
     } as never);
 
     await expect(main(options)).resolves.toBe(0);
@@ -126,17 +126,17 @@ describe(main, () => {
 
   it('closes the browser and connection when interrupted during enumeration', async () => {
     const controller = new AbortController();
-    jest.spyOn(ManagedStorybookConnection.prototype, 'connect').mockImplementation(async function (
+    vi.spyOn(ManagedStorybookConnection.prototype, 'connect').mockImplementation(async function (
       this: ManagedStorybookConnection,
     ) {
       return this;
     });
-    const disconnect = jest.spyOn(ManagedStorybookConnection.prototype, 'disconnect').mockResolvedValue();
-    jest.spyOn(BaseBrowser.prototype, 'boot').mockImplementation(async function (this: BaseBrowser) {
+    const disconnect = vi.spyOn(ManagedStorybookConnection.prototype, 'disconnect').mockResolvedValue(undefined);
+    vi.spyOn(BaseBrowser.prototype, 'boot').mockImplementation(async function (this: BaseBrowser) {
       return this;
     });
-    jest.spyOn(globalThis, 'fetch').mockImplementation(() => new Promise(() => {}));
-    const close = jest.spyOn(BaseBrowser.prototype, 'close').mockResolvedValue();
+    vi.spyOn(globalThis, 'fetch').mockImplementation(() => new Promise(() => {}));
+    const close = vi.spyOn(BaseBrowser.prototype, 'close').mockResolvedValue(undefined);
 
     const running = main({ ...options, signal: controller.signal });
     await new Promise(resolve => setImmediate(resolve));

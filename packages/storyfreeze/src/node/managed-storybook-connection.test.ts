@@ -1,9 +1,7 @@
-import { jest } from '@jest/globals';
 import net from 'net';
+import { describe, expect, it, vi } from 'vite-plus/test';
 import { Logger } from './logger.js';
 import { ManagedStorybookConnection } from './managed-storybook-connection.js';
-
-jest.setTimeout(15_000);
 
 async function getAvailablePort() {
   const server = net.createServer();
@@ -31,11 +29,11 @@ function createServerCommand(port: number, ignoreSigterm = false) {
   return `"${process.execPath}" -e "${source}"`;
 }
 
-describe(ManagedStorybookConnection, () => {
+describe(ManagedStorybookConnection, { timeout: 15_000 }, () => {
   it('waits until the Storybook process tree has exited', async () => {
     const port = await getAvailablePort();
     const logger = new Logger('silent');
-    const debug = jest.spyOn(logger, 'debug');
+    const debug = vi.spyOn(logger, 'debug');
     const connection = new ManagedStorybookConnection(
       {
         storybookUrl: `http://127.0.0.1:${port}`,
@@ -62,7 +60,7 @@ describe(ManagedStorybookConnection, () => {
   posixIt('force kills a process tree that ignores graceful shutdown', async () => {
     const port = await getAvailablePort();
     const logger = new Logger('silent');
-    const debug = jest.spyOn(logger, 'debug');
+    const debug = vi.spyOn(logger, 'debug');
     const connection = new ManagedStorybookConnection(
       {
         storybookUrl: `http://127.0.0.1:${port}`,

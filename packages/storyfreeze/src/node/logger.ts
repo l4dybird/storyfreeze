@@ -1,6 +1,6 @@
 import chalk from 'chalk';
 
-/* eslint-disable no-console -- this class is the CLI's console boundary */
+/* oxlint-disable no-console -- this class is the CLI's console boundary */
 
 // Derived from storycrawler. Copyright (c) 2019 reg-viz, MIT licensed.
 // https://github.com/reg-viz/storycap/tree/master/packages/storycrawler

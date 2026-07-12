@@ -276,7 +276,7 @@ export class BaseBrowser {
 
   protected async waitForDebugInput() {
     if (this.opt.launchOptions?.headless === false) {
-      // eslint-disable-next-line no-console
+      // oxlint-disable-next-line no-console
       console.log(
         'StoryFreeze waits for your input. Open Puppeteer devtool console and execute nextStep() to continue.',
       );

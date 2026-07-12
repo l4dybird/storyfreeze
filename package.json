@@ -18,7 +18,7 @@
     "build:pages": "pnpm typedoc:build",
     "format": "prettier --write \"packages/**/src/**/*\" \"scripts/**/*\" \"*.md\" \"packages/*/*.md\"",
     "format:check": "prettier --check \"packages/**/src/**/*\" \"scripts/**/*\"",
-    "lint": "eslint \"packages/**/src/**/*.ts\"",
+    "lint": "vp lint packages/storyfreeze/src",
     "test": "vp run --filter \"./packages/**\" --fail-if-no-match test",
     "package:smoke": "node scripts/package-smoke.js",
     "publish:dry-run": "pnpm --filter \"./packages/**\" -r publish --dry-run --no-git-checks --config.skip-manifest-obfuscation=true --tag next --access public --registry https://registry.npmjs.org/",
@@ -42,11 +42,7 @@
   "homepage": "https://github.com/l4dybird/storyfreeze#readme",
   "devDependencies": {
     "@changesets/cli": "2.31.0",
-    "@typescript-eslint/eslint-plugin": "8.19.1",
-    "@typescript-eslint/parser": "8.19.1",
     "cpy-cli": "5.0.0",
-    "eslint": "8.57.1",
-    "eslint-config-prettier": "8.10.0",
     "gh-pages": "6.3.0",
     "gunshi": "^0.36.0",
     "husky": "9.1.7",
@@ -58,7 +54,6 @@
     "reg-publish-s3-plugin": "0.14.3",
     "reg-suit": "0.14.3",
     "typescript": "5.7.3",
-    "typescript-eslint-language-service": "5.0.5",
     "vite": "npm:@voidzero-dev/vite-plus-core@0.2.4",
     "vite-plus": "0.2.4"
   },

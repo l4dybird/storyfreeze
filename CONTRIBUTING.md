@@ -47,7 +47,7 @@ complete `package@version` and requires review.
 ## Lint and format
 
 ```sh
-$ pnpm lint     # runs eslint
+$ pnpm lint     # runs oxlint
 $ pnpm format   # runs prettier --write
 ```
 

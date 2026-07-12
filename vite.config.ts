@@ -8,6 +8,35 @@ export default defineConfig({
       'packages/storyfreeze/src/**/*.test.{ts,tsx}',
     ],
   },
+  lint: {
+    categories: {
+      correctness: 'off',
+      nursery: 'off',
+      pedantic: 'off',
+      perf: 'off',
+      restriction: 'off',
+      style: 'off',
+      suspicious: 'off',
+    },
+    ignorePatterns: ['examples/**', 'scripts/**'],
+    options: {
+      typeAware: false,
+      typeCheck: false,
+    },
+    rules: {
+      'no-eval': 'error',
+      'no-debugger': 'error',
+      'no-console': 'error',
+      'no-duplicate-imports': 'error',
+      'no-var': 'error',
+      'no-unsafe-finally': 'error',
+      'prefer-const': 'error',
+      'prefer-rest-params': 'error',
+      'prefer-spread': 'error',
+      'no-use-before-define': 'error',
+      'typescript/no-namespace': 'error',
+    },
+  },
   run: {
     tasks: {
       'build:packages': {

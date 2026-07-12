@@ -37,9 +37,12 @@ function runNpm(args, options) {
 async function main() {
   const target = process.argv[2];
   if (!target) {
-    console.log(`Usage:\n\t${process.argv[1]} directory`);
+    console.log(`Usage:\n\t${process.argv[1]} directory [runner-script [runner-args...]]`);
     return 0;
   }
+
+  const runnerScript = process.argv[3] || 'storybook-preview-protocol.js';
+  const runnerArgs = process.argv.slice(4);
 
   const repoDir = path.resolve(__dirname, '..');
   const packageDir = path.join(repoDir, 'packages/storyfreeze');
@@ -108,7 +111,7 @@ async function main() {
       }
     }
 
-    execFileSync(process.execPath, [path.join(__dirname, 'storybook-preview-protocol.js'), deployedFixtureDir], {
+    execFileSync(process.execPath, [path.join(__dirname, runnerScript), deployedFixtureDir, ...runnerArgs], {
       cwd: sourceFixtureDir,
       stdio: 'inherit',
     });

@@ -1,0 +1,76 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-07-12T11:41:50.561Z",
+  "storyfreezeCommit": "8dfc8c2ce78b97ff9bdf71729576e25d27aa84e2",
+  "storyfreezeVersion": "0.1.0-alpha.0",
+  "backend": "puppeteer",
+  "scenario": {
+    "fixture": "storyfreeze-react-vite-fixture",
+    "storybook": "10.5.0",
+    "mode": "managed-static",
+    "parallel": 4,
+    "stories": 3,
+    "pngs": 11,
+    "warmupRuns": 1,
+    "measuredRuns": 3,
+    "sampleIntervalMs": 50
+  },
+  "environment": {
+    "arch": "x64",
+    "cpuCount": 4,
+    "cpuModel": "AMD EPYC 9V74 80-Core Processor",
+    "node": "v22.18.0",
+    "platform": "linux",
+    "release": "6.17.0-1018-azure",
+    "runnerImage": "ubuntu24",
+    "runnerImageVersion": "20260705.232.1",
+    "totalMemoryBytes": 16766423040,
+    "chromium": {
+      "executablePath": "/usr/bin/google-chrome-stable",
+      "source": "stable",
+      "version": "Google Chrome 150.0.7871.46"
+    }
+  },
+  "summary": {
+    "medianWallTimeMs": 10398,
+    "medianPeakTreeRssBytes": 4282707968,
+    "maxPeakTreeRssBytes": 4299964416,
+    "peakBrowserRootCount": 4,
+    "maxChromiumProcessCount": 38
+  },
+  "runs": [
+    {
+      "iteration": 1,
+      "peakBrowserRootCount": 4,
+      "peakChromiumProcessCount": 38,
+      "peakProcessCount": 47,
+      "peakTreeRssBytes": 4299964416,
+      "pngCount": 11,
+      "sampleCount": 205,
+      "uniqueBrowserLaunchCount": 5,
+      "wallTimeMs": 10411
+    },
+    {
+      "iteration": 2,
+      "peakBrowserRootCount": 4,
+      "peakChromiumProcessCount": 38,
+      "peakProcessCount": 48,
+      "peakTreeRssBytes": 4282707968,
+      "pngCount": 11,
+      "sampleCount": 206,
+      "uniqueBrowserLaunchCount": 5,
+      "wallTimeMs": 10398
+    },
+    {
+      "iteration": 3,
+      "peakBrowserRootCount": 4,
+      "peakChromiumProcessCount": 38,
+      "peakProcessCount": 47,
+      "peakTreeRssBytes": 4276756480,
+      "pngCount": 11,
+      "sampleCount": 204,
+      "uniqueBrowserLaunchCount": 5,
+      "wallTimeMs": 10375
+    }
+  ]
+}

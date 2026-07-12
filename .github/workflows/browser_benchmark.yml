@@ -1,19 +1,34 @@
-name: Browser performance benchmark
+name: Browser differential benchmark
 
 on:
   workflow_dispatch:
+    inputs:
+      compare_container:
+        description: Compare explicit Chromium install with the pinned Playwright container
+        required: false
+        type: boolean
+        default: false
   pull_request:
     paths:
       - '.github/workflows/browser_benchmark.yml'
       - 'benchmarks/**'
+      - 'examples/react-vite/.storybook/**'
+      - 'examples/react-vite/src/**'
+      - 'examples/react-vite/package.json'
+      - 'packages/storyfreeze/package.json'
+      - 'packages/storyfreeze/src/node/*browser*.ts'
+      - 'packages/storyfreeze/src/node/main.ts'
+      - 'packages/storyfreeze/src/node/screenshot-service.ts'
+      - 'packages/storyfreeze/src/shared/screenshot-options-helper.ts'
       - 'scripts/browser-performance-benchmark.js'
       - 'scripts/e2e-prestorybook.js'
 
 permissions:
+  actions: read
   contents: read
 
 jobs:
-  puppeteer-process-baseline:
+  driver-differential-explicit:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
 
@@ -29,11 +44,88 @@ jobs:
       - uses: pnpm/action-setup@v6
       - run: vp install --frozen-lockfile
       - run: pnpm build
-      - name: Measure Puppeteer process baseline
+      - name: Install Playwright Chromium
+        run: pnpm --filter storyfreeze exec playwright-core install --with-deps chromium
+      - name: Compare Puppeteer and Playwright
         env:
           STORYFREEZE_BENCHMARK_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+          STORYFREEZE_BROWSER_PROVISIONING: explicit-install
         run: >-
           node scripts/e2e-prestorybook.js examples/react-vite browser-performance-benchmark.js
-          "$RUNNER_TEMP/browser-performance.json"
+          "$RUNNER_TEMP/browser-differential-explicit.json"
       - name: Print benchmark record
-        run: cat "$RUNNER_TEMP/browser-performance.json"
+        if: always()
+        run: test ! -f "$RUNNER_TEMP/browser-differential-explicit.json" || cat "$RUNNER_TEMP/browser-differential-explicit.json"
+      - name: Upload benchmark record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-differential-explicit-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/browser-differential-explicit.json
+            ${{ runner.temp }}/browser-differential-explicit-failures
+          if-no-files-found: error
+
+  driver-differential-container:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.compare_container }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    container:
+      image: mcr.microsoft.com/playwright:v1.61.1-noble@sha256:5b8f294aff9041b7191c34a4bab3ac270157a28774d4b0660e9743297b697e48
+      options: --init --ipc=host
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1.15.0
+        with:
+          node-version: '22.18.0'
+          cache: true
+          cache-dependency-path: pnpm-lock.yaml
+          run-install: false
+      - uses: pnpm/action-setup@v6
+      - run: vp install --frozen-lockfile
+      - run: pnpm build
+      - name: Compare Puppeteer and Playwright
+        env:
+          STORYFREEZE_BENCHMARK_COMMIT: ${{ github.sha }}
+          STORYFREEZE_BROWSER_PROVISIONING: official-container
+        run: >-
+          node scripts/e2e-prestorybook.js examples/react-vite browser-performance-benchmark.js
+          "$GITHUB_WORKSPACE/.benchmark/browser-differential-container.json"
+      - name: Print benchmark record
+        if: always()
+        run: test ! -f .benchmark/browser-differential-container.json || cat .benchmark/browser-differential-container.json
+      - name: Upload benchmark record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-differential-container-${{ github.run_attempt }}
+          path: |
+            .benchmark/browser-differential-container.json
+            .benchmark/browser-differential-container-failures
+          if-no-files-found: error
+
+  container-comparison-timings:
+    if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.compare_container }}
+    needs:
+      - driver-differential-explicit
+      - driver-differential-container
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Record job-wide timings including container pull
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/attempts/${GITHUB_RUN_ATTEMPT}/jobs?per_page=100"
+          --jq '{jobs: [.jobs[] | select(.name == "driver-differential-explicit" or .name == "driver-differential-container")]}'
+          > "$RUNNER_TEMP/browser-environment-job-timings.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: browser-environment-job-timings-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/browser-environment-job-timings.json
+          if-no-files-found: error

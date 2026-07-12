@@ -47,6 +47,7 @@
     "gunshi": "^0.36.0",
     "husky": "9.1.7",
     "markdown-toc": "1.2.0",
+    "pngjs": "7.0.0",
     "reg-keygen-git-hash-plugin": "0.14.3",
     "reg-notify-github-plugin": "0.14.3",
     "reg-publish-s3-plugin": "0.14.3",

@@ -45,7 +45,10 @@ async function main() {
   const runnerArgs = process.argv.slice(4);
 
   const repoDir = path.resolve(__dirname, '..');
+  const rootMetadata = JSON.parse(fs.readFileSync(path.join(repoDir, 'package.json'), 'utf8'));
   const packageDir = path.join(repoDir, 'packages/storyfreeze');
+  const storePath = runPnpm(['store', 'path'], { cwd: repoDir, encoding: 'utf8' }).trim();
+  const storeDir = path.dirname(storePath);
   const sourceFixtureDir = path.resolve(process.cwd(), target);
   const fixtureMetadata = JSON.parse(fs.readFileSync(path.join(sourceFixtureDir, 'package.json'), 'utf8'));
   if (!fixtureMetadata.name) throw new Error(`Fixture package is missing a name: ${sourceFixtureDir}.`);
@@ -53,11 +56,15 @@ async function main() {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'storyfreeze-e2e-'));
   const deployedFixtureDir = path.join(tempDir, 'fixture');
   try {
-    runPnpm(['--filter', fixtureMetadata.name, 'deploy', '--legacy', deployedFixtureDir], {
+    runPnpm(['--store-dir', storeDir, '--filter', fixtureMetadata.name, 'deploy', '--legacy', deployedFixtureDir], {
       cwd: repoDir,
       stdio: 'inherit',
     });
     fs.copyFileSync(path.join(repoDir, 'pnpm-workspace.yaml'), path.join(deployedFixtureDir, 'pnpm-workspace.yaml'));
+    const deployedMetadataPath = path.join(deployedFixtureDir, 'package.json');
+    const deployedMetadata = JSON.parse(fs.readFileSync(deployedMetadataPath, 'utf8'));
+    deployedMetadata.packageManager = rootMetadata.packageManager;
+    fs.writeFileSync(deployedMetadataPath, `${JSON.stringify(deployedMetadata, null, 2)}\n`);
 
     runNpm(['pack', '--ignore-scripts', '--pack-destination', tempDir], {
       cwd: packageDir,
@@ -70,6 +77,8 @@ async function main() {
       [
         '--dir',
         deployedFixtureDir,
+        '--store-dir',
+        storeDir,
         'add',
         '--workspace-root',
         '--prefer-offline',

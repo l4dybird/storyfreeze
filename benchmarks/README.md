@@ -1,6 +1,6 @@
 # Browser performance records
 
-Browser backend and isolation changes are compared against a committed record made with the existing React/Vite managed static fixture.
+Browser backend and isolation changes are measured with the existing React/Vite managed static fixture. The original Puppeteer process baseline remains as a historical pre-Playwright record.
 
 The benchmark excludes dependency installation, package build, Storybook build, and the Vite preview server from the measured process tree. It measures the packed StoryFreeze CLI and all of its Chromium descendants with `parallel=4` after one warm-up run.
 
@@ -14,7 +14,19 @@ Each record contains three measured runs and reports:
 
 Summed RSS includes shared pages in more than one process and is not a PSS measurement. Comparisons must use the same workflow, runner image, Chromium executable, fixture, backend options, and parallelism. Before/after runs should be made close together because GitHub-hosted runner hardware can vary.
 
-The workflow is not a regular CI gate. It runs when benchmark-related files change and can otherwise be started manually with `workflow_dispatch`.
+The differential benchmark installs the Chromium revision managed by `playwright-core` and passes that same executable path, launch arguments, fixture, static server, viewport data, and `parallel=4` to both backends. Each backend gets one warm-up and three measured runs. Runs alternate backend order to reduce ordering bias. The intentionally time-sensitive Retry story remains covered by the existing Storybook 10 E2E and is excluded from performance repetitions.
+
+The schema 2 report records:
+
+- capture success, retry, timeout, and browser crash rates
+- exact PNG path and dimensions plus decoded RGBA pixel differences
+- CLI wall time, capture-request p50/p95, sampled CPU time, summed peak RSS, and child/Chromium process counts
+- one trace-control and one trace-enabled run per backend, restricted to one existing story, with trace overhead and per-file JSON/event/category validation
+- Playwright-to-Puppeteer performance ratios, which are reported but are not CI thresholds while hosted-runner variance remains uncontrolled
+
+The blocking differential gate requires the same observed Chromium executable, successful captures without retries/timeouts/crashes, zero PNG path/dimension/RGBA differences, and structurally valid Chromium traces. Existing Storybook 10 E2E continues to own filter, shard, retry, and full path/dimension coverage; the benchmark does not duplicate those cases or add a fixture.
+
+The workflow runs the explicit-install differential when benchmark-related files change. A pinned official Playwright container comparison is available only through `workflow_dispatch` with `compare_container=true`. Its separate timing artifact uses GitHub job start/end timestamps so container initialization and image pull are included. Compare at least three dispatches and use medians on comparable runner hardware before changing the standard CI environment.
 
 ## Current baseline
 

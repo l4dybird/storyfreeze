@@ -6,6 +6,7 @@
   },
   "packageManager": "pnpm@11.11.0",
   "scripts": {
+    "changeset:version": "node scripts/prepare-changeset-prerelease.js && changeset version",
     "clean": "pnpm --filter \"./packages/**\" -r run clean",
     "doc:clihelp": "node scripts/cli-help.js",
     "doc:toc": "node scripts/add-toc.js",
@@ -24,7 +25,6 @@
     "baseline:verify": "node scripts/validate-baseline.js",
     "e2e": "bash e2e.sh",
     "regression": "reg-suit run",
-    "deploy:ci": "pnpm clean && pnpm build && pnpm --filter \"./packages/**\" -r publish --no-git-checks --config.skip-manifest-obfuscation=true --tag \"$(node ./scripts/get-dist-tag.js)\" --access public",
     "deploy:pages": "gh-pages -d dist-pages -m \"[ci skip]\""
   },
   "repository": {
@@ -41,6 +41,7 @@
   },
   "homepage": "https://github.com/l4dybird/storyfreeze#readme",
   "devDependencies": {
+    "@changesets/cli": "2.31.0",
     "@typescript-eslint/eslint-plugin": "8.19.1",
     "@typescript-eslint/parser": "8.19.1",
     "cpy-cli": "5.0.0",

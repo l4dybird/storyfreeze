@@ -8,6 +8,27 @@ const { spawnSync } = require('child_process');
 const rootDir = path.resolve(__dirname, '..');
 const packageDir = path.join(rootDir, 'packages', 'storyfreeze');
 const expectedFiles = JSON.parse(fs.readFileSync(path.join(__dirname, 'storyfreeze-package-files.json'), 'utf8'));
+
+function parseTarballArgument(args) {
+  if (args.length === 0) return null;
+  if (args.length !== 2 || args[0] !== '--tarball') {
+    throw new Error('Usage: package-smoke.js [--tarball <path>]');
+  }
+  if (!args[1] || !args[1].endsWith('.tgz')) {
+    throw new Error('The --tarball value must be a .tgz file.');
+  }
+
+  const tarballPath = path.resolve(rootDir, args[1]);
+  if (!fs.existsSync(tarballPath)) {
+    throw new Error(`Tarball does not exist: ${tarballPath}`);
+  }
+  if (!fs.statSync(tarballPath).isFile()) {
+    throw new Error(`Tarball is not a file: ${tarballPath}`);
+  }
+  return tarballPath;
+}
+
+const inputTarballPath = parseTarballArgument(process.argv.slice(2));
 const temporaryDir = fs.mkdtempSync(path.join(os.tmpdir(), 'storyfreeze-package-smoke-'));
 const consumerDir = path.join(temporaryDir, 'consumer');
 
@@ -56,7 +77,9 @@ function assertEqual(actual, expected, label) {
 }
 
 try {
-  const packResult = JSON.parse(runNpm(['pack', '--json', '--pack-destination', temporaryDir], packageDir))[0];
+  const packResult = inputTarballPath
+    ? JSON.parse(runNpm(['pack', '--json', '--dry-run', '--ignore-scripts', inputTarballPath], rootDir))[0]
+    : JSON.parse(runNpm(['pack', '--json', '--pack-destination', temporaryDir], packageDir))[0];
   const actualFiles = packResult.files.map(file => file.path).sort();
   assertEqual(JSON.stringify(actualFiles), JSON.stringify([...expectedFiles].sort()), 'tarball files');
 
@@ -75,7 +98,7 @@ try {
     )}\n`,
   );
 
-  const tarballPath = path.join(temporaryDir, packResult.filename);
+  const tarballPath = inputTarballPath || path.join(temporaryDir, packResult.filename);
   runNpm(['install', '--ignore-scripts', '--no-audit', '--no-fund', tarballPath], consumerDir);
 
   const installedPackageDir = path.join(consumerDir, 'node_modules', 'storyfreeze');

@@ -2,6 +2,10 @@ import type { Viewport } from '../shared/types.js';
 
 export type ChromeChannel = 'puppeteer' | 'canary' | 'stable' | '*';
 
+export class ChromiumNotFoundError extends Error {
+  name = 'ChromiumNotFoundError';
+}
+
 export type BrowserLaunchOptions = {
   args?: string[];
   executablePath?: string;

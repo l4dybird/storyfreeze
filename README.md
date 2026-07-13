@@ -19,7 +19,7 @@ Special thanks to the author of the [storycap](https://github.com/reg-viz/storyc
 
 [![npm](https://img.shields.io/npm/v/storyfreeze.svg?style=flat-square)](https://www.npmjs.com/package/storyfreeze)
 
-> A [Storybook][storybook] Addon, Save the screenshot image of your stories :camera: via [Puppeteer][puppeteer].
+> A [Storybook][storybook] Addon, Save the screenshot image of your stories :camera: via Chromium.
 
 StoryFreeze crawls your Storybook and takes screenshot images.
 It is primarily responsible for image generation necessary for Visual Testing such as [reg-suit](https://github.com/reg-viz/reg-suit).
@@ -61,8 +61,8 @@ It is primarily responsible for image generation necessary for Visual Testing su
 
 ## Features
 
-- :camera: Take screenshots of each stories via [Puppeteer][puppeteer].
-- :performing_arts: Opt in to [Playwright][playwright] while keeping Puppeteer as the default backend.
+- :camera: Take screenshots of each story via [Playwright][playwright].
+- :performing_arts: Keep [Puppeteer][puppeteer] available as a temporary fallback backend.
 - :zap: Extremely fast.
 - :package: Zero configuration.
 - :rocket: Provide flexible screenshot shooting options.
@@ -76,15 +76,17 @@ is not supported.
 
 ```sh
 $ npm install storyfreeze
+$ npx playwright-core@1.61.1 install chromium
 ```
 
-Or
+Browser installation is explicit; installing StoryFreeze does not automatically download Playwright Chromium. Existing Puppeteer users can temporarily select the fallback backend:
 
 ```sh
 $ npm install storyfreeze puppeteer
+$ npx storyfreeze --browser-backend puppeteer http://localhost:9001
 ```
 
-Installing puppeteer is optional. See [Chromium version](#chromium-version) to get more detail.
+Installing the `puppeteer` package is optional. See [Chromium version](#chromium-version) for browser discovery details.
 
 ## Getting Started
 
@@ -364,7 +366,7 @@ OPTIONS:
   --list-devices                                                   List available device descriptors. (default: false)
   -C, --chromium-channel [chromium-channel]                        Channel to search local Chromium. (default: *, choices: puppeteer | canary | stable | *)
   --chromium-path <chromium-path>                                  Executable Chromium path. (default: )
-  --browser-backend [browser-backend]                              Browser automation backend. (default: puppeteer, choices: puppeteer | playwright)
+  --browser-backend [browser-backend]                              Browser automation backend. (default: playwright, choices: puppeteer | playwright)
   --browser-launch-options <browser-launch-options>                JSON string of browser launch options. (default: { "args": ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"] })
   --puppeteer-launch-config <puppeteer-launch-config>              Deprecated alias for --browser-launch-options.
 
@@ -569,18 +571,24 @@ export const parameters = {
 
 ## Chromium version
 
-Puppeteer remains the default browser backend. To opt in to Playwright, install the Chromium revision matched to StoryFreeze's `playwright-core` dependency and select the backend explicitly:
+Playwright is the default browser backend. Install the Chromium revision matched to StoryFreeze's `playwright-core` dependency:
 
 ```sh
 $ npx playwright-core@1.61.1 install chromium
-$ npx storyfreeze --browser-backend playwright http://localhost:9009
+$ npx storyfreeze http://localhost:9009
 ```
 
 Browser installation is explicit; installing StoryFreeze does not automatically download Playwright Chromium.
 
+Puppeteer remains available as a temporary fallback for existing environments:
+
+```sh
+$ npx storyfreeze --browser-backend puppeteer http://localhost:9009
+```
+
 StoryFreeze resolves an explicit `--chromium-path` or `--chromium-channel` first. Without either override, each backend searches Chromium in the following order:
 
-1. Its managed browser: an installed Puppeteer package for the default backend, or an explicitly installed Playwright Chromium revision for the Playwright backend
+1. Its managed browser: an explicitly installed Playwright Chromium revision for the default backend, or an installed Puppeteer package for the Puppeteer fallback
 1. Canary Chrome installed locally
 1. Stable Chrome installed locally
 
@@ -609,7 +617,7 @@ StoryFreeze (with both simple and managed mode) is agnostic for specific UI fram
 
 ## How it works
 
-StoryFreeze accesses the launched page using [Puppeteer][puppeteer] by default or [Playwright][playwright] when selected with `--browser-backend playwright`.
+StoryFreeze accesses the launched page using [Playwright][playwright] by default. [Puppeteer][puppeteer] remains available with `--browser-backend puppeteer` as a temporary fallback.
 
 ## Contributing
 

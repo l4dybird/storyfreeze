@@ -111,7 +111,7 @@ const storyfreezeCommandArgs = {
   browserBackend: {
     type: 'enum',
     choices: browserBackendNames,
-    default: 'puppeteer',
+    default: 'playwright',
     description: 'Browser automation backend.',
   },
   browserLaunchOptions: {

@@ -905,6 +905,8 @@ CLI defaultを変更する。
 --browser-backend=puppeteer   # temporary fallback
 ```
 
+実装ではCLI schemaのdefaultだけをPlaywrightへ変更し、package rootから公開していない`main`と`BaseBrowser`の内部dependency fallbackはPuppeteerのまま維持する。既存Storybook 10 E2Eの件数は増やさず、通常のsimple、managed、filter、shard、retryをPlaywright defaultで実行し、従来の明示Playwright runを明示Puppeteer fallback runへ反転する。移行手順にはPlaywright Chromiumの明示installと、一時fallbackの選択方法を記載する。
+
 ### 10.7 5E — BrowserContext最適化
 
 ドライバ移行後に実行モデルを変更する。

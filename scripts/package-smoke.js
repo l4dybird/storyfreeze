@@ -38,7 +38,6 @@ function run(command, args, options = {}) {
     encoding: 'utf8',
     env: { ...process.env, STORYBOOK_DISABLE_TELEMETRY: '1' },
     maxBuffer: 20 * 1024 * 1024,
-    shell: process.platform === 'win32' && /\.(cmd|bat)$/.test(command),
     timeout: options.timeout || 120000,
   });
 
@@ -57,7 +56,6 @@ function runFailure(command, args, options = {}) {
     encoding: 'utf8',
     env: { ...process.env, STORYBOOK_DISABLE_TELEMETRY: '1' },
     maxBuffer: 20 * 1024 * 1024,
-    shell: process.platform === 'win32' && /\.(cmd|bat)$/.test(command),
     timeout: options.timeout || 120000,
   });
   if (result.error) throw result.error;
@@ -66,8 +64,9 @@ function runFailure(command, args, options = {}) {
 }
 
 function runNpm(args, cwd) {
-  const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
-  return run(npmCommand, args, { cwd, timeout: 180000 });
+  if (process.platform !== 'win32') return run('npm', args, { cwd, timeout: 180000 });
+  const npmCli = path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js');
+  return run(process.execPath, [npmCli, ...args], { cwd, timeout: 180000 });
 }
 
 function assertEqual(actual, expected, label) {
@@ -154,12 +153,11 @@ try {
   );
   assertEqual(requireCheck, '', 'CommonJS rejection');
 
-  const binDir = path.join(consumerDir, 'node_modules', '.bin');
-  const cliPath = path.join(binDir, process.platform === 'win32' ? 'storyfreeze.cmd' : 'storyfreeze');
-  const version = run(cliPath, ['--version'], { cwd: consumerDir });
+  const cliPath = path.join(installedPackageDir, installedMetadata.bin.storyfreeze);
+  const version = run(process.execPath, [cliPath, '--version'], { cwd: consumerDir });
   assertEqual(version, packResult.version, 'CLI version');
 
-  const help = run(cliPath, ['--help'], { cwd: consumerDir });
+  const help = run(process.execPath, [cliPath, '--help'], { cwd: consumerDir });
   if (
     !help.includes('USAGE:') ||
     !help.includes('--server-cmd') ||
@@ -172,7 +170,7 @@ try {
     throw new Error('CLI help did not contain the expected Gunshi usage and kebab-case options.');
   }
 
-  const invalid = runFailure(cliPath, ['--serverCmd', 'echo nope'], { cwd: consumerDir });
+  const invalid = runFailure(process.execPath, [cliPath, '--serverCmd', 'echo nope'], { cwd: consumerDir });
   if (!invalid.includes('Unknown option: --serverCmd')) {
     throw new Error('CLI did not reject a legacy camelCase option in strict mode.');
   }

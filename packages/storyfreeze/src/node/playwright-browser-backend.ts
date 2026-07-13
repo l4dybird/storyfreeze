@@ -30,7 +30,7 @@ import {
   type ScreenshotCaptureOptions,
   type TraceSink,
 } from './browser-backend.js';
-import { findChrome, type FindChromeOptions, type FindChromeResult } from './puppeteer-browser-backend.js';
+import { findChrome, type FindChromeOptions, type FindChromeResult } from './chromium-resolver.js';
 
 const traceCategories = [
   '-*',

@@ -1,5 +1,5 @@
 import nanomatch from 'nanomatch';
-import { BaseBrowser, ChromiumNotFoundError, puppeteerBrowserBackend } from './browser.js';
+import { BaseBrowser, ChromiumNotFoundError, lazyPuppeteerBrowserBackend } from './browser.js';
 import type { BrowserBackend } from './browser-backend.js';
 import { BrowserProcessCoordinator, type BrowserSessionSource } from './browser-process-coordinator.js';
 import type { Story } from './story.js';
@@ -139,7 +139,7 @@ export interface MainDependencies {
 }
 
 const defaultMainDependencies: MainDependencies = {
-  browserBackend: puppeteerBrowserBackend,
+  browserBackend: lazyPuppeteerBrowserBackend,
 };
 
 /**

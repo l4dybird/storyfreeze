@@ -9,14 +9,20 @@ import {
   type CapturePage,
 } from './browser-backend.js';
 import type { BrowserSessionSource } from './browser-process-coordinator.js';
-import { puppeteerBrowserBackend } from './puppeteer-browser-backend.js';
 import { browserDeviceDescriptors } from './browser-device-registry.js';
 import { captureDiagnosticsEnabled, emitCaptureDiagnostic } from './capture-diagnostics.js';
 
 export { ChromiumNotFoundError } from './browser-backend.js';
 export type { ChromeChannel } from './browser-backend.js';
-export { puppeteerBrowserBackend } from './puppeteer-browser-backend.js';
 export type BaseBrowserOptions = BrowserRuntimeOptions;
+
+export const lazyPuppeteerBrowserBackend: BrowserBackend = {
+  name: 'puppeteer',
+  async launch(options) {
+    const { puppeteerBrowserBackend } = await import('./puppeteer-browser-backend.js');
+    return puppeteerBrowserBackend.launch(options);
+  },
+};
 
 export class BaseBrowser {
   private instance?: BrowserInstance;
@@ -28,7 +34,7 @@ export class BaseBrowser {
 
   constructor(
     protected opt: BaseBrowserOptions,
-    protected readonly backend: BrowserBackend = puppeteerBrowserBackend,
+    protected readonly backend: BrowserBackend = lazyPuppeteerBrowserBackend,
     private readonly closeDiagnosticContext: { role?: 'capture-worker' | 'story-index'; workerId?: number } = {},
     private readonly sessionSource?: BrowserSessionSource,
   ) {}

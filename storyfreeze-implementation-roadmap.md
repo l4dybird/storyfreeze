@@ -8,7 +8,7 @@
 - npm パッケージ候補: `storyfreeze`
 - CLI: `storyfreeze`
 - 対象: Storybook 10 / Chromium / Playwright
-- ステータス: Phase 5E実装中
+- ステータス: Phase 5E完了・Phase 5F準備中
 
 ## 1. 結論
 
@@ -1045,6 +1045,21 @@ Storybook 10 static fixture、Playwright context、`parallel=4`、retry story除
 
 このPRでは待機契約、公開option、fixture、smoke suiteを増減しない。既存Storybook E2E、browser differential、isolation differentialで両backend・両isolationのPNG、failure、retry、timeout、crashを確認し、正式なdefault isolation判断には次の均衡40-run recordを使用する。
 
+#### PR-535: Post-optimization context default decision
+
+PR-533とPR-534を含むmerge済みcommit `d8ebef4` / tree `72e21f1`に対し、`parallel=4`のrecord profileを4 dispatch（開始isolationをprocess/context各2回）実行した。各isolation 40 measured runs、360 capture samplesをrawから集約した。default gateに含まれない`parallel=1`と`parallel=2`の診断は再実行していない。
+
+| 指標                   | process | context | context/process | gate |
+| ---------------------- | ------: | ------: | --------------: | ---- |
+| wall p50               | 4,656ms | 4,288ms |           0.921 | pass |
+| wall p95               | 4,848ms | 4,450ms |           0.918 | pass |
+| capture request p95    | 1,243ms | 1,334ms |           1.073 | fail |
+| peak tree RSS p50      | 3.65 GB | 1.68 GB |           0.460 | pass |
+| sampled CPU p50        | 9,060ms | 7,840ms |           0.865 | info |
+| max Chromium processes |      32 |      14 |           0.438 | pass |
+
+capture failure、retry、timeout、crash、PNG mismatch、3秒以上のtailはすべて0で、全context runのbrowser rootは1だった。contextはwall p50を7.9%、wall p95を8.2%、peak RSSを54.0%、sampled CPUを13.5%削減した一方、capture request p95は7.3%遅く、上限1.05を2.3ポイント超過した。aggregate acceptanceはfalseのため、PR-536のcontext default化は実施せず、`process`をdefault、`context`をPlaywright専用opt-inとして維持する。
+
 ### 10.8 5F — Puppeteer削除
 
 #### PR-540: Legacy removal
@@ -1209,6 +1224,9 @@ nightly:
 | 530 | BrowserContext mode                 | performance       |
 | 531 | process/context differential        | benchmark/docs    |
 | 532 | context default decision            | benchmark/ADR     |
+| 533 | dynamic context emulation           | performance       |
+| 534 | legacy viewport delay removal       | performance       |
+| 535 | post-optimization default decision  | benchmark/ADR     |
 | 540 | Puppeteer removal                   | dependencies/API  |
 
 ## 15. 同じPRへ入れてはいけない変更

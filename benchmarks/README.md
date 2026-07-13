@@ -56,24 +56,22 @@ PR-531 only adds this evidence pipeline: `process` remains the default regardles
 
 ## Current browser isolation differential
 
-The [aggregated browser isolation record](./browser-isolation-record.json) contains four successful `parallel=4` record dispatches from `360108e`, two per starting isolation, for 40 measured runs and 360 capture-request samples per isolation. It also links separate `parallel=1` and `parallel=2` PR-profile diagnostics. All six dispatches used Node.js 22.18.0, Storybook 10.5.0, Playwright 1.61.1, and Chromium 149.0.7827.55 on the same runner image and source tree.
+The [aggregated browser isolation record](./browser-isolation-record.json) contains four successful `parallel=4` record dispatches from `d8ebef4`, two per starting isolation, for 40 measured runs and 360 capture-request samples per isolation. All four dispatches used Node.js 22.18.0, Storybook 10.5.0, Playwright 1.61.1, and Chromium 149.0.7827.55 on the same runner image and source tree. The optional `parallel=1` and `parallel=2` diagnostics were not repeated because they do not contribute to the default gate.
 
 The raw `parallel=4` result is:
 
 | Metric                    |             Process |             Context | Context/process | Gate |
 | ------------------------- | ------------------: | ------------------: | --------------: | :--- |
-| wall p50                  |            5,223 ms |            5,232 ms |           1.002 | fail |
-| wall p95                  |            5,351 ms |            5,402 ms |           1.010 | fail |
-| capture-request p50       |            1,070 ms |            1,093 ms |           1.021 | info |
-| capture-request p95       |            1,503 ms |            1,966 ms |           1.308 | fail |
-| peak process-tree RSS p50 | 3,655,761,920 bytes | 1,607,536,640 bytes |           0.440 | pass |
-| sampled CPU time p50      |            9,140 ms |            8,900 ms |           0.974 | info |
+| wall p50                  |            4,656 ms |            4,288 ms |           0.921 | pass |
+| wall p95                  |            4,848 ms |            4,450 ms |           0.918 | pass |
+| capture-request p50       |              792 ms |              876 ms |           1.106 | info |
+| capture-request p95       |            1,243 ms |            1,334 ms |           1.073 | fail |
+| peak process-tree RSS p50 | 3,652,808,704 bytes | 1,680,891,904 bytes |           0.460 | pass |
+| sampled CPU time p50      |            9,060 ms |            7,840 ms |           0.865 | info |
 | max Chromium processes    |                  32 |                  14 |           0.438 | pass |
 | max browser roots         |                   4 |                   1 |           0.250 | pass |
 
-Both modes completed with zero capture failures, retries, timeouts, browser crashes, PNG differences, and three-second capture tails. Every context warm-up and measured run used exactly one browser root. Context mode therefore provides a substantial memory and process-count reduction, but it missed all three timing thresholds: wall p50 by 0.17%, wall p95 by 0.95%, and capture-request p95 by 30.8%. The aggregate acceptance result is false, so `process` remains the default and `context` remains explicit opt-in.
-
-The `parallel=1` and `parallel=2` diagnostics are not part of the acceptance population. They also showed context overhead on this hosted-runner sample, with wall p50 ratios of 1.140 and 1.194 and peak-RSS ratios of 0.925 and 0.639 respectively. They are retained as scaling evidence, not promoted to headline statistics or gates.
+Both modes completed with zero capture failures, retries, timeouts, browser crashes, PNG differences, and three-second capture tails. Every context warm-up and measured run used exactly one browser root. Context mode reduced wall p50 by 7.9%, wall p95 by 8.2%, median peak RSS by 54.0%, and sampled CPU time by 13.5%. Its capture-request p95 remained 7.3% slower, exceeding the 1.05 threshold by 2.3 percentage points. The aggregate acceptance result is therefore false, so `process` remains the default and `context` remains explicit opt-in.
 
 ## Current browser differential
 

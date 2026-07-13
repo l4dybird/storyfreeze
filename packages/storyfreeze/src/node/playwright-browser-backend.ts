@@ -98,10 +98,6 @@ export class PlaywrightCapturePage implements CapturePage {
     return this.rawPage.addStyleTag({ path }).then(() => {});
   }
 
-  blur(selector: string) {
-    return this.rawPage.$eval(selector, (element: unknown) => (element as HTMLElement)?.blur());
-  }
-
   click(selector: string) {
     return this.withElement(selector, element => element.click());
   }

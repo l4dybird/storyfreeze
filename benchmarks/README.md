@@ -54,6 +54,27 @@ The pull-request gate requires successful paired captures without retries, timeo
 
 PR-531 only adds this evidence pipeline: `process` remains the default regardless of the result.
 
+## Current browser isolation differential
+
+The [aggregated browser isolation record](./browser-isolation-record.json) contains four successful `parallel=4` record dispatches from `360108e`, two per starting isolation, for 40 measured runs and 360 capture-request samples per isolation. It also links separate `parallel=1` and `parallel=2` PR-profile diagnostics. All six dispatches used Node.js 22.18.0, Storybook 10.5.0, Playwright 1.61.1, and Chromium 149.0.7827.55 on the same runner image and source tree.
+
+The raw `parallel=4` result is:
+
+| Metric                    |             Process |             Context | Context/process | Gate |
+| ------------------------- | ------------------: | ------------------: | --------------: | :--- |
+| wall p50                  |            5,223 ms |            5,232 ms |           1.002 | fail |
+| wall p95                  |            5,351 ms |            5,402 ms |           1.010 | fail |
+| capture-request p50       |            1,070 ms |            1,093 ms |           1.021 | info |
+| capture-request p95       |            1,503 ms |            1,966 ms |           1.308 | fail |
+| peak process-tree RSS p50 | 3,655,761,920 bytes | 1,607,536,640 bytes |           0.440 | pass |
+| sampled CPU time p50      |            9,140 ms |            8,900 ms |           0.974 | info |
+| max Chromium processes    |                  32 |                  14 |           0.438 | pass |
+| max browser roots         |                   4 |                   1 |           0.250 | pass |
+
+Both modes completed with zero capture failures, retries, timeouts, browser crashes, PNG differences, and three-second capture tails. Every context warm-up and measured run used exactly one browser root. Context mode therefore provides a substantial memory and process-count reduction, but it missed all three timing thresholds: wall p50 by 0.17%, wall p95 by 0.95%, and capture-request p95 by 30.8%. The aggregate acceptance result is false, so `process` remains the default and `context` remains explicit opt-in.
+
+The `parallel=1` and `parallel=2` diagnostics are not part of the acceptance population. They also showed context overhead on this hosted-runner sample, with wall p50 ratios of 1.140 and 1.194 and peak-RSS ratios of 0.925 and 0.639 respectively. They are retained as scaling evidence, not promoted to headline statistics or gates.
+
 ## Current browser differential
 
 The [aggregated browser differential record](./browser-differential-record.json) compares the visual-commit baseline `ca470b7` with `master` after reset, watcher, and Playwright recovery hardening (`804aae4`). Each snapshot contains four successful explicit-install dispatches, two per starting backend, for 40 measured runs per backend. All record gates passed, and the separate candidate trace gate passed, with Chromium 149.0.7827.55.

@@ -994,6 +994,32 @@ PR workflowはcapture成功、retry/timeout/crashなし、story/PNG件数、PNG 
 
 PR-531では新しいfixture、smoke、pixel suiteを追加せず、既存Storybook 10 E2Eのcoverageを再利用する。このPRは比較証拠を追加するだけであり、結果にかかわらずdefaultは`process`のまま変更しない。
 
+#### PR-532: Context default decision
+
+PR-531のsource commit `360108e` / tree `5909617`に対し、`parallel=4`のrecord profileを4 dispatch（開始isolationをprocess/context各2回）実行した。各isolation 40 measured runs、360 capture samplesをrawから集約し、`parallel=1`と`parallel=2`のPR profileをscaling診断として別に記録した。
+
+`parallel=4`の結果:
+
+| 指標                   |             process |             context | context/process | gate |
+| ---------------------- | ------------------: | ------------------: | --------------: | ---- |
+| wall p50               |            5,223 ms |            5,232 ms |           1.002 | fail |
+| wall p95               |            5,351 ms |            5,402 ms |           1.010 | fail |
+| capture request p95    |            1,503 ms |            1,966 ms |           1.308 | fail |
+| peak tree RSS p50      | 3,655,761,920 bytes | 1,607,536,640 bytes |           0.440 | pass |
+| sampled CPU p50        |            9,140 ms |            8,900 ms |           0.974 | info |
+| max Chromium processes |                  32 |                  14 |           0.438 | pass |
+| max browser roots      |                   4 |                   1 |           0.250 | pass |
+
+capture failure、retry、timeout、crash、PNG mismatch、3秒以上のcapture tailはいずれも0であり、全context runのbrowser rootは1だった。一方、wall p50/p95とcapture request p95が性能gateを満たさなかったため、aggregate acceptanceはfalseとする。
+
+決定:
+
+- defaultは`process`のまま維持する
+- `context`はPlaywright専用の明示opt-inとして維持する
+- runtime、CLI、E2E、migration guide、changesetは変更しない
+- 将来default化を再提案する場合は、同じthresholdを満たす新しい均衡recordを必須とする
+- 集約結果は[`benchmarks/browser-isolation-record.json`](benchmarks/browser-isolation-record.json)、判断は[ADR-012](docs/adr/012-browser-isolation.md)へ記録する
+
 ### 10.8 5F — Puppeteer削除
 
 #### PR-540: Legacy removal
@@ -1157,6 +1183,7 @@ nightly:
 | 522 | visual commit wait                  | runtime           |
 | 530 | BrowserContext mode                 | performance       |
 | 531 | process/context differential        | benchmark/docs    |
+| 532 | context default decision            | benchmark/ADR     |
 | 540 | Puppeteer removal                   | dependencies/API  |
 
 ## 15. 同じPRへ入れてはいけない変更

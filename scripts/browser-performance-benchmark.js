@@ -22,16 +22,29 @@ const benchmarkProfile = process.env.STORYFREEZE_BENCHMARK_PROFILE || 'pr';
 if (!Object.hasOwn(benchmarkProfiles, benchmarkProfile)) {
   throw new Error(`Unknown browser benchmark profile: ${benchmarkProfile}`);
 }
+const benchmarkComparison = process.env.STORYFREEZE_BENCHMARK_COMPARISON || 'backend';
+if (!['backend', 'isolation'].includes(benchmarkComparison)) {
+  throw new Error(`Unsupported browser benchmark comparison: ${benchmarkComparison}`);
+}
 const { measuredRuns, warmupRuns } = benchmarkProfiles[benchmarkProfile];
 const parallel = Number(process.env.STORYFREEZE_BENCHMARK_PARALLEL || 4);
 if (![1, 2, 4].includes(parallel)) throw new Error(`Unsupported benchmark parallel value: ${parallel}`);
 const startingBackend = process.env.STORYFREEZE_BENCHMARK_START_BACKEND || 'puppeteer';
-if (!['puppeteer', 'playwright'].includes(startingBackend)) {
+if (benchmarkComparison === 'backend' && !['puppeteer', 'playwright'].includes(startingBackend)) {
   throw new Error(`Unsupported starting backend: ${startingBackend}`);
 }
-const includeTrace = process.env.STORYFREEZE_BENCHMARK_TRACE
-  ? process.env.STORYFREEZE_BENCHMARK_TRACE === 'true'
-  : benchmarkProfile === 'pr';
+const startingIsolation = process.env.STORYFREEZE_BENCHMARK_START_ISOLATION || 'process';
+if (benchmarkComparison === 'isolation' && !['process', 'context'].includes(startingIsolation)) {
+  throw new Error(`Unsupported starting isolation: ${startingIsolation}`);
+}
+if (benchmarkComparison === 'isolation' && process.env.STORYFREEZE_BENCHMARK_TRACE === 'true') {
+  throw new Error('Browser isolation comparison does not support trace capture.');
+}
+const includeTrace =
+  benchmarkComparison === 'backend' &&
+  (process.env.STORYFREEZE_BENCHMARK_TRACE
+    ? process.env.STORYFREEZE_BENCHMARK_TRACE === 'true'
+    : benchmarkProfile === 'pr');
 const expectedStoryCount = 2;
 const expectedPngCount = 9;
 const benchmarkExclude = 'Compatibility/Fixture/Retry';
@@ -39,6 +52,7 @@ const traceStoryCount = 1;
 const tracePngCount = 2;
 const traceInclude = 'Compatibility/Fixture/Console Error';
 const backends = ['puppeteer', 'playwright'];
+const isolations = ['process', 'context'];
 const captureDiagnosticPrefix = 'STORYFREEZE_CAPTURE_DIAGNOSTIC=';
 const launchOptions = {
   args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
@@ -209,8 +223,10 @@ function measureCapture({
   expectedStories,
   include,
   iteration,
+  isolation,
   label,
   pairStartingBackend,
+  pairStartingIsolation,
   positionInPair,
   sequenceIndex,
   trace = false,
@@ -233,6 +249,8 @@ function measureCapture({
     String(parallel),
     '--out-dir',
     outputDir,
+    '--browser-isolation',
+    isolation || 'process',
   ];
   if (trace) args.push('--trace');
   if (include) args.push('--include', include);
@@ -335,9 +353,11 @@ function measureCapture({
         errors,
         exitCode: code,
         iteration,
+        ...(isolation ? { isolation } : {}),
         label,
         outputDir,
         pairStartingBackend,
+        ...(pairStartingIsolation ? { pairStartingIsolation } : {}),
         peakBrowserRootCount,
         peakChromiumProcessCount,
         peakProcessCount,
@@ -697,6 +717,206 @@ function publicRun(run) {
   return record;
 }
 
+async function runIsolationComparison(browser) {
+  const warmups = { context: [], process: [] };
+  const warmupExecutionOrder = [];
+  let warmupSequenceIndex = 0;
+  for (let iteration = 1; iteration <= warmupRuns; iteration += 1) {
+    const processFirst = startingIsolation === 'process' ? iteration % 2 === 1 : iteration % 2 === 0;
+    const order = processFirst ? isolations : [...isolations].reverse();
+    for (const [positionInPair, isolation] of order.entries()) {
+      const run = await measureCapture({
+        backend: 'playwright',
+        browser,
+        exclude: benchmarkExclude,
+        expectedPngs: expectedPngCount,
+        expectedStories: expectedStoryCount,
+        isolation,
+        iteration,
+        label: `benchmark-isolation-${isolation}-warmup-${iteration}`,
+        pairStartingIsolation: order[0],
+        positionInPair,
+        sequenceIndex: ++warmupSequenceIndex,
+      });
+      warmups[isolation].push(run);
+      warmupExecutionOrder.push(run);
+    }
+  }
+
+  const runs = { context: [], process: [] };
+  const measuredExecutionOrder = [];
+  let measuredSequenceIndex = 0;
+  for (let iteration = 1; iteration <= measuredRuns; iteration += 1) {
+    const processFirst = startingIsolation === 'process' ? iteration % 2 === 1 : iteration % 2 === 0;
+    const order = processFirst ? isolations : [...isolations].reverse();
+    for (const [positionInPair, isolation] of order.entries()) {
+      const run = await measureCapture({
+        backend: 'playwright',
+        browser,
+        exclude: benchmarkExclude,
+        expectedPngs: expectedPngCount,
+        expectedStories: expectedStoryCount,
+        isolation,
+        iteration,
+        label: `benchmark-isolation-${isolation}-${iteration}`,
+        pairStartingIsolation: order[0],
+        positionInPair,
+        sequenceIndex: ++measuredSequenceIndex,
+      });
+      runs[isolation].push(run);
+      measuredExecutionOrder.push(run);
+      console.log(
+        `${isolation} isolation ${iteration}/${measuredRuns}: ${run.wallTimeMs} ms, ${Math.round(run.peakTreeRssBytes / 1024 / 1024)} MiB peak RSS.`,
+      );
+    }
+  }
+
+  const pixelComparisons = [];
+  for (let index = 0; index < measuredRuns; index += 1) {
+    pixelComparisons.push(
+      compareDirectories(`isolation-run-${index + 1}`, runs.process[index].outputDir, runs.context[index].outputDir),
+    );
+  }
+  for (const isolation of isolations) {
+    for (let index = 1; index < measuredRuns; index += 1) {
+      pixelComparisons.push(
+        compareDirectories(
+          `${isolation}-stability-${index + 1}`,
+          runs[isolation][0].outputDir,
+          runs[isolation][index].outputDir,
+        ),
+      );
+    }
+  }
+
+  const summaries = {
+    context: summarizeRuns(runs.context),
+    process: summarizeRuns(runs.process),
+  };
+  const gateErrors = [];
+  for (const isolation of isolations) {
+    for (const run of warmups[isolation]) run.errors.forEach(error => gateErrors.push(`${run.label}: ${error}`));
+    for (const run of runs[isolation]) run.errors.forEach(error => gateErrors.push(`${run.label}: ${error}`));
+  }
+  for (const comparison of pixelComparisons) {
+    if (comparison.mismatchCount !== 0)
+      gateErrors.push(`${comparison.label}: ${comparison.mismatchCount} PNG mismatch(es).`);
+  }
+  for (const run of [...warmups.context, ...runs.context]) {
+    if (run.peakBrowserRootCount !== 1) {
+      gateErrors.push(`${run.label}: expected one browser root, observed ${run.peakBrowserRootCount}.`);
+    }
+    if (run.uniqueBrowserLaunchCount !== 1) {
+      gateErrors.push(`${run.label}: expected one unique browser launch, observed ${run.uniqueBrowserLaunchCount}.`);
+    }
+  }
+  for (const run of [...warmups.process, ...runs.process]) {
+    if (run.peakBrowserRootCount !== parallel) {
+      gateErrors.push(
+        `${run.label}: expected ${parallel} simultaneous browser roots, observed ${run.peakBrowserRootCount}.`,
+      );
+    }
+    if (run.uniqueBrowserLaunchCount !== parallel + 1) {
+      gateErrors.push(
+        `${run.label}: expected ${parallel + 1} unique browser launches, observed ${run.uniqueBrowserLaunchCount}.`,
+      );
+    }
+  }
+  if (parallel > 1 && summaries.context.peakBrowserRootCount >= summaries.process.peakBrowserRootCount) {
+    gateErrors.push(
+      `Context isolation browser root peak (${summaries.context.peakBrowserRootCount}) was not lower than process isolation (${summaries.process.peakBrowserRootCount}).`,
+    );
+  }
+  if (parallel > 1 && summaries.context.maxChromiumProcessCount >= summaries.process.maxChromiumProcessCount) {
+    gateErrors.push(
+      `Context isolation Chromium process peak (${summaries.context.maxChromiumProcessCount}) was not lower than process isolation (${summaries.process.maxChromiumProcessCount}).`,
+    );
+  }
+
+  const storyfreezePackage = JSON.parse(
+    fs.readFileSync(path.join(fixtureDir, 'node_modules', 'storyfreeze', 'package.json'), 'utf8'),
+  );
+  const fixturePackage = JSON.parse(fs.readFileSync(path.join(fixtureDir, 'package.json'), 'utf8'));
+  const result = {
+    schemaVersion: 1,
+    kind: 'browser-isolation-differential',
+    recordedAt: new Date().toISOString(),
+    githubActions: {
+      repository: process.env.GITHUB_REPOSITORY || 'unknown',
+      runAttempt: process.env.GITHUB_RUN_ATTEMPT || 'unknown',
+      runId: process.env.GITHUB_RUN_ID || 'unknown',
+      workflowRef: process.env.GITHUB_WORKFLOW_REF || 'unknown',
+      workflowSha: process.env.GITHUB_WORKFLOW_SHA || 'unknown',
+    },
+    storyfreezeCommit: process.env.STORYFREEZE_BENCHMARK_COMMIT || 'unknown',
+    storyfreezeTree: process.env.STORYFREEZE_BENCHMARK_TREE || 'unknown',
+    storyfreezeVersion: storyfreezePackage.version,
+    provisioning: process.env.STORYFREEZE_BROWSER_PROVISIONING || 'explicit-install',
+    scenario: {
+      fixture: fixturePackage.name,
+      exclude: benchmarkExclude,
+      launchOptions,
+      backend: 'playwright',
+      benchmarkProfile,
+      includeTrace: false,
+      measuredRuns,
+      mode: 'managed-static',
+      parallel,
+      pngs: expectedPngCount,
+      sampleIntervalMs,
+      startingIsolation,
+      stories: expectedStoryCount,
+      storybook: fixturePackage.devDependencies.storybook,
+      trace: null,
+      warmupRuns,
+      warmupExecutionOrder: warmupExecutionOrder.map(run => run.label),
+      measuredExecutionOrder: measuredExecutionOrder.map(run => run.label),
+    },
+    environment: {
+      arch: process.arch,
+      browser,
+      cpuCount: os.cpus().length,
+      cpuModel: os.cpus()[0]?.model,
+      node: process.version,
+      platform: process.platform,
+      release: os.release(),
+      runnerImage: process.env.ImageOS || 'unknown',
+      runnerImageVersion: process.env.ImageVersion || 'unknown',
+      totalMemoryBytes: os.totalmem(),
+    },
+    isolations: {
+      process: {
+        warmups: warmups.process.map(publicRun),
+        runs: runs.process.map(publicRun),
+        summary: summaries.process,
+      },
+      context: {
+        warmups: warmups.context.map(publicRun),
+        runs: runs.context.map(publicRun),
+        summary: summaries.context,
+      },
+    },
+    isolationDifferential: {
+      pixelComparisons,
+      ratios: {
+        captureTimeP95: ratio(summaries.context.captureTimeP95Ms, summaries.process.captureTimeP95Ms),
+        cpuTime: ratio(summaries.context.medianCpuTimeMs, summaries.process.medianCpuTimeMs),
+        peakTreeRss: ratio(summaries.context.medianPeakTreeRssBytes, summaries.process.medianPeakTreeRssBytes),
+        wallTime: ratio(summaries.context.medianWallTimeMs, summaries.process.medianWallTimeMs),
+      },
+    },
+    gate: { errors: gateErrors, passed: gateErrors.length === 0 },
+  };
+
+  const json = `${JSON.stringify(result, null, 2)}\n`;
+  if (outputFile) {
+    fs.mkdirSync(path.dirname(outputFile), { recursive: true });
+    fs.writeFileSync(outputFile, json);
+  }
+  console.log(`STORYFREEZE_BROWSER_BENCHMARK_RESULT=${JSON.stringify(result)}`);
+  if (gateErrors.length) throw new Error(`Browser isolation differential gate failed:\n- ${gateErrors.join('\n- ')}`);
+}
+
 async function main() {
   runPnpm(['run', 'clear']);
   runPnpm(['run', 'build-storybook:managed']);
@@ -704,6 +924,10 @@ async function main() {
   const server = startVitePreview();
   try {
     await waitForServer(server);
+    if (benchmarkComparison === 'isolation') {
+      await runIsolationComparison(browser);
+      return;
+    }
     const warmups = { playwright: [], puppeteer: [] };
     const warmupExecutionOrder = [];
     let warmupSequenceIndex = 0;
@@ -942,7 +1166,14 @@ main().catch(error => {
       outputFile,
       `${JSON.stringify(
         {
-          schemaVersion: 3,
+          schemaVersion: benchmarkComparison === 'isolation' ? 1 : 3,
+          ...(benchmarkComparison === 'isolation'
+            ? {
+                kind: 'browser-isolation-differential',
+                storyfreezeCommit: process.env.STORYFREEZE_BENCHMARK_COMMIT || 'unknown',
+                storyfreezeTree: process.env.STORYFREEZE_BENCHMARK_TREE || 'unknown',
+              }
+            : {}),
           recordedAt: new Date().toISOString(),
           fatalError: message,
           gate: { errors: [message], passed: false },

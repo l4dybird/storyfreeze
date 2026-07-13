@@ -965,6 +965,35 @@ Context modeをdefaultにする目標:
 
 目標を満たさない場合、Playwrightへ移行済みでもprocess modeをdefaultのままにする。
 
+#### PR-531: Isolation differential benchmark
+
+PR-531では、既存のPuppeteer/Playwright backend比較とは独立したprocess/context isolation比較を追加する。backend比較のschema 3、workflow、tracked recordは変更しない。
+
+比較条件:
+
+- Node.js 22.18.0、明示installした同一Playwright Chromium、既存React/Vite managed static fixtureを使う
+- Playwright backendの`process`と`context`へ同一launch option、viewport、story選択、parallel数を渡す
+- dependency install、package build、Storybook static build、Vite preview serverは計測process treeの外に置く
+- PR profileは`parallel=4`、warm-up 1 pair、measured 3 pairsとし、最初はprocess、pairごとに実行順を交互にする
+- manual dispatchではprofile `pr|record`、parallel `1|2|4`、最初のisolation `process|context`を選べる
+- record profileはwarm-up 2 pairs、measured 10 pairsとする
+- default判定用recordは`parallel=4`を4 dispatch、最初のisolationを各2 dispatchに均衡させ、各isolation 40 measured runsとする
+- `parallel=1`と`parallel=2`は各1回のPR profile（3 measured pairs）をscaling診断専用とし、40-run集団、headline ratio、default gateへ混ぜない
+- traceはcontext指定をprocessへ戻してしまうため常に除外し、既存backend比較の独立trace gateへ委ねる
+
+isolation dispatch recordは独立したschema 1、`kind: "browser-isolation-differential"`とする。source commit/tree、environment、provisioning、scenario、実行順、`isolations.process|context`のraw run/summary、`isolationDifferential`のpixel比較とcontext/process比、独立したgate根拠を保持する。tracked aggregateも独立したschema 1、`kind: "browser-isolation-aggregate"`とし、source commit/tree、workflow runs、比較条件、両isolationの集約、context/process比、pixel比較、任意のp1/p2 diagnostics、acceptanceを保持する。aggregateは条件一致、成功gate、starting orderの均衡を検証してraw runsからpercentileを再計算し、dispatch medianをpoolしない。
+
+PR workflowはcapture成功、retry/timeout/crashなし、story/PNG件数、PNG path/dimension/pixel一致、想定browser topologyをblocking gateとする。GitHub-hosted runnerの単一dispatchの性能ratioは記録するがPRをblockしない。defaultをcontextへ変更するには、均衡した40-run aggregateで次をすべて満たす必要がある。
+
+- context/processのmedian peak RSS ratioを`0.80`以下にする
+- context/processのwall time p50 ratioとp95 ratioをともに`1.00`以下にする
+- context/processのcapture request p95 ratioを`1.05`以下にする
+- capture failure、retry、timeout、crash、pixel mismatchをすべて0にする
+- 3秒以上のcapture request tailを0にする
+- browser rootとChromium processのpeakを削減し、contextの全runでbrowser rootを1にする
+
+PR-531では新しいfixture、smoke、pixel suiteを追加せず、既存Storybook 10 E2Eのcoverageを再利用する。このPRは比較証拠を追加するだけであり、結果にかかわらずdefaultは`process`のまま変更しない。
+
 ### 10.8 5F — Puppeteer削除
 
 #### PR-540: Legacy removal
@@ -1127,6 +1156,7 @@ nightly:
 | 521 | capture wait diagnostics            | runtime/benchmark |
 | 522 | visual commit wait                  | runtime           |
 | 530 | BrowserContext mode                 | performance       |
+| 531 | process/context differential        | benchmark/docs    |
 | 540 | Puppeteer removal                   | dependencies/API  |
 
 ## 15. 同じPRへ入れてはいけない変更

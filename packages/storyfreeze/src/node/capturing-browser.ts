@@ -2,7 +2,6 @@ import { fileURLToPath } from 'node:url';
 import { BaseBrowser, MetricsWatcher } from './browser.js';
 import type { BrowserBackend, BrowserConsoleMessage, BrowserSessionOptions } from './browser-backend.js';
 import type { BrowserSessionSource } from './browser-process-coordinator.js';
-import { sleep } from './async-utils.js';
 import type { Story } from './story.js';
 import type { ManagedStorybookConnection } from './managed-storybook-connection.js';
 
@@ -28,6 +27,7 @@ import { FileSystem } from './file.js';
 import { ResourceWatcher } from './resource-watcher.js';
 import { StoryNavigator } from './story-navigator.js';
 import { captureDiagnosticsEnabled, emitCaptureDiagnostic, measureCaptureDiagnostic } from './capture-diagnostics.js';
+import { CaptureDeadline } from './capture-deadline.js';
 
 /**
  *
@@ -83,6 +83,7 @@ export class CapturingBrowser extends BaseBrowser {
   private navigator?: StoryNavigator;
   private diagnosticLastPhase?: string;
   private diagnosticOutcome: 'captured' | 'failed' | 'retry' | 'skipped' = 'failed';
+  private activeDeadline?: CaptureDeadline;
 
   /**
    *
@@ -188,9 +189,9 @@ export class CapturingBrowser extends BaseBrowser {
     return measureCaptureDiagnostic({ type: 'capture-phase', phase, ...this.diagnosticContext() }, action);
   }
 
-  private async waitIfTouched() {
+  private async waitIfTouched(deadline: CaptureDeadline) {
     if (!this.touched) return;
-    await sleep(this.opt.stateChangeDelay);
+    await deadline.wait(this.opt.stateChangeDelay);
   }
 
   private async resetIfTouched(screenshotOptions: StrictScreenshotOptions) {
@@ -208,22 +209,22 @@ export class CapturingBrowser extends BaseBrowser {
     this.touched = false;
   }
 
-  private async setCurrentStory(story: Story): Promise<ScreenshotOptions | undefined> {
+  private async setCurrentStory(story: Story, deadline: CaptureDeadline): Promise<ScreenshotOptions | undefined> {
     this._currentStory = story;
     this.debug('Set story', story.id);
     await this.measurePhase('navigation', async () => {
-      await this.navigator!.navigate(story.id);
+      await this.navigator!.navigate(story.id, deadline.navigationTimeout(), this.currentStoryRetryCount);
       await this.addStyles();
     });
     if (this.mode === 'managed') {
       return this.measurePhase('preview-ready', () =>
-        this.navigator!.waitForReady(this.opt.captureTimeout, this.opt.signal),
+        this.navigator!.waitForReady(deadline.remaining(), deadline.signal),
       );
     }
     return undefined;
   }
 
-  private async setViewport(opt: StrictScreenshotOptions) {
+  private async setViewport(opt: StrictScreenshotOptions, deadline: CaptureDeadline) {
     if (!this.currentStory) {
       throw new InvalidCurrentStoryStateError();
     }
@@ -267,16 +268,19 @@ export class CapturingBrowser extends BaseBrowser {
         nextViewport.isMobile !== this.viewport?.isMobile || nextViewport.hasTouch !== this.viewport?.hasTouch;
       if (willBeReloaded) {
         // Avoid racing Puppeteer's implicit reload against Storybook's preview lifecycle.
-        await this.page.goto('about:blank', { waitUntil: 'domcontentloaded' });
+        await this.page.goto('about:blank', {
+          timeout: deadline.navigationTimeout(),
+          waitUntil: 'domcontentloaded',
+        });
       }
       await this.page.setViewport(nextViewport);
       this.viewport = nextViewport;
       if (willBeReloaded || this.opt.reloadAfterChangeViewport) {
         // Start a fresh owned request after the viewport has settled.
-        await this.setCurrentStory(this.currentStory);
-        await sleep(this.opt.viewportDelay);
+        await this.setCurrentStory(this.currentStory, deadline);
+        await deadline.wait(this.opt.viewportDelay);
       } else {
-        await sleep(this.opt.viewportDelay);
+        await deadline.wait(this.opt.viewportDelay);
       }
     }
 
@@ -315,14 +319,14 @@ export class CapturingBrowser extends BaseBrowser {
     return;
   }
 
-  private async waitForResources(screenshotOptions: StrictScreenshotOptions) {
+  private async waitForResources(screenshotOptions: StrictScreenshotOptions, deadline: CaptureDeadline) {
     if (!screenshotOptions.waitAssets && !screenshotOptions.waitImages) return;
     const before = this.resourceWatcher!.getDiagnosticSnapshot();
     this.debug('Wait for requested resources resolved', this.resourceWatcher!.getRequestedUrls());
     const result = await this.resourceWatcher!.waitForRequestsComplete({
       quietMs: 100,
-      timeoutMs: 3000,
-      signal: this.opt.signal,
+      timeoutMs: deadline.remaining(3000),
+      signal: deadline.signal,
     });
     if (result.didTimeout) {
       this.opt.logger.warn(
@@ -342,9 +346,13 @@ export class CapturingBrowser extends BaseBrowser {
     });
   }
 
-  private async waitBrowserMetricsStable(phase: 'preEmit' | 'postEmit') {
+  private async waitBrowserMetricsStable(phase: 'preEmit' | 'postEmit', deadline = this.activeDeadline) {
     const mw = new MetricsWatcher(this.page, this.opt.metricsWatchRetryCount);
-    const result = await mw.waitForStable({ quietMs: 50, timeoutMs: 2000, signal: this.opt.signal });
+    const result = await mw.waitForStable({
+      quietMs: 50,
+      timeoutMs: deadline?.remaining(2000) ?? 2000,
+      signal: deadline?.signal ?? this.opt.signal,
+    });
     this.debug(`[${phase}] Browser metrics wait ended after ${result.sampleCount} checks (${result.reason}).`);
     if (!result.stable) {
       this.opt.logger.warn(
@@ -390,11 +398,15 @@ export class CapturingBrowser extends BaseBrowser {
     await this.restartCaptureSession(error);
   }
 
-  private async restartCaptureSession(originalError?: unknown) {
-    await this.close();
+  private resetCaptureState() {
     this._currentStory = undefined;
     this.viewport = undefined;
     this.touched = false;
+  }
+
+  private async restartCaptureSession(originalError?: unknown) {
+    await this.close();
+    this.resetCaptureState();
     try {
       await this.boot();
     } catch (recoveryError) {
@@ -439,10 +451,52 @@ export class CapturingBrowser extends BaseBrowser {
     this.currentVariantKey = variantKey;
     this.currentStoryRetryCount = retryCount;
     const attemptDiagnosticContext = { ...this.diagnosticContext(), storyId: story.id };
+    const deadline = new CaptureDeadline(this.opt.captureTimeout, requestId, this.opt.signal);
+    this.activeDeadline = deadline;
+    const attempt = this.screenshotAttempt(
+      requestId,
+      story,
+      variantKey,
+      logger,
+      forwardConsoleLogs,
+      trace,
+      fileSystem,
+      deadline,
+    );
 
     try {
-      return await this.screenshotAttempt(requestId, story, variantKey, logger, forwardConsoleLogs, trace, fileSystem);
+      return await Promise.race([attempt, deadline.interruption]);
     } catch (error) {
+      const captureError = error instanceof Error ? error : new Error(String(error));
+      const previewTimedOut = error instanceof PreviewReadyTimeoutError;
+      if (deadline.signal.aborted || previewTimedOut) {
+        const interruptedByRun = this.opt.signal?.aborted ?? false;
+        const interruptionError = interruptedByRun
+          ? this.opt.signal!.reason instanceof Error
+            ? this.opt.signal!.reason
+            : new Error('StoryFreeze was interrupted.')
+          : deadline.didTimeout
+            ? deadline.timeoutError
+            : captureError;
+        const closing = this.close();
+        await Promise.allSettled([attempt, closing]);
+        this.resetCaptureState();
+
+        if (!interruptedByRun && retryCount < this.opt.captureMaxRetryCount) {
+          this.opt.logger.warn(`${interruptionError.message} Retry to screenshot this story after this sequence.`);
+          try {
+            await this.boot();
+          } catch (recoveryError) {
+            throw new AggregateError(
+              [interruptionError, recoveryError],
+              'Failed to restart a capture worker after its attempt timed out.',
+            );
+          }
+          this.diagnosticOutcome = 'retry';
+          return { buffer: null, succeeded: false, variantKeysToPush: [], defaultVariantSuffix: '' };
+        }
+        throw interruptionError;
+      }
       const shouldRecover = shouldRecoverPlaywrightWorker({
         aborted: this.opt.signal?.aborted ?? false,
         backendName: this.backend.name,
@@ -455,6 +509,8 @@ export class CapturingBrowser extends BaseBrowser {
       this.diagnosticOutcome = 'retry';
       return { buffer: null, succeeded: false, variantKeysToPush: [], defaultVariantSuffix: '' };
     } finally {
+      deadline.dispose();
+      if (this.activeDeadline === deadline) this.activeDeadline = undefined;
       emitCaptureDiagnostic({
         type: 'capture-complete',
         durationMs: captureDiagnosticsEnabled() ? performance.now() - captureStartedAt : 0,
@@ -473,6 +529,7 @@ export class CapturingBrowser extends BaseBrowser {
     forwardConsoleLogs: boolean,
     trace: boolean,
     fileSystem: FileSystem,
+    deadline: CaptureDeadline,
   ): Promise<ScreenshotResult> {
     let emittedScreenshotOptions: ScreenshotOptions | undefined;
     this.resourceWatcher!.clear();
@@ -509,17 +566,7 @@ export class CapturingBrowser extends BaseBrowser {
         traceStarted = true;
       }
 
-      try {
-        emittedScreenshotOptions = await this.setCurrentStory(story);
-      } catch (error) {
-        if (error instanceof PreviewReadyTimeoutError && this.currentStoryRetryCount < this.opt.captureMaxRetryCount) {
-          this.opt.logger.warn(`${error.message} Retry to screenshot this story after this sequence.`);
-          if (this.opt.browserIsolation === 'context') await this.restartCaptureSession();
-          this.diagnosticOutcome = 'retry';
-          return { buffer: null, succeeded: false, variantKeysToPush: [], defaultVariantSuffix: '' };
-        }
-        throw error;
-      }
+      emittedScreenshotOptions = await this.setCurrentStory(story, deadline);
 
       if (this.mode === 'managed') {
         if (!this.currentStory) {
@@ -529,8 +576,8 @@ export class CapturingBrowser extends BaseBrowser {
           throw new InvalidCurrentStoryStateError();
         }
       } else {
-        await sleep(this.opt.delay);
-        await this.waitBrowserMetricsStable('preEmit');
+        await deadline.wait(this.opt.delay);
+        await this.waitBrowserMetricsStable('preEmit', deadline);
         // Use only `baseScreenshotOptions` when simple mode.
         emittedScreenshotOptions = pickupWithVariantKey(this.baseScreenshotOptions, this.currentVariantKey);
       }
@@ -547,7 +594,7 @@ export class CapturingBrowser extends BaseBrowser {
 
       // End this capturing process as success if `skip` set true.
       if (mergedScreenshotOptions.skip) {
-        await this.waitForDebugInput();
+        await Promise.race([this.waitForDebugInput(), deadline.interruption]);
         this.diagnosticOutcome = 'skipped';
         return { buffer: null, succeeded: true, variantKeysToPush, defaultVariantSuffix: '' };
       }
@@ -556,7 +603,7 @@ export class CapturingBrowser extends BaseBrowser {
 
       // Change browser's viewport if needed.
       const previousViewport = JSON.stringify(this.viewport);
-      const vpChanged = await this.measurePhase('viewport', () => this.setViewport(mergedScreenshotOptions));
+      const vpChanged = await this.measurePhase('viewport', () => this.setViewport(mergedScreenshotOptions, deadline));
       // Skip to capture if the viewport option is invalid.
       if (!vpChanged) {
         this.diagnosticOutcome = 'skipped';
@@ -568,19 +615,19 @@ export class CapturingBrowser extends BaseBrowser {
         await this.setHover(mergedScreenshotOptions);
         await this.setFocus(mergedScreenshotOptions);
         await this.setClick(mergedScreenshotOptions);
-        await this.waitIfTouched();
+        await this.waitIfTouched(deadline);
       });
 
       // Wait until browser main thread gets stable.
-      await this.measurePhase('resource', () => this.waitForResources(mergedScreenshotOptions));
-      await this.measurePhase('metrics', () => this.waitBrowserMetricsStable('postEmit'));
+      await this.measurePhase('resource', () => this.waitForResources(mergedScreenshotOptions, deadline));
+      await this.measurePhase('metrics', () => this.waitBrowserMetricsStable('postEmit', deadline));
 
       const viewportChanged = previousViewport !== JSON.stringify(this.viewport);
       if (shouldWaitForVisualCommit(this.mode, viewportChanged, this.touched)) {
         await this.measurePhase('visual-commit', async () => {
           const visualCommitDiagnostic = await this.page.waitForVisualCommit(
-            { paintFallbackMs: 250, timeoutMs: 3000 },
-            this.opt.signal,
+            { paintFallbackMs: 250, timeoutMs: deadline.remaining(3000) },
+            deadline.signal,
           );
           emitCaptureDiagnostic({
             type: 'visual-commit',
@@ -605,7 +652,7 @@ export class CapturingBrowser extends BaseBrowser {
       // We should reset elements state(e.g. focusing, hovering, clicking) for future screenshot for this story.
       await this.measurePhase('reset', () => this.resetIfTouched(mergedScreenshotOptions));
 
-      await this.waitForDebugInput();
+      await Promise.race([this.waitForDebugInput(), deadline.interruption]);
 
       this.diagnosticOutcome = 'captured';
 

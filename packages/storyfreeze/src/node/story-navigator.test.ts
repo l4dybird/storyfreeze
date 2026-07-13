@@ -79,12 +79,15 @@ describe(StoryNavigator, () => {
     await navigator.navigate('button--primary');
     await expect(navigator.waitForReady(100)).resolves.toEqual({ fullPage: true });
     current = state('ready', 'button--primary', '7-2');
-    await navigator.navigate('button--primary');
+    await navigator.navigate('button--primary', 1234, 2);
     await expect(navigator.waitForReady(100)).resolves.toEqual({ fullPage: true });
 
     expect(page.goto).toHaveBeenCalledTimes(2);
     expect(vi.mocked(page.goto).mock.calls[0][0]).toContain('storyfreezeRequestId=7-1');
     expect(vi.mocked(page.goto).mock.calls[1][0]).toContain('storyfreezeRequestId=7-2');
+    expect(vi.mocked(page.goto).mock.calls[0][0]).toContain('storyfreezeRetryCount=0');
+    expect(vi.mocked(page.goto).mock.calls[1][0]).toContain('storyfreezeRetryCount=2');
+    expect(vi.mocked(page.goto).mock.calls.map(([, options]) => options?.timeout)).toEqual([60_000, 1234]);
   });
 
   it.each([

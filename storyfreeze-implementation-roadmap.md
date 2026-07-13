@@ -1020,6 +1020,23 @@ capture failure、retry、timeout、crash、PNG mismatch、3秒以上のcapture 
 - 将来default化を再提案する場合は、同じthresholdを満たす新しい均衡recordを必須とする
 - 集約結果は[`benchmarks/browser-isolation-record.json`](benchmarks/browser-isolation-record.json)、判断は[ADR-012](docs/adr/012-browser-isolation.md)へ記録する
 
+#### PR-533: Dynamic context emulation
+
+PR-532で不合格だったcapture request p95をphase別に調査した結果、context modeではmobile/desktopのemulation profile変更ごとにBrowserContextを再生成しており、viewport phaseが主な回帰要因だった。worker間のBrowserContext分離は維持し、同一workerでは`about:blank`への遷移後に既存pageへChromium emulationを適用してStorybookへ再遷移する。retryとunhealthy recoveryでは従来どおりcontextを交換する。
+
+候補commit `decc3a7`を、開始isolationをprocess/contextで均衡させた`parallel=4`のPR profile 2 dispatchで確認した。各isolation 6 measured runsの結合結果:
+
+| 指標                   | context/process | PR-532 record | gate |
+| ---------------------- | --------------: | ------------: | ---- |
+| wall p50               |           0.927 |         1.002 | pass |
+| wall p95               |           0.915 |         1.010 | pass |
+| capture request p95    |           1.043 |         1.308 | pass |
+| peak tree RSS p50      |           0.463 |         0.440 | pass |
+| sampled CPU p50        |           0.852 |         0.974 | info |
+| max Chromium processes |           11–12 |            14 | pass |
+
+capture failure、retry、timeout、crash、PNG mismatchはすべて0だった。この結果は有効な改善候補を選ぶためのPR profileであり、tracked recordやdefaultは変更しない。最終判断はこのbehavior commitに対して`parallel=4`を4 dispatch、各isolation 40 measured runsで再計測して行う。
+
 ### 10.8 5F — Puppeteer削除
 
 #### PR-540: Legacy removal

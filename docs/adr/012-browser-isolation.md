@@ -15,7 +15,7 @@ Context sharing changes resource usage and the failure boundary. A shared browse
 
 StoryFreeze exposes `--browser-isolation process|context`. The default is `process`.
 
-Process mode retains one browser process per capture worker. Context mode is available only with the Playwright backend and uses an independently created BrowserContext for each worker lease. Context state is never shared between workers. A worker retains its current context only while the complete emulation profile remains compatible; profile changes and retries replace it with a clean context.
+Process mode retains one browser process per capture worker. Context mode is available only with the Playwright backend and uses an independently created BrowserContext for each worker lease. Context state is never shared between workers. A worker retains one context across viewport and device-emulation changes. Before changing mobile or touch emulation, StoryFreeze navigates the page to `about:blank`, applies the new Chromium emulation settings, and then performs a fresh owned Storybook navigation. Retries and unhealthy recovery still replace the context with a clean one.
 
 Selecting context isolation with the Puppeteer backend is an error. Selecting `--trace` with context isolation emits a warning and changes the effective isolation mode to process. This fallback does not change `--parallel`; a run configured with four workers continues to use four workers. Verbose output logs the effective isolation mode.
 
@@ -36,6 +36,12 @@ The balanced [browser isolation aggregate](../../benchmarks/browser-isolation-re
 Context isolation reduced median peak process-tree RSS from 3,655,761,920 to 1,607,536,640 bytes (ratio 0.440) and the Chromium process peak from 32 to 14. It did not meet process parity: wall p50 was 5,232 versus 5,223 ms (ratio 1.002), wall p95 was 5,402 versus 5,351 ms (ratio 1.010), and capture-request p95 was 1,966 versus 1,503 ms (ratio 1.308).
 
 The aggregate acceptance result is therefore false. `process` remains the default, `context` remains an explicit Playwright-only optimization, and no migration step is required. A future default proposal must produce a new balanced record that meets every existing threshold; the memory saving alone is insufficient to reverse this decision.
+
+### Dynamic-emulation follow-up
+
+Phase analysis of the rejected aggregate identified context recreation during mobile and desktop viewport transitions as the primary capture-request regression. A candidate at `decc3a7` retained the worker context and changed Chromium emulation on the existing page. Two balanced `parallel=4` PR-profile dispatches, one starting with each isolation mode, passed every correctness gate and reduced the combined context/process capture-request p95 ratio from 1.308 to 1.043. The combined wall p50 and p95 ratios were 0.927 and 0.915, peak RSS was 0.463, and sampled CPU was 0.852. Context mode reached 11–12 Chromium processes, compared with 32 for process mode in the same dispatches and 14 for context mode in the prior record.
+
+These six measured runs per isolation are candidate evidence, not a replacement for the tracked 40-run aggregate. The default remains `process` until the same optimized behavior produces a new balanced record that satisfies every existing threshold.
 
 ## Consequences
 

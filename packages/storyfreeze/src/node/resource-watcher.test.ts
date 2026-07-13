@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vite-plus/test';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vite-plus/test';
 import type { BrowserRequest, RequestListeners } from './browser-backend.js';
 import { ResourceWatcher } from './resource-watcher.js';
 
@@ -32,18 +32,21 @@ describe(ResourceWatcher, () => {
     watcher = new ResourceWatcher(page).init();
   });
 
-  afterEach(() => watcher.dispose());
+  afterEach(() => {
+    watcher.dispose();
+    vi.useRealTimers();
+  });
 
   it('waits for each request even when a URL is requested repeatedly', async () => {
     const first = request('https://example.test/image.png');
     page.start(first);
     page.finish(first);
-    await watcher.waitForRequestsComplete();
+    await watcher.waitForRequestsComplete({ quietMs: 0 });
 
     const second = request('https://example.test/image.png');
     page.start(second);
     let completed = false;
-    const waiting = watcher.waitForRequestsComplete().then(() => (completed = true));
+    const waiting = watcher.waitForRequestsComplete({ quietMs: 0 }).then(() => (completed = true));
 
     await Promise.resolve();
     expect(completed).toBe(false);
@@ -65,7 +68,7 @@ describe(ResourceWatcher, () => {
     });
 
     let completed = false;
-    const waiting = watcher.waitForRequestsComplete().then(() => (completed = true));
+    const waiting = watcher.waitForRequestsComplete({ quietMs: 0 }).then(() => (completed = true));
     page.finish(first);
     await Promise.resolve();
     expect(completed).toBe(false);
@@ -74,5 +77,59 @@ describe(ResourceWatcher, () => {
     await waiting;
     expect(watcher.getRequestedUrls()).toEqual(['https://example.test/font.woff2']);
     expect(watcher.getDiagnosticSnapshot().pending).toEqual([]);
+  });
+
+  it('restarts the quiet window when a new request arrives', async () => {
+    vi.useFakeTimers();
+    const first = request('https://example.test/first.png');
+    page.start(first);
+    let completed = false;
+    const waiting = watcher.waitForRequestsComplete({ quietMs: 100, timeoutMs: 1000 }).then(() => (completed = true));
+
+    page.finish(first);
+    await vi.advanceTimersByTimeAsync(99);
+    expect(completed).toBe(false);
+
+    const second = request('https://example.test/second.png');
+    page.start(second);
+    page.finish(second);
+    await vi.advanceTimersByTimeAsync(99);
+    expect(completed).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+
+    await waiting;
+    expect(completed).toBe(true);
+  });
+
+  it('does not wait when activity already advanced the expected generation', async () => {
+    page.start(request('https://example.test/late.png'));
+
+    await expect(
+      (
+        watcher as unknown as {
+          waitForActivity(
+            timeoutMs: number,
+            signal: AbortSignal | undefined,
+            expectedGeneration: number,
+          ): Promise<{
+            timedOut: boolean;
+          }>;
+        }
+      ).waitForActivity(1000, undefined, 0),
+    ).resolves.toMatchObject({ timedOut: false });
+  });
+
+  it('returns pending requests at the wall timeout and supports abort', async () => {
+    vi.useFakeTimers();
+    const pending = request('https://example.test/pending.png');
+    page.start(pending);
+    const waiting = watcher.waitForRequestsComplete({ quietMs: 100, timeoutMs: 300 });
+    await vi.advanceTimersByTimeAsync(300);
+    await expect(waiting).resolves.toMatchObject({ didTimeout: true, pending: [pending] });
+
+    const controller = new AbortController();
+    const aborted = watcher.waitForRequestsComplete({ quietMs: 100, timeoutMs: 1000, signal: controller.signal });
+    controller.abort(new Error('interrupted'));
+    await expect(aborted).rejects.toThrow('interrupted');
   });
 });

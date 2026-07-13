@@ -392,7 +392,6 @@ class PlaywrightBrowserSession implements BrowserSession {
     rawPage.on('crash', markUnhealthy);
     rawPage.on('close', markUnhealthy);
     context.on('close', markUnhealthy);
-    rawBrowser.on('disconnected', markUnhealthy);
     cdp.on('close', markUnhealthy);
   }
 

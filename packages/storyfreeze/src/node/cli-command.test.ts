@@ -35,6 +35,7 @@ describe(runCli, () => {
       },
       outDir: '__screenshots__',
       parallel: 4,
+      browserIsolation: 'process',
       flat: false,
       include: [],
       exclude: [],
@@ -66,7 +67,46 @@ describe(runCli, () => {
 
     expect(resolveBrowserBackend).toHaveBeenCalledWith('puppeteer');
     expect(main.mock.calls[0][0].parallel).toBe(4);
+    expect(main.mock.calls[0][0].browserIsolation).toBe('process');
     expect(main).toHaveBeenCalledWith(expect.anything(), { browserBackend: backend });
+  });
+
+  it('maps context isolation and logs the effective mode', async () => {
+    const main = vi.fn(async (_options: MainOptions) => 0);
+
+    await expect(runCli(['--verbose', '--browser-isolation', 'context'], { main })).resolves.toBe(0);
+
+    expect(main.mock.calls[0][0]).toMatchObject({ browserIsolation: 'context', parallel: 4 });
+    expect(log.mock.calls.flat().join(' ')).toContain('Browser isolation: context');
+  });
+
+  it('keeps parallelism and forces process isolation for Chromium traces', async () => {
+    const main = vi.fn(async (_options: MainOptions) => 0);
+
+    await expect(
+      runCli(['--verbose', '--trace', '--browser-isolation', 'context', '--parallel', '4'], { main }),
+    ).resolves.toBe(0);
+
+    expect(main.mock.calls[0][0]).toMatchObject({ browserIsolation: 'process', parallel: 4, trace: true });
+    expect(error.mock.calls.flat().join(' ')).toContain(
+      '--trace requires process browser isolation. Using --browser-isolation process with --parallel 4.',
+    );
+    expect(log.mock.calls.flat().join(' ')).toContain('Browser isolation: process');
+  });
+
+  it('rejects context isolation with the Puppeteer fallback', async () => {
+    const backend = { name: 'puppeteer' } as unknown as BrowserBackend;
+    const resolveBrowserBackend = vi.fn(async () => backend);
+    const main = vi.fn(async (_options: MainOptions) => 0);
+
+    await expect(
+      runCli(['--browser-backend', 'puppeteer', '--browser-isolation', 'context'], { main, resolveBrowserBackend }),
+    ).resolves.toBe(1);
+
+    expect(main).not.toHaveBeenCalled();
+    expect(error.mock.calls.flat().join(' ')).toContain(
+      '--browser-isolation context is only supported by the Playwright backend.',
+    );
   });
 
   it('supports all existing short options and repeated values', async () => {
@@ -190,6 +230,7 @@ describe(runCli, () => {
     ['invalid number', ['--parallel', 'many']],
     ['invalid enum', ['--chromium-channel', 'nightly']],
     ['invalid browser backend', ['--browser-backend', 'webkit']],
+    ['invalid browser isolation', ['--browser-isolation', 'page']],
   ])('rejects %s before execution', async (_label, args) => {
     const main = vi.fn(async (_options: MainOptions) => 0);
     await expect(runCli(args, { main })).resolves.toBe(1);

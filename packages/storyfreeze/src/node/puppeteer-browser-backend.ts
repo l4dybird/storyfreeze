@@ -33,6 +33,7 @@ import {
   type BrowserRequest,
   type BrowserRuntimeOptions,
   type BrowserSession,
+  type BrowserSessionOptions,
   type CapturePage,
   type ChromeChannel,
   type NavigationOptions,
@@ -386,7 +387,11 @@ class PuppeteerBrowserInstance implements BrowserInstance {
     return this.rawBrowser.close();
   }
 
-  async newSession() {
+  isHealthy() {
+    return this.rawBrowser.isConnected();
+  }
+
+  async newSession(_options?: BrowserSessionOptions) {
     return new PuppeteerBrowserSession(await this.rawBrowser.newPage());
   }
 }

@@ -22,6 +22,10 @@ export interface BrowserRuntimeOptions {
   chromiumPath?: string;
 }
 
+export interface BrowserSessionOptions {
+  viewport?: Viewport;
+}
+
 export interface BrowserDeviceDescriptor {
   name: string;
   viewport: Viewport;
@@ -99,7 +103,8 @@ export interface BrowserSession {
 export interface BrowserInstance {
   readonly executablePath: string;
   close(): Promise<void>;
-  newSession(): Promise<BrowserSession>;
+  isHealthy(): boolean;
+  newSession(options?: BrowserSessionOptions): Promise<BrowserSession>;
 }
 
 export interface BrowserBackend {

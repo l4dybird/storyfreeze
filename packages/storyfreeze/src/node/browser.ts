@@ -5,8 +5,10 @@ import {
   type BrowserMetrics,
   type BrowserRuntimeOptions,
   type BrowserSession,
+  type BrowserSessionOptions,
   type CapturePage,
 } from './browser-backend.js';
+import type { BrowserSessionSource } from './browser-process-coordinator.js';
 import { puppeteerBrowserBackend } from './puppeteer-browser-backend.js';
 import { browserDeviceDescriptors } from './browser-device-registry.js';
 import { captureDiagnosticsEnabled, emitCaptureDiagnostic } from './capture-diagnostics.js';
@@ -19,6 +21,7 @@ export type BaseBrowserOptions = BrowserRuntimeOptions;
 export class BaseBrowser {
   private instance?: BrowserInstance;
   private session?: BrowserSession;
+  private sessionGeneration?: number;
   private _executablePath = '';
   private debugInputResolver = () => {};
   private debugInputPromise: Promise<void> = Promise.resolve();
@@ -27,6 +30,7 @@ export class BaseBrowser {
     protected opt: BaseBrowserOptions,
     protected readonly backend: BrowserBackend = puppeteerBrowserBackend,
     private readonly closeDiagnosticContext: { role?: 'capture-worker' | 'story-index'; workerId?: number } = {},
+    private readonly sessionSource?: BrowserSessionSource,
   ) {}
 
   get page() {
@@ -39,18 +43,29 @@ export class BaseBrowser {
   }
 
   protected isSessionHealthy() {
-    return this.session?.isHealthy() ?? false;
+    return (
+      (this.session?.isHealthy() ?? false) &&
+      (this.sessionSource === undefined ||
+        (this.sessionGeneration !== undefined && this.sessionSource.isCurrent(this.sessionGeneration)))
+    );
   }
 
   protected getDeviceDescriptors() {
     return browserDeviceDescriptors;
   }
 
-  async boot() {
-    this.instance = await this.backend.launch(this.opt);
-    this._executablePath = this.instance.executablePath;
+  async boot(sessionOptions?: BrowserSessionOptions) {
+    if (this.sessionSource) {
+      const lease = await this.sessionSource.openSession(sessionOptions);
+      this.session = lease.session;
+      this.sessionGeneration = lease.generation;
+      this._executablePath = lease.executablePath;
+    } else {
+      this.instance = await this.backend.launch(this.opt);
+      this._executablePath = this.instance.executablePath;
+    }
     try {
-      this.session = await this.instance.newSession();
+      if (!this.session) this.session = await this.instance!.newSession(sessionOptions);
       await this.setupDebugInput();
       return this;
     } catch (error) {
@@ -63,6 +78,7 @@ export class BaseBrowser {
     const session = this.session;
     const instance = this.instance;
     this.session = undefined;
+    this.sessionGeneration = undefined;
     this.instance = undefined;
 
     const sessionCloseStartedAt = captureDiagnosticsEnabled() ? performance.now() : 0;
@@ -75,8 +91,8 @@ export class BaseBrowser {
     }
     const sessionCloseMs = captureDiagnosticsEnabled() ? performance.now() - sessionCloseStartedAt : 0;
     const processDrainStartedAt = captureDiagnosticsEnabled() ? performance.now() : 0;
-    await sleep(50);
-    const processDrainMs = captureDiagnosticsEnabled() ? performance.now() - processDrainStartedAt : 0;
+    if (instance) await sleep(50);
+    const processDrainMs = captureDiagnosticsEnabled() && instance ? performance.now() - processDrainStartedAt : 0;
     const browserCloseStartedAt = captureDiagnosticsEnabled() ? performance.now() : 0;
     let browserCloseError: unknown;
     try {
@@ -88,7 +104,7 @@ export class BaseBrowser {
     emitCaptureDiagnostic({
       type: 'browser-close',
       backend: this.backend.name,
-      browserCloseMs: captureDiagnosticsEnabled() ? performance.now() - browserCloseStartedAt : 0,
+      browserCloseMs: captureDiagnosticsEnabled() && instance ? performance.now() - browserCloseStartedAt : 0,
       processDrainMs,
       sessionCloseMs,
       browserCloseError: browserCloseError instanceof Error ? browserCloseError.message : browserCloseError,

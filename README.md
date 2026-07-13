@@ -367,6 +367,7 @@ OPTIONS:
   -C, --chromium-channel [chromium-channel]                        Channel to search local Chromium. (default: *, choices: puppeteer | canary | stable | *)
   --chromium-path <chromium-path>                                  Executable Chromium path. (default: )
   --browser-backend [browser-backend]                              Browser automation backend. (default: playwright, choices: puppeteer | playwright)
+  --browser-isolation [browser-isolation]                          Browser isolation mode for capture workers. (default: process, choices: process | context)
   --browser-launch-options <browser-launch-options>                JSON string of browser launch options. (default: { "args": ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"] })
   --puppeteer-launch-config <puppeteer-launch-config>              Deprecated alias for --browser-launch-options.
 
@@ -596,7 +597,9 @@ You can change search channel with `--chromium-channel` option or set executable
 
 Use `--browser-launch-options '<json>'` for browser launch arguments shared by both backends. `args`, `headless`, and `executablePath` are supported by the Playwright backend; the Puppeteer backend continues to pass additional fields through. The previous `--puppeteer-launch-config` name remains available as a deprecated alias and emits a warning. Do not specify both names together. An explicit `--chromium-path` takes precedence over `executablePath` in the JSON.
 
-`--trace` writes the existing Chromium CPU trace JSON format. The current one-worker/one-browser topology allows one active trace in each browser process without reducing the configured parallelism.
+Capture workers use separate browser processes by default. Playwright users can opt into one isolated browser context per worker with `--browser-isolation context`; this can reduce the number of Chromium processes while keeping cookies, storage, cache, and service workers isolated between workers. Puppeteer supports only the default `process` mode. Process isolation will remain the default until context mode meets the documented memory, performance, and reliability gates.
+
+`--trace` writes the existing Chromium CPU trace JSON format. Because Chromium CPU tracing is browser-process scoped, combining `--trace` with `--browser-isolation context` emits a warning and automatically uses process isolation for that run. The configured parallelism is preserved.
 
 ## Storybook compatibility
 
@@ -617,7 +620,7 @@ StoryFreeze (with both simple and managed mode) is agnostic for specific UI fram
 
 ## How it works
 
-StoryFreeze accesses the launched page using [Playwright][playwright] by default. [Puppeteer][puppeteer] remains available with `--browser-backend puppeteer` as a temporary fallback.
+StoryFreeze accesses the launched page using [Playwright][playwright] by default. [Puppeteer][puppeteer] remains available with `--browser-backend puppeteer` as a temporary fallback. Playwright supports both process and context worker isolation; Puppeteer supports process isolation only.
 
 ## Contributing
 

@@ -69,16 +69,12 @@ describe(BaseBrowser, () => {
     expect(browser.executablePath).toBe('/test/chrome');
   });
 
-  it('uses the legacy sandbox-safe defaults when launch options are omitted', async () => {
+  it('keeps the Chromium sandbox enabled when launch options are omitted', async () => {
     const { backend, browser } = createBrowser();
 
     await browser.boot();
 
-    expect(backend.launchedWith).toMatchObject({
-      args: ['--no-sandbox', '--disable-setuid-sandbox'],
-      executablePath: '/test/chrome',
-      headless: true,
-    });
+    expect(backend.launchedWith).toEqual({ executablePath: '/test/chrome', headless: true });
   });
 
   it('throws the owned error when Chromium cannot be found', async () => {

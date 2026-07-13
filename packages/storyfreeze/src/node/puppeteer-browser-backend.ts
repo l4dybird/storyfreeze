@@ -415,10 +415,7 @@ export class PuppeteerBrowserBackend implements BrowserBackend {
     });
     if (!executablePath) throw new ChromiumNotFoundError();
 
-    const launchOptions: BrowserLaunchOptions = options.launchOptions ?? {
-      args: ['--no-sandbox', '--disable-setuid-sandbox'],
-      headless: true,
-    };
+    const launchOptions: BrowserLaunchOptions = options.launchOptions ?? { headless: true };
     const browser = await this.launchBrowser({
       ...launchOptions,
       executablePath,

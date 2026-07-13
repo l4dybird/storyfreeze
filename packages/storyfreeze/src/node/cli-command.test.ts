@@ -47,10 +47,7 @@ describe(runCli, () => {
       chromiumPath: '',
     });
     expect(received?.logger.level).toBe('silent');
-    expect(received?.launchOptions).toEqual({
-      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
-      headless: true,
-    });
+    expect(received?.launchOptions).toEqual({ headless: true });
     expect(main).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ browserBackend: expect.objectContaining({ name: 'playwright' }) }),

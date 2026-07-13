@@ -368,7 +368,7 @@ OPTIONS:
   --chromium-path <chromium-path>                                  Executable Chromium path. (default: )
   --browser-backend [browser-backend]                              Browser automation backend. (default: playwright, choices: puppeteer | playwright)
   --browser-isolation [browser-isolation]                          Browser isolation mode for capture workers. (default: process, choices: process | context)
-  --browser-launch-options <browser-launch-options>                JSON string of browser launch options. (default: { "args": ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"] })
+  --browser-launch-options <browser-launch-options>                JSON string of browser launch options. (default: {})
   --puppeteer-launch-config <puppeteer-launch-config>              Deprecated alias for --browser-launch-options.
 
 EXAMPLES:
@@ -596,6 +596,12 @@ StoryFreeze resolves an explicit `--chromium-path` or `--chromium-channel` first
 You can change search channel with `--chromium-channel` option or set executable Chromium file path with `--chromium-path` option.
 
 Use `--browser-launch-options '<json>'` for browser launch arguments shared by both backends. `args`, `headless`, and `executablePath` are supported by the Playwright backend; the Puppeteer backend continues to pass additional fields through. The previous `--puppeteer-launch-config` name remains available as a deprecated alias and emits a warning. Do not specify both names together. An explicit `--chromium-path` takes precedence over `executablePath` in the JSON.
+
+Chromium's sandbox is enabled by default, including when capturing a hosted Storybook. If a restricted container cannot start Chromium with its sandbox enabled, opt out explicitly for that trusted environment:
+
+```sh
+storyfreeze --browser-launch-options '{"args":["--no-sandbox","--disable-setuid-sandbox","--disable-dev-shm-usage"]}' http://localhost:9009
+```
 
 Capture workers use separate browser processes by default. Playwright users can opt into one isolated browser context per worker with `--browser-isolation context`; this can reduce the number of Chromium processes while keeping cookies, storage, cache, and service workers isolated between workers. Puppeteer supports only the default `process` mode. The current balanced [browser isolation record](https://github.com/l4dybird/storyfreeze/blob/master/benchmarks/browser-isolation-record.json) reduced wall p50 by 7.9%, wall p95 by 8.2%, peak RSS by 54.0%, and the Chromium process peak from 32 to 14. Its capture-request p95 was still 7.3% slower, above the 5% default gate, so process isolation remains the default.
 

@@ -347,11 +347,7 @@ describe(PlaywrightBrowserBackend, () => {
     await secondSession.close();
     await instance.close();
 
-    expect(launch).toHaveBeenCalledWith({
-      args: ['--no-sandbox', '--disable-setuid-sandbox'],
-      executablePath: '/managed/chromium',
-      headless: true,
-    });
+    expect(launch).toHaveBeenCalledWith({ executablePath: '/managed/chromium', headless: true });
     expect(findChrome).not.toHaveBeenCalled();
     expect(vi.mocked(browser.newContext)).toHaveBeenNthCalledWith(1, {
       viewport: { width: 390, height: 844 },
@@ -436,10 +432,6 @@ describe(PlaywrightBrowserBackend, () => {
     await backend.launch({ chromiumChannel: '*' });
 
     expect(findChrome.mock.calls.map(([options]) => options)).toEqual([{ channel: 'canary' }, { channel: 'stable' }]);
-    expect(launch).toHaveBeenCalledWith({
-      args: ['--no-sandbox', '--disable-setuid-sandbox'],
-      executablePath: '/system/chrome',
-      headless: true,
-    });
+    expect(launch).toHaveBeenCalledWith({ executablePath: '/system/chrome', headless: true });
   });
 });

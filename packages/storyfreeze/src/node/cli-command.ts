@@ -28,8 +28,7 @@ const packageVersion = (
   JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as { version: string }
 ).version;
 
-const defaultBrowserLaunchOptions =
-  '{ "args": ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"] }';
+const defaultBrowserLaunchOptions = '{}';
 const chromiumChannels = ['puppeteer', 'canary', 'stable', '*'] as const;
 const browserIsolationModes = ['process', 'context'] as const;
 

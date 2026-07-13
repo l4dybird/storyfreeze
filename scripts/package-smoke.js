@@ -164,7 +164,8 @@ try {
     !help.includes('USAGE:') ||
     !help.includes('--server-cmd') ||
     !help.includes('--browser-launch-options') ||
-    !help.includes('--puppeteer-launch-config')
+    !help.includes('--puppeteer-launch-config') ||
+    !help.includes('(default: playwright, choices: puppeteer | playwright)')
   ) {
     throw new Error('CLI help did not contain the expected Gunshi usage and kebab-case options.');
   }

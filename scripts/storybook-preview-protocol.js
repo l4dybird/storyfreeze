@@ -302,7 +302,7 @@ async function main() {
     mode: 'simple',
     directoryName: '__screenshots__/simple-static',
     expectedPaths: simpleScreenshotPaths,
-    extraFragments: ['Found 3 stories.'],
+    extraFragments: ['Browser backend: playwright', 'Found 3 stories.'],
     expectServerShutdown: true,
   });
 
@@ -315,14 +315,14 @@ async function main() {
       mode: 'managed',
       directoryName: '__screenshots__/managed-static',
       expectedPaths: managedScreenshotPaths,
-      extraFragments: ['Found 3 stories.'],
+      extraFragments: ['Browser backend: playwright', 'Found 3 stories.'],
     });
     assertCapture({
-      script: 'storyfreeze:managed-static-playwright',
+      script: 'storyfreeze:managed-static-puppeteer',
       mode: 'managed',
-      directoryName: '__screenshots__/managed-static-playwright',
+      directoryName: '__screenshots__/managed-static-puppeteer',
       expectedPaths: managedScreenshotPaths,
-      extraFragments: ['Browser backend: playwright', 'Found 3 stories.'],
+      extraFragments: ['Browser backend: puppeteer', 'Found 3 stories.'],
     });
     assertCapture({
       script: 'storyfreeze:filter-static',

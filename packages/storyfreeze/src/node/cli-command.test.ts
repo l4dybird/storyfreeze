@@ -51,20 +51,20 @@ describe(runCli, () => {
     });
     expect(main).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ browserBackend: expect.objectContaining({ name: 'puppeteer' }) }),
+      expect.objectContaining({ browserBackend: expect.objectContaining({ name: 'playwright' }) }),
     );
   });
 
-  it('selects the Playwright backend without changing the default parallelism', async () => {
-    const backend = { name: 'playwright' } as unknown as BrowserBackend;
+  it('selects the Puppeteer fallback without changing the default parallelism', async () => {
+    const backend = { name: 'puppeteer' } as unknown as BrowserBackend;
     const resolveBrowserBackend = vi.fn(async () => backend);
     const main = vi.fn(async (_options: MainOptions) => 0);
 
-    await expect(
-      runCli(['--silent', '--browser-backend', 'playwright'], { main, resolveBrowserBackend }),
-    ).resolves.toBe(0);
+    await expect(runCli(['--silent', '--browser-backend', 'puppeteer'], { main, resolveBrowserBackend })).resolves.toBe(
+      0,
+    );
 
-    expect(resolveBrowserBackend).toHaveBeenCalledWith('playwright');
+    expect(resolveBrowserBackend).toHaveBeenCalledWith('puppeteer');
     expect(main.mock.calls[0][0].parallel).toBe(4);
     expect(main).toHaveBeenCalledWith(expect.anything(), { browserBackend: backend });
   });

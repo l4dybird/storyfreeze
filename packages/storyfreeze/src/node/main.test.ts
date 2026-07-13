@@ -162,6 +162,7 @@ describe(CapturingBrowser, () => {
     await resetIfTouched({ click: '#click-target', focus: '#focus-target' });
     expect(page.blur).toHaveBeenCalledTimes(2);
     expect(page.resetPointer).toHaveBeenCalledTimes(1);
+    expect(page.goto).not.toHaveBeenCalled();
   });
 
   it('closes a launched browser when post-launch setup fails', async () => {

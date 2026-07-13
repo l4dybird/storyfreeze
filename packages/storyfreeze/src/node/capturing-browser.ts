@@ -65,7 +65,6 @@ export class CapturingBrowser extends BaseBrowser {
   private touched = false;
   private resourceWatcher?: ResourceWatcher;
   private navigator!: StoryNavigator;
-  private diagnosticPreviewIdlePhase: 'preview-ready' | 'reset' = 'preview-ready';
   private diagnosticLastPhase?: string;
   private diagnosticOutcome: 'captured' | 'failed' | 'retry' | 'skipped' = 'failed';
 
@@ -162,7 +161,7 @@ export class CapturingBrowser extends BaseBrowser {
     emitCaptureDiagnostic({
       ...event,
       ...this.diagnosticContext(),
-      phase: this.diagnosticPreviewIdlePhase,
+      phase: 'preview-ready',
     });
   }
 
@@ -177,9 +176,8 @@ export class CapturingBrowser extends BaseBrowser {
   }
 
   private async resetIfTouched(screenshotOptions: StrictScreenshotOptions) {
-    const story = this.currentStory;
-    if (!this.touched || !story) return;
-    this.debug('Reset story because page state got dirty in this request.', this.currentRequestId);
+    if (!this.touched) return;
+    this.debug('Reset browser input because page state got dirty in this request.', this.currentRequestId);
 
     // Clear the browser's mouse state.
     if (screenshotOptions.click) {
@@ -189,16 +187,7 @@ export class CapturingBrowser extends BaseBrowser {
       await this.page.blur(screenshotOptions.focus);
     }
     await this.page.resetPointer();
-
-    this.diagnosticPreviewIdlePhase = 'reset';
-    try {
-      await this.setCurrentStory(story);
-    } finally {
-      this.diagnosticPreviewIdlePhase = 'preview-ready';
-    }
     this.touched = false;
-
-    return;
   }
 
   private async setCurrentStory(story: Story): Promise<ScreenshotOptions | undefined> {

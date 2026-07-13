@@ -127,6 +127,43 @@ describe(bootCaptureWorkers, () => {
 describe(CapturingBrowser, () => {
   afterEach(() => vi.restoreAllMocks());
 
+  it('resets browser input without navigating after a touched capture', async () => {
+    const browser = new CapturingBrowser(
+      { url: 'https://example.test' } as ManagedStorybookConnection,
+      {
+        delay: 0,
+        disableWaitAssets: false,
+        logger: new Logger('silent'),
+        viewports: ['800x600'],
+      } as MainOptions,
+      'managed',
+      0,
+    );
+    const page = {
+      blur: vi.fn(async () => {}),
+      goto: vi.fn(async () => {}),
+      resetPointer: vi.fn(async () => {}),
+    };
+    vi.spyOn(BaseBrowser.prototype, 'page', 'get').mockReturnValue(page as never);
+    Object.assign(browser, { currentRequestId: 'fixture--default', touched: true });
+    const resetIfTouched = (
+      browser as unknown as {
+        resetIfTouched(options: { click: string; focus: string }): Promise<void>;
+      }
+    ).resetIfTouched.bind(browser);
+
+    await resetIfTouched({ click: '#click-target', focus: '#focus-target' });
+
+    expect(page.blur.mock.calls).toEqual([['#click-target'], ['#focus-target']]);
+    expect(page.resetPointer).toHaveBeenCalledTimes(1);
+    expect(page.goto).not.toHaveBeenCalled();
+    expect((browser as unknown as { touched: boolean }).touched).toBe(false);
+
+    await resetIfTouched({ click: '#click-target', focus: '#focus-target' });
+    expect(page.blur).toHaveBeenCalledTimes(2);
+    expect(page.resetPointer).toHaveBeenCalledTimes(1);
+  });
+
   it('closes a launched browser when post-launch setup fails', async () => {
     const options = {
       delay: 0,

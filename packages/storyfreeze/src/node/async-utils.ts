@@ -80,14 +80,16 @@ export class Queue<Request, Result, Worker> {
   }
 
   push(request: Request): void {
+    if (!this.shouldContinue) return;
     const resolver = this.resolvers.shift();
     if (resolver) resolver.resolve(request);
     else this.futureRequests.push(Promise.resolve(request));
   }
 
   close(): void {
+    if (!this.shouldContinue) return;
     this.shouldContinue = false;
-    this.resolvers.forEach(({ cancel }) => cancel());
+    this.resolvers.splice(0).forEach(({ cancel }) => cancel());
   }
 
   async *tasks(): AsyncGenerator<Task<Result, Worker>, void> {
@@ -114,10 +116,7 @@ export class Queue<Request, Result, Worker> {
   publishController(): QueueController<Request> {
     return {
       push: this.push.bind(this),
-      close: async () => {
-        await Promise.resolve();
-        this.close();
-      },
+      close: this.close.bind(this),
     };
   }
 
@@ -126,10 +125,12 @@ export class Queue<Request, Result, Worker> {
     const requestId = `request_${++this.requestIdCounter}`;
     this.requestingIds.add(requestId);
     return async worker => {
-      const result = await delegate(worker);
-      this.requestingIds.delete(requestId);
-      if (!this.allowEmpty && this.requestingIds.size === 0 && this.futureRequests.length === 0) this.close();
-      return result;
+      try {
+        return await delegate(worker);
+      } finally {
+        this.requestingIds.delete(requestId);
+        if (!this.allowEmpty && this.requestingIds.size === 0 && this.futureRequests.length === 0) this.close();
+      }
     };
   }
 }
@@ -137,29 +138,32 @@ export class Queue<Request, Result, Worker> {
 async function runParallel<Result, Worker>(
   tasks: () => AsyncGenerator<Task<Result, Worker>, void>,
   workers: Worker[],
+  stop: () => void,
 ): Promise<Result[]> {
   if (workers.length === 0) throw new Error('No workers');
   const results: Result[] = [];
   const generator = tasks();
 
-  await Promise.all(
-    workers.map(
-      worker =>
-        new Promise<void>((resolve, reject) => {
-          async function next(): Promise<void> {
-            const { done, value: task } = await generator.next();
-            if (done || !task) return resolve();
-            try {
-              results.push(await task(worker));
-              await next();
-            } catch (error) {
-              reject(error);
-            }
-          }
-          void next();
-        }),
-    ),
-  );
+  let firstError: unknown;
+  let hasError = false;
+  const runners = workers.map(async worker => {
+    while (!hasError) {
+      try {
+        const { done, value: task } = await generator.next();
+        if (done || !task || hasError) return;
+        results.push(await task(worker));
+      } catch (error) {
+        if (!hasError) {
+          hasError = true;
+          firstError = error;
+          stop();
+        }
+        return;
+      }
+    }
+  });
+  await Promise.allSettled(runners);
+  if (hasError) throw firstError;
   return results;
 }
 
@@ -177,7 +181,7 @@ export function createExecutionService<Request, Result, Worker>(
 ): ExecutionService<Request, Result> {
   const queue = new Queue({ initialRequests, createTask, allowEmpty: !!options.allowEmpty });
   return {
-    execute: () => runParallel(queue.tasks.bind(queue), workers),
+    execute: () => runParallel(queue.tasks.bind(queue), workers, queue.close.bind(queue)),
     ...queue.publishController(),
   };
 }

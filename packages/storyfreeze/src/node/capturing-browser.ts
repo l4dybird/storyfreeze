@@ -194,19 +194,17 @@ export class CapturingBrowser extends BaseBrowser {
     await deadline.wait(this.opt.stateChangeDelay);
   }
 
-  private async resetIfTouched(screenshotOptions: StrictScreenshotOptions) {
+  private async resetIfTouched() {
     if (!this.touched) return;
     this.debug('Reset browser input because page state got dirty in this request.', this.currentRequestId);
 
-    // Clear the browser's mouse state.
-    if (screenshotOptions.click) {
-      await this.page.blur(screenshotOptions.click);
+    try {
+      await this.page.resetPointer();
+    } catch (error) {
+      this.debug('Failed to reset browser input after capturing. The next request will navigate afresh.', error);
+    } finally {
+      this.touched = false;
     }
-    if (screenshotOptions.focus) {
-      await this.page.blur(screenshotOptions.focus);
-    }
-    await this.page.resetPointer();
-    this.touched = false;
   }
 
   private async setCurrentStory(story: Story, deadline: CaptureDeadline): Promise<ScreenshotOptions | undefined> {
@@ -650,7 +648,7 @@ export class CapturingBrowser extends BaseBrowser {
       );
 
       // We should reset elements state(e.g. focusing, hovering, clicking) for future screenshot for this story.
-      await this.measurePhase('reset', () => this.resetIfTouched(mergedScreenshotOptions));
+      await this.measurePhase('reset', () => this.resetIfTouched());
 
       await Promise.race([this.waitForDebugInput(), deadline.interruption]);
 

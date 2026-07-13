@@ -67,7 +67,6 @@ export interface RequestListeners {
 
 export interface CapturePage {
   addStyleFile(path: string): Promise<void>;
-  blur(selector: string): Promise<void>;
   click(selector: string): Promise<void>;
   currentUrl(): string;
   elementExists(selector: string): Promise<boolean>;

@@ -50,6 +50,21 @@ export function shouldWaitForVisualCommit(mode: RunMode, viewportChanged: boolea
   return mode === 'simple' || viewportChanged || touched;
 }
 
+export function shouldRecoverPlaywrightWorker(options: {
+  aborted: boolean;
+  backendName: BrowserBackend['name'];
+  healthy: boolean;
+  maxRetryCount: number;
+  retryCount: number;
+}) {
+  return (
+    options.backendName === 'playwright' &&
+    !options.aborted &&
+    !options.healthy &&
+    options.retryCount < options.maxRetryCount
+  );
+}
+
 /**
  *
  * A worker to capture screenshot images.
@@ -64,7 +79,7 @@ export class CapturingBrowser extends BaseBrowser {
   private currentVariantKey: VariantKey = { isDefault: true, keys: [] };
   private touched = false;
   private resourceWatcher?: ResourceWatcher;
-  private navigator!: StoryNavigator;
+  private navigator?: StoryNavigator;
   private diagnosticLastPhase?: string;
   private diagnosticOutcome: 'captured' | 'failed' | 'retry' | 'skipped' = 'failed';
 
@@ -122,6 +137,7 @@ export class CapturingBrowser extends BaseBrowser {
   async close() {
     const resourceWatcher = this.resourceWatcher;
     this.resourceWatcher = undefined;
+    this.navigator = undefined;
     resourceWatcher?.dispose();
     await super.close();
   }
@@ -194,12 +210,12 @@ export class CapturingBrowser extends BaseBrowser {
     this._currentStory = story;
     this.debug('Set story', story.id);
     await this.measurePhase('navigation', async () => {
-      await this.navigator.navigate(story.id);
+      await this.navigator!.navigate(story.id);
       await this.addStyles();
     });
     if (this.mode === 'managed') {
       return this.measurePhase('preview-ready', () =>
-        this.navigator.waitForReady(this.opt.captureTimeout, this.opt.signal),
+        this.navigator!.waitForReady(this.opt.captureTimeout, this.opt.signal),
       );
     }
     return undefined;
@@ -364,6 +380,22 @@ export class CapturingBrowser extends BaseBrowser {
     }
   }
 
+  private async recoverPlaywrightWorker(error: unknown) {
+    const originalMessage = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+    this.opt.logger.warn(
+      `Playwright browser session became unusable. Restarting this capture worker. ${originalMessage}`,
+    );
+    await this.close();
+    this._currentStory = undefined;
+    this.viewport = undefined;
+    this.touched = false;
+    try {
+      await this.boot();
+    } catch (recoveryError) {
+      throw new AggregateError([error, recoveryError], 'Failed to restart the Playwright capture worker.');
+    }
+  }
+
   /**
    * Captures screenshot as a PNG image buffer from a story.
    *
@@ -397,6 +429,42 @@ export class CapturingBrowser extends BaseBrowser {
     this.currentRequestId = requestId;
     this.currentVariantKey = variantKey;
     this.currentStoryRetryCount = retryCount;
+    const attemptDiagnosticContext = { ...this.diagnosticContext(), storyId: story.id };
+
+    try {
+      return await this.screenshotAttempt(requestId, story, variantKey, logger, forwardConsoleLogs, trace, fileSystem);
+    } catch (error) {
+      const shouldRecover = shouldRecoverPlaywrightWorker({
+        aborted: this.opt.signal?.aborted ?? false,
+        backendName: this.backend.name,
+        healthy: this.isSessionHealthy(),
+        maxRetryCount: this.opt.captureMaxRetryCount,
+        retryCount: this.currentStoryRetryCount,
+      });
+      if (!shouldRecover) throw error;
+      await this.recoverPlaywrightWorker(error);
+      this.diagnosticOutcome = 'retry';
+      return { buffer: null, succeeded: false, variantKeysToPush: [], defaultVariantSuffix: '' };
+    } finally {
+      emitCaptureDiagnostic({
+        type: 'capture-complete',
+        durationMs: captureDiagnosticsEnabled() ? performance.now() - captureStartedAt : 0,
+        lastPhase: this.diagnosticLastPhase,
+        outcome: this.diagnosticOutcome,
+        ...attemptDiagnosticContext,
+      });
+    }
+  }
+
+  private async screenshotAttempt(
+    requestId: string,
+    story: Story,
+    variantKey: VariantKey,
+    logger: Logger,
+    forwardConsoleLogs: boolean,
+    trace: boolean,
+    fileSystem: FileSystem,
+  ): Promise<ScreenshotResult> {
     let emittedScreenshotOptions: ScreenshotOptions | undefined;
     this.resourceWatcher!.clear();
 
@@ -540,24 +608,14 @@ export class CapturingBrowser extends BaseBrowser {
     } finally {
       unsubscribeConsole();
 
-      try {
-        if (traceStarted) {
-          // Finish CPU trace.
-          await this.measurePhase('trace-flush', async () => {
-            const traceBuffer = await this.page.stopTrace();
+      if (traceStarted) {
+        // Finish CPU trace.
+        await this.measurePhase('trace-flush', async () => {
+          const traceBuffer = await this.page.stopTrace();
 
-            // Calculate the suffix and save the trace to the file.
-            const suffix = variantKey.isDefault && defaultVariantSuffix ? [defaultVariantSuffix] : variantKey.keys;
-            await fileSystem.saveTrace(story.kind, story.story, suffix, traceBuffer);
-          });
-        }
-      } finally {
-        emitCaptureDiagnostic({
-          type: 'capture-complete',
-          durationMs: captureDiagnosticsEnabled() ? performance.now() - captureStartedAt : 0,
-          lastPhase: this.diagnosticLastPhase,
-          outcome: this.diagnosticOutcome,
-          ...this.diagnosticContext(),
+          // Calculate the suffix and save the trace to the file.
+          const suffix = variantKey.isDefault && defaultVariantSuffix ? [defaultVariantSuffix] : variantKey.keys;
+          await fileSystem.saveTrace(story.kind, story.story, suffix, traceBuffer);
         });
       }
     }

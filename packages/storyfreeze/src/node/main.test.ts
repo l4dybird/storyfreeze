@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vite-plus/test';
 import { BaseBrowser } from './browser.js';
-import { CapturingBrowser, shouldWaitForVisualCommit } from './capturing-browser.js';
+import { CapturingBrowser, shouldRecoverPlaywrightWorker, shouldWaitForVisualCommit } from './capturing-browser.js';
 import { Logger } from './logger.js';
 import { ManagedStorybookConnection } from './managed-storybook-connection.js';
 import type { MainOptions } from './types.js';
 import { bootCaptureWorkers, disposeRuntimeResources, filterStories, main } from './main.js';
 import type { StoryDescriptor } from './story-index-provider.js';
+import { CAPTURE_DIAGNOSTIC_PREFIX } from './capture-diagnostics.js';
 
 function story(id: string, title: string, name: string): StoryDescriptor {
   return { id, title, name };
@@ -125,7 +126,13 @@ describe(bootCaptureWorkers, () => {
 });
 
 describe(CapturingBrowser, () => {
-  afterEach(() => vi.restoreAllMocks());
+  const originalCaptureDiagnostics = process.env.STORYFREEZE_CAPTURE_DIAGNOSTICS;
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    if (originalCaptureDiagnostics === undefined) delete process.env.STORYFREEZE_CAPTURE_DIAGNOSTICS;
+    else process.env.STORYFREEZE_CAPTURE_DIAGNOSTICS = originalCaptureDiagnostics;
+  });
 
   it('resets browser input without navigating after a touched capture', async () => {
     const browser = new CapturingBrowser(
@@ -218,6 +225,99 @@ describe(CapturingBrowser, () => {
     ).rejects.toThrow('trace start failed');
     expect(unsubscribe).toHaveBeenCalledTimes(1);
     expect(page.stopTrace).not.toHaveBeenCalled();
+  });
+
+  it('returns a retry after an unhealthy Playwright capture closes and reboots the worker', async () => {
+    process.env.STORYFREEZE_CAPTURE_DIAGNOSTICS = '1';
+    const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    const order: string[] = [];
+    const watcher = { clear: vi.fn(), dispose: vi.fn() };
+    const options = {
+      captureMaxRetryCount: 3,
+      delay: 0,
+      disableWaitAssets: false,
+      logger: new Logger('silent'),
+      viewports: ['800x600'],
+    } as MainOptions;
+    const browser = new CapturingBrowser(
+      { url: 'https://example.test' } as ManagedStorybookConnection,
+      options,
+      'managed',
+      0,
+      { name: 'playwright' } as never,
+    );
+    const page = {
+      subscribeConsole: vi.fn(() => {
+        throw new Error('page crashed');
+      }),
+    };
+    vi.spyOn(BaseBrowser.prototype, 'page', 'get').mockReturnValue(page as never);
+    vi.spyOn(BaseBrowser.prototype as never, 'isSessionHealthy').mockReturnValue(false);
+    Object.assign(browser, {
+      _currentStory: { id: 'fixture--default' },
+      navigator: {},
+      resourceWatcher: watcher,
+      touched: true,
+      viewport: { height: 600, width: 800 },
+    });
+    const close = browser.close.bind(browser);
+    vi.spyOn(browser, 'close').mockImplementation(async () => {
+      order.push('close');
+      await close();
+    });
+    vi.spyOn(browser, 'boot').mockImplementation(async () => {
+      order.push('boot');
+      return browser;
+    });
+
+    await expect(
+      browser.screenshot(
+        'fixture--default',
+        { id: 'fixture--default', kind: 'Fixture', story: 'Default', version: 'v5' },
+        { isDefault: true, keys: [] },
+        0,
+        options.logger,
+        false,
+        false,
+        { saveTrace: vi.fn() } as never,
+      ),
+    ).resolves.toEqual({ buffer: null, succeeded: false, variantKeysToPush: [], defaultVariantSuffix: '' });
+
+    expect(order).toEqual(['close', 'boot']);
+    expect(watcher.dispose).toHaveBeenCalledTimes(1);
+    expect(browser.currentStory).toBeUndefined();
+    expect(
+      browser as unknown as { navigator?: unknown; resourceWatcher?: unknown; touched: boolean; viewport?: unknown },
+    ).toMatchObject({ navigator: undefined, resourceWatcher: undefined, touched: false, viewport: undefined });
+    const completion = write.mock.calls
+      .map(([chunk]) => String(chunk))
+      .find(line => line.includes('"type":"capture-complete"'));
+    expect(completion).toBeDefined();
+    expect(JSON.parse(completion!.slice(CAPTURE_DIAGNOSTIC_PREFIX.length))).toMatchObject({
+      outcome: 'retry',
+      requestId: 'fixture--default',
+      storyId: 'fixture--default',
+      variantKey: [],
+      workerId: 0,
+    });
+  });
+});
+
+describe(shouldRecoverPlaywrightWorker, () => {
+  const recoverable = {
+    aborted: false,
+    backendName: 'playwright' as const,
+    healthy: false,
+    maxRetryCount: 3,
+    retryCount: 2,
+  };
+
+  it('only recovers an unhealthy Playwright worker below the retry limit', () => {
+    expect(shouldRecoverPlaywrightWorker(recoverable)).toBe(true);
+    expect(shouldRecoverPlaywrightWorker({ ...recoverable, backendName: 'puppeteer' })).toBe(false);
+    expect(shouldRecoverPlaywrightWorker({ ...recoverable, healthy: true })).toBe(false);
+    expect(shouldRecoverPlaywrightWorker({ ...recoverable, aborted: true })).toBe(false);
+    expect(shouldRecoverPlaywrightWorker({ ...recoverable, retryCount: 3 })).toBe(false);
   });
 });
 

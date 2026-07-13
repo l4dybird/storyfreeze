@@ -124,8 +124,12 @@ describe(MetricsWatcher, () => {
     const metrics: BrowserMetrics = { nodes: 1, recalcStyleCount: 2, layoutCount: 3 };
     const page = { readMetrics: vi.fn(async () => metrics) } as Pick<CapturePage, 'readMetrics'>;
 
-    await expect(new MetricsWatcher(page, 10).waitForStable()).resolves.toBe(3);
-    expect(page.readMetrics).toHaveBeenCalledTimes(4);
+    await expect(new MetricsWatcher(page, 10).waitForStable()).resolves.toMatchObject({
+      reason: 'stable',
+      sampleCount: 3,
+      stable: true,
+    });
+    expect(page.readMetrics).toHaveBeenCalledTimes(3);
   });
 
   it('returns the retry limit when metrics never become stable', async () => {
@@ -134,18 +138,60 @@ describe(MetricsWatcher, () => {
       readMetrics: vi.fn(async () => ({ nodes: value++, recalcStyleCount: 0, layoutCount: 0 })),
     };
 
-    await expect(new MetricsWatcher(page, 4).waitForStable()).resolves.toBe(4);
+    await expect(new MetricsWatcher(page, 4).waitForStable()).resolves.toMatchObject({
+      reason: 'sample-limit',
+      sampleCount: 4,
+      stable: false,
+    });
     expect(page.readMetrics).toHaveBeenCalledTimes(4);
   });
 
-  it('reports the number of metrics samples without changing the stability result', async () => {
-    const metrics: BrowserMetrics = { nodes: 1, recalcStyleCount: 2, layoutCount: 3 };
-    const page = { readMetrics: vi.fn(async () => metrics) } as Pick<CapturePage, 'readMetrics'>;
-    const watcher = new MetricsWatcher(page, 10);
+  it('includes the current sample and waits for the quiet window', async () => {
+    vi.useFakeTimers();
+    const values = [1, 1, 1, 2, 2, 2, 2, 2];
+    const page = {
+      readMetrics: vi.fn(async () => {
+        const value = values.shift() ?? 2;
+        return { nodes: value, recalcStyleCount: value, layoutCount: value };
+      }),
+    };
 
-    await expect(watcher.waitForStable()).resolves.toBe(3);
-    expect(watcher.sampleCount).toBe(4);
-    expect(watcher.samples).toEqual([metrics, metrics, metrics]);
+    try {
+      const waiting = new MetricsWatcher(page, 10).waitForStable({ quietMs: 50, timeoutMs: 1000 });
+      await vi.advanceTimersByTimeAsync(200);
+      const result = await waiting;
+      expect(result).toMatchObject({ reason: 'stable', stable: true });
+      expect(result.sampleCount).toBeGreaterThan(4);
+      expect(result.elapsedMs).toBeGreaterThanOrEqual(50);
+      expect(result.samples).toEqual([
+        { nodes: 2, recalcStyleCount: 2, layoutCount: 2 },
+        { nodes: 2, recalcStyleCount: 2, layoutCount: 2 },
+        { nodes: 2, recalcStyleCount: 2, layoutCount: 2 },
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not treat incomplete samples as stable and bounds a stalled metrics read', async () => {
+    const incomplete = { readMetrics: vi.fn(async () => ({ nodes: undefined })) };
+    await expect(new MetricsWatcher(incomplete, 3).waitForStable()).resolves.toMatchObject({
+      incompleteSampleCount: 3,
+      reason: 'sample-limit',
+      stable: false,
+    });
+
+    const stalled = { readMetrics: vi.fn(() => new Promise<BrowserMetrics>(() => {})) };
+    await expect(new MetricsWatcher(stalled, 100).waitForStable({ timeoutMs: 20 })).resolves.toMatchObject({
+      reason: 'wall-timeout',
+      sampleCount: 0,
+      stable: false,
+    });
+
+    const controller = new AbortController();
+    const aborted = new MetricsWatcher(stalled, 100).waitForStable({ timeoutMs: 1000, signal: controller.signal });
+    controller.abort(new Error('interrupted'));
+    await expect(aborted).rejects.toThrow('interrupted');
   });
 });
 

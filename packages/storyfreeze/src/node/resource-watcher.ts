@@ -1,21 +1,19 @@
 import type { BrowserRequest, CapturePage } from './browser-backend.js';
+import { raceAgainstTimeout } from './async-utils.js';
 
 // Derived from storycrawler. Copyright (c) 2019 reg-viz, MIT licensed.
 // https://github.com/reg-viz/storycap/tree/master/packages/storycrawler
 // The implementation is intentionally request-based so repeated requests to the
 // same URL cannot reuse an already-resolved completion promise.
 
-type InFlightRequest = {
-  resolved: Promise<void>;
-  resolve: () => void;
-};
-
 const ignoredResourceTypes = new Set(['media', 'texttrack', 'websocket', 'eventsource', 'other']);
 
 export class ResourceWatcher {
-  private inFlight = new Map<BrowserRequest, InFlightRequest>();
+  private inFlight = new Set<BrowserRequest>();
   private requestedAssetUrls = new Set<string>();
   private unsubscribe?: () => void;
+  private activityGeneration = 0;
+  private activityWaiters = new Set<() => void>();
 
   constructor(private page: Pick<CapturePage, 'subscribeRequests'>) {}
 
@@ -25,18 +23,22 @@ export class ResourceWatcher {
       return;
     }
 
-    let resolve = () => {};
-    const resolved = new Promise<void>(done => (resolve = done));
     this.requestedAssetUrls.add(url);
-    this.inFlight.set(request, { resolve, resolved });
+    this.inFlight.add(request);
+    this.notifyActivity();
   };
 
   private onRequestComplete = (request: BrowserRequest) => {
-    const metadata = this.inFlight.get(request);
-    if (!metadata) return;
-    this.inFlight.delete(request);
-    metadata.resolve();
+    if (!this.inFlight.delete(request)) return;
+    this.notifyActivity();
   };
+
+  private notifyActivity() {
+    this.activityGeneration += 1;
+    const waiters = [...this.activityWaiters];
+    this.activityWaiters.clear();
+    waiters.forEach(resolve => resolve());
+  }
 
   init() {
     this.unsubscribe = this.page.subscribeRequests({
@@ -53,9 +55,9 @@ export class ResourceWatcher {
   }
 
   clear() {
-    this.inFlight.forEach(metadata => metadata.resolve());
     this.inFlight.clear();
     this.requestedAssetUrls.clear();
+    this.notifyActivity();
   }
 
   getRequestedUrls() {
@@ -64,7 +66,7 @@ export class ResourceWatcher {
 
   getDiagnosticSnapshot() {
     return {
-      pending: [...this.inFlight.keys()].map(request => ({
+      pending: [...this.inFlight].map(request => ({
         method: request.method,
         resourceType: request.resourceType,
         url: request.url,
@@ -73,11 +75,56 @@ export class ResourceWatcher {
     };
   }
 
-  async waitForRequestsComplete() {
-    const urls = this.getRequestedUrls();
-    while (this.inFlight.size) {
-      await Promise.all([...this.inFlight.values()].map(metadata => metadata.resolved));
+  private async waitForActivity(timeoutMs: number, signal?: AbortSignal) {
+    let resolveActivity = () => {};
+    const activity = new Promise<void>(resolve => {
+      resolveActivity = resolve;
+      this.activityWaiters.add(resolve);
+    });
+    try {
+      return await raceAgainstTimeout(activity, timeoutMs, signal);
+    } finally {
+      this.activityWaiters.delete(resolveActivity);
     }
-    return urls;
+  }
+
+  async waitForRequestsComplete(options: { quietMs?: number; timeoutMs?: number; signal?: AbortSignal } = {}): Promise<{
+    didTimeout: boolean;
+    elapsedMs: number;
+    pending: ReturnType<ResourceWatcher['getDiagnosticSnapshot']>['pending'];
+    requestedUrls: string[];
+  }> {
+    const quietMs = options.quietMs ?? 0;
+    const timeoutMs = options.timeoutMs ?? Number.POSITIVE_INFINITY;
+    const startedAt = Date.now();
+    const deadline = startedAt + timeoutMs;
+    let quietStartedAt: number | undefined;
+    let quietGeneration = -1;
+
+    const result = (didTimeout: boolean) => ({
+      didTimeout,
+      elapsedMs: Date.now() - startedAt,
+      pending: this.getDiagnosticSnapshot().pending,
+      requestedUrls: this.getRequestedUrls(),
+    });
+
+    while (true) {
+      const now = Date.now();
+      if (this.inFlight.size === 0) {
+        if (quietStartedAt === undefined || quietGeneration !== this.activityGeneration) {
+          quietStartedAt = now;
+          quietGeneration = this.activityGeneration;
+        }
+        const quietRemaining = quietMs - (now - quietStartedAt);
+        if (quietRemaining <= 0) return result(false);
+        if (now >= deadline) return result(true);
+        await this.waitForActivity(Math.min(quietRemaining, deadline - now), options.signal);
+      } else {
+        quietStartedAt = undefined;
+        if (now >= deadline) return result(true);
+        const activity = await this.waitForActivity(deadline - now, options.signal);
+        if (activity.timedOut) return result(true);
+      }
+    }
   }
 }

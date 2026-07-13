@@ -301,23 +301,36 @@ export class CapturingBrowser extends BaseBrowser {
     if (!screenshotOptions.waitAssets && !screenshotOptions.waitImages) return;
     const before = this.resourceWatcher!.getDiagnosticSnapshot();
     this.debug('Wait for requested resources resolved', this.resourceWatcher!.getRequestedUrls());
-    const urls = await this.resourceWatcher!.waitForRequestsComplete();
+    const result = await this.resourceWatcher!.waitForRequestsComplete({
+      quietMs: 100,
+      timeoutMs: 3000,
+      signal: this.opt.signal,
+    });
+    if (result.didTimeout) {
+      this.opt.logger.warn(
+        `Resources did not settle within 3000 msec. ${this.opt.logger.color.yellow(JSON.stringify(this.currentStory))}`,
+      );
+    }
     emitCaptureDiagnostic({
       type: 'resource-summary',
       before,
       after: this.resourceWatcher!.getDiagnosticSnapshot(),
-      requestedUrlCount: urls.length,
+      didTimeout: result.didTimeout,
+      elapsedMs: result.elapsedMs,
+      pending: result.pending,
+      quietMs: 100,
+      requestedUrlCount: result.requestedUrls.length,
       ...this.diagnosticContext(),
     });
   }
 
   private async waitBrowserMetricsStable(phase: 'preEmit' | 'postEmit') {
     const mw = new MetricsWatcher(this.page, this.opt.metricsWatchRetryCount);
-    const checkCountUntillStable = await mw.waitForStable();
-    this.debug(`[${phase}] Browser metrics got stable in ${checkCountUntillStable} times checks.`);
-    if (checkCountUntillStable >= this.opt.metricsWatchRetryCount) {
+    const result = await mw.waitForStable({ quietMs: 50, timeoutMs: 2000, signal: this.opt.signal });
+    this.debug(`[${phase}] Browser metrics wait ended after ${result.sampleCount} checks (${result.reason}).`);
+    if (!result.stable) {
       this.opt.logger.warn(
-        `Metrics is not stable while ${this.opt.metricsWatchRetryCount} times. ${this.opt.logger.color.yellow(
+        `Metrics did not stabilize (${result.reason}) after ${result.sampleCount} checks. ${this.opt.logger.color.yellow(
           JSON.stringify(this.currentStory),
         )}`,
       );
@@ -325,9 +338,14 @@ export class CapturingBrowser extends BaseBrowser {
     emitCaptureDiagnostic({
       type: 'metrics-summary',
       phase,
-      sampleCount: mw.sampleCount,
-      samples: mw.samples,
-      stable: checkCountUntillStable < this.opt.metricsWatchRetryCount,
+      elapsedMs: result.elapsedMs,
+      incompleteSampleCount: result.incompleteSampleCount,
+      quietMs: 50,
+      reason: result.reason,
+      sampleCount: result.sampleCount,
+      samples: result.samples,
+      stable: result.stable,
+      didTimeout: result.reason === 'wall-timeout',
       ...this.diagnosticContext(),
     });
   }

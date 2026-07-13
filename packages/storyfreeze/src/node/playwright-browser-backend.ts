@@ -396,6 +396,7 @@ class PlaywrightBrowserInstance implements BrowserInstance {
     try {
       const page = await context.newPage();
       const cdp = await context.newCDPSession(page);
+      await cdp.send('Performance.enable', { timeDomain: 'threadTicks' });
       return new PlaywrightBrowserSession(context, page, cdp);
     } catch (error) {
       await context.close().catch(() => {});

@@ -31,7 +31,7 @@ PR-530 adds the opt-in mode without a migration guide because existing commands 
 
 ## Recorded default decision
 
-The balanced [browser isolation aggregate](../../benchmarks/browser-isolation-record.json) recorded four `parallel=4` dispatches at `360108e`, two per starting isolation, with 40 measured runs per mode. Every correctness gate passed: there were no capture failures, retries, timeouts, crashes, PNG differences, or three-second capture tails, and every context run used one browser root.
+The initial balanced aggregate recorded four `parallel=4` dispatches at `360108e`, two per starting isolation, with 40 measured runs per mode. Every correctness gate passed: there were no capture failures, retries, timeouts, crashes, PNG differences, or three-second capture tails, and every context run used one browser root.
 
 Context isolation reduced median peak process-tree RSS from 3,655,761,920 to 1,607,536,640 bytes (ratio 0.440) and the Chromium process peak from 32 to 14. It did not meet process parity: wall p50 was 5,232 versus 5,223 ms (ratio 1.002), wall p95 was 5,402 versus 5,351 ms (ratio 1.010), and capture-request p95 was 1,966 versus 1,503 ms (ratio 1.308).
 
@@ -42,6 +42,14 @@ The aggregate acceptance result is therefore false. `process` remains the defaul
 Phase analysis of the rejected aggregate identified context recreation during mobile and desktop viewport transitions as the primary capture-request regression. A candidate at `decc3a7` retained the worker context and changed Chromium emulation on the existing page. Two balanced `parallel=4` PR-profile dispatches, one starting with each isolation mode, passed every correctness gate and reduced the combined context/process capture-request p95 ratio from 1.308 to 1.043. The combined wall p50 and p95 ratios were 0.927 and 0.915, peak RSS was 0.463, and sampled CPU was 0.852. Context mode reached 11–12 Chromium processes, compared with 32 for process mode in the same dispatches and 14 for context mode in the prior record.
 
 These six measured runs per isolation are candidate evidence, not a replacement for the tracked 40-run aggregate. The default remains `process` until the same optimized behavior produces a new balanced record that satisfies every existing threshold.
+
+### Post-optimization balanced record
+
+The updated [browser isolation aggregate](../../benchmarks/browser-isolation-record.json) recorded the merged dynamic-emulation and zero-viewport-delay behavior at `d8ebef4`. Four balanced `parallel=4` dispatches produced 40 measured runs and 360 capture-request samples per isolation under the same Node.js, Storybook, Playwright, Chromium, runner image, fixture, and launch options.
+
+Every correctness and topology gate passed. Context isolation reduced wall p50 from 4,656 to 4,288 ms (ratio 0.921), wall p95 from 4,848 to 4,450 ms (ratio 0.918), median peak process-tree RSS from 3,652,808,704 to 1,680,891,904 bytes (ratio 0.460), sampled CPU time from 9,060 to 7,840 ms (ratio 0.865), and the Chromium process peak from 32 to 14.
+
+Capture-request p95 improved substantially from the initial record but remained 1,334 versus 1,243 ms (ratio 1.073). This exceeds the 1.05 threshold by 2.3 percentage points, so the aggregate acceptance result remains false. `process` remains the default and the conditional context-default change is not made. Context isolation remains available as an explicit Playwright-only optimization.
 
 ## Consequences
 

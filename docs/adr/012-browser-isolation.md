@@ -29,6 +29,14 @@ Process mode remains the default until repeatable process-parity benchmarks show
 
 PR-530 adds the opt-in mode without a migration guide because existing commands retain their process-isolated behavior.
 
+## Recorded default decision
+
+The balanced [browser isolation aggregate](../../benchmarks/browser-isolation-record.json) recorded four `parallel=4` dispatches at `360108e`, two per starting isolation, with 40 measured runs per mode. Every correctness gate passed: there were no capture failures, retries, timeouts, crashes, PNG differences, or three-second capture tails, and every context run used one browser root.
+
+Context isolation reduced median peak process-tree RSS from 3,655,761,920 to 1,607,536,640 bytes (ratio 0.440) and the Chromium process peak from 32 to 14. It did not meet process parity: wall p50 was 5,232 versus 5,223 ms (ratio 1.002), wall p95 was 5,402 versus 5,351 ms (ratio 1.010), and capture-request p95 was 1,966 versus 1,503 ms (ratio 1.308).
+
+The aggregate acceptance result is therefore false. `process` remains the default, `context` remains an explicit Playwright-only optimization, and no migration step is required. A future default proposal must produce a new balanced record that meets every existing threshold; the memory saving alone is insufficient to reverse this decision.
+
 ## Consequences
 
 Users can evaluate context sharing explicitly without changing existing capture behavior. Puppeteer remains a process-only fallback. Trace output keeps its established Chromium CPU trace JSON format and parallelism, at the cost of forfeiting context-mode process consolidation for trace-enabled runs.
@@ -38,4 +46,5 @@ The existing managed Storybook E2E case exercises Playwright context isolation w
 ## References
 
 - [ADR-011: Chromium CPU trace and parallelism](011-cpu-trace-parallelism.md)
+- [Browser isolation aggregate](../../benchmarks/browser-isolation-record.json)
 - [Playwright BrowserContext documentation](https://playwright.dev/docs/api/class-browsercontext)

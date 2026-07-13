@@ -1,11 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vite-plus/test';
 import { BaseBrowser } from './browser.js';
-import {
-  CapturingBrowser,
-  emulationProfileKey,
-  shouldRecoverPlaywrightWorker,
-  shouldWaitForVisualCommit,
-} from './capturing-browser.js';
+import { CapturingBrowser, shouldRecoverPlaywrightWorker, shouldWaitForVisualCommit } from './capturing-browser.js';
 import { Logger } from './logger.js';
 import { ManagedStorybookConnection } from './managed-storybook-connection.js';
 import type { MainOptions } from './types.js';
@@ -190,64 +185,94 @@ describe(CapturingBrowser, () => {
     expect(page.goto).not.toHaveBeenCalled();
   });
 
-  it('recreates a Playwright context only when the emulation profile changes', async () => {
-    expect(emulationProfileKey({ width: 800, height: 600 })).toBe(emulationProfileKey({ width: 1200, height: 900 }));
-    expect(emulationProfileKey({ width: 800, height: 600 })).not.toBe(
-      emulationProfileKey({ width: 800, height: 600, deviceScaleFactor: 2 }),
-    );
+  it.each(['context', 'process'] as const)(
+    'applies a dynamic emulation profile without replacing the %s worker session',
+    async browserIsolation => {
+      const order: string[] = [];
+      const navigate = vi.fn(async () => {
+        order.push('navigate');
+      });
+      const waitForReady = vi.fn(async () => {
+        order.push('preview-ready');
+        return {};
+      });
+      const options = {
+        browserIsolation,
+        delay: 0,
+        disableWaitAssets: false,
+        logger: new Logger('silent'),
+        reloadAfterChangeViewport: false,
+        viewportDelay: 0,
+        viewports: ['800x600'],
+      } as MainOptions;
+      const browser = new CapturingBrowser(
+        { url: 'https://example.test' } as ManagedStorybookConnection,
+        options,
+        'managed',
+        0,
+        { name: 'playwright' } as never,
+      );
+      const page = {
+        addStyleFile: vi.fn(async () => {}),
+        goto: vi.fn(async () => {
+          order.push('about:blank');
+        }),
+        setViewport: vi.fn(async () => {
+          order.push('setViewport');
+        }),
+      };
+      vi.spyOn(BaseBrowser.prototype, 'page', 'get').mockReturnValue(page as never);
+      Object.assign(browser, {
+        _currentStory: { id: 'fixture--default' },
+        navigator: {
+          navigate,
+          waitForReady,
+        },
+        viewport: { height: 600, width: 800 },
+      });
+      const close = vi.spyOn(browser, 'close').mockResolvedValue(undefined);
+      const boot = vi.spyOn(browser, 'boot').mockResolvedValue(browser);
+      const setViewport = (
+        browser as unknown as {
+          setViewport(options: {
+            viewport: {
+              width: number;
+              height: number;
+              deviceScaleFactor: number;
+              hasTouch: boolean;
+              isMobile: boolean;
+            };
+          }): Promise<boolean>;
+        }
+      ).setViewport.bind(browser);
 
-    const options = {
-      browserIsolation: 'context',
-      delay: 0,
-      disableWaitAssets: false,
-      logger: new Logger('silent'),
-      reloadAfterChangeViewport: false,
-      viewportDelay: 0,
-      viewports: ['800x600'],
-    } as MainOptions;
-    const browser = new CapturingBrowser(
-      { url: 'https://example.test' } as ManagedStorybookConnection,
-      options,
-      'managed',
-      0,
-      { name: 'playwright' } as never,
-    );
-    const page = {
-      addStyleFile: vi.fn(async () => {}),
-      goto: vi.fn(async () => {}),
-      setViewport: vi.fn(async () => {}),
-    };
-    vi.spyOn(BaseBrowser.prototype, 'page', 'get').mockReturnValue(page as never);
-    Object.assign(browser, {
-      _currentStory: { id: 'fixture--default' },
-      navigator: { navigate: vi.fn(async () => {}), waitForReady: vi.fn(async () => ({})) },
-      viewport: { height: 600, width: 800 },
-    });
-    const close = vi.spyOn(browser, 'close').mockResolvedValue(undefined);
-    const boot = vi.spyOn(browser, 'boot').mockResolvedValue(browser);
-    const setViewport = (
-      browser as unknown as {
-        setViewport(
-          options: {
-            viewport: { width: number; height: number; deviceScaleFactor: number };
+      await expect(
+        setViewport({
+          viewport: {
+            width: 375,
+            height: 667,
+            deviceScaleFactor: 2,
+            hasTouch: true,
+            isMobile: true,
           },
-          onPageRecreated?: () => void,
-        ): Promise<boolean>;
-      }
-    ).setViewport.bind(browser);
-    const onPageRecreated = vi.fn();
+        }),
+      ).resolves.toBe(true);
 
-    await expect(
-      setViewport({ viewport: { width: 800, height: 600, deviceScaleFactor: 2 } }, onPageRecreated),
-    ).resolves.toBe(true);
-
-    expect(close).toHaveBeenCalledTimes(1);
-    expect(boot).toHaveBeenCalledWith({
-      viewport: { width: 800, height: 600, deviceScaleFactor: 2 },
-    });
-    expect(onPageRecreated).toHaveBeenCalledTimes(1);
-    expect(page.setViewport).toHaveBeenCalledWith({ width: 800, height: 600, deviceScaleFactor: 2 });
-  });
+      expect(close).not.toHaveBeenCalled();
+      expect(boot).not.toHaveBeenCalled();
+      expect(page.goto).toHaveBeenCalledWith('about:blank', { waitUntil: 'domcontentloaded' });
+      expect(page.setViewport).toHaveBeenCalledWith({
+        width: 375,
+        height: 667,
+        deviceScaleFactor: 2,
+        hasTouch: true,
+        isMobile: true,
+      });
+      expect(navigate).toHaveBeenCalledWith('fixture--default');
+      expect(waitForReady).toHaveBeenCalledTimes(1);
+      expect(order).toEqual(['about:blank', 'setViewport', 'navigate', 'preview-ready']);
+    },
+  );
 
   it('closes a launched browser when post-launch setup fails', async () => {
     const options = {
@@ -302,67 +327,6 @@ describe(CapturingBrowser, () => {
     ).rejects.toThrow('trace start failed');
     expect(unsubscribe).toHaveBeenCalledTimes(1);
     expect(page.stopTrace).not.toHaveBeenCalled();
-  });
-
-  it('rebinds the console listener when viewport setup replaces the context page', async () => {
-    const options = {
-      browserIsolation: 'context',
-      captureMaxRetryCount: 1,
-      captureTimeout: 5000,
-      delay: 0,
-      disableCssAnimation: false,
-      disableWaitAssets: false,
-      logger: new Logger('silent'),
-      metricsWatchRetryCount: 3,
-      viewports: ['800x600'],
-    } as MainOptions;
-    const browser = new CapturingBrowser(
-      { url: 'https://example.test' } as ManagedStorybookConnection,
-      options,
-      'managed',
-      0,
-      { name: 'playwright' } as never,
-    );
-    const unsubscribeOldPage = vi.fn();
-    const unsubscribeNewPage = vi.fn();
-    const page = {
-      subscribeConsole: vi.fn().mockReturnValueOnce(unsubscribeOldPage).mockReturnValueOnce(unsubscribeNewPage),
-    };
-    vi.spyOn(BaseBrowser.prototype, 'page', 'get').mockReturnValue(page as never);
-    Object.assign(browser, {
-      navigator: {
-        navigate: vi.fn(async () => {}),
-        waitForReady: vi.fn(async () => ({})),
-      },
-      resourceWatcher: { clear: vi.fn() },
-    });
-    const setViewport = vi.spyOn(
-      browser as unknown as {
-        setViewport(options: unknown, onPageRecreated?: () => void): Promise<boolean>;
-      },
-      'setViewport',
-    );
-    setViewport.mockImplementation(async (_viewport, onPageRecreated) => {
-      onPageRecreated?.();
-      return false;
-    });
-
-    await expect(
-      browser.screenshot(
-        'fixture--default',
-        { id: 'fixture--default', kind: 'Fixture', story: 'Default', version: 'v5' },
-        { isDefault: true, keys: [] },
-        0,
-        options.logger,
-        true,
-        false,
-        { saveTrace: vi.fn() } as never,
-      ),
-    ).resolves.toEqual({ buffer: null, succeeded: true, variantKeysToPush: [], defaultVariantSuffix: '' });
-
-    expect(page.subscribeConsole).toHaveBeenCalledTimes(2);
-    expect(unsubscribeOldPage).toHaveBeenCalledTimes(1);
-    expect(unsubscribeNewPage).toHaveBeenCalledTimes(1);
   });
 
   it('returns a retry after an unhealthy Playwright capture closes and reboots the worker', async () => {

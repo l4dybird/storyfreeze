@@ -66,14 +66,6 @@ export function shouldRecoverPlaywrightWorker(options: {
   );
 }
 
-export function emulationProfileKey(viewport: Viewport) {
-  return JSON.stringify({
-    deviceScaleFactor: viewport.deviceScaleFactor ?? 1,
-    hasTouch: viewport.hasTouch ?? false,
-    isMobile: viewport.isMobile ?? false,
-  });
-}
-
 /**
  *
  * A worker to capture screenshot images.
@@ -91,7 +83,6 @@ export class CapturingBrowser extends BaseBrowser {
   private navigator?: StoryNavigator;
   private diagnosticLastPhase?: string;
   private diagnosticOutcome: 'captured' | 'failed' | 'retry' | 'skipped' = 'failed';
-  private currentEmulationProfile = emulationProfileKey({ width: 800, height: 600 });
 
   /**
    *
@@ -129,7 +120,6 @@ export class CapturingBrowser extends BaseBrowser {
    **/
   async boot(sessionOptions?: BrowserSessionOptions) {
     await super.boot(sessionOptions);
-    this.currentEmulationProfile = emulationProfileKey(sessionOptions?.viewport ?? { width: 800, height: 600 });
     try {
       await this.expose();
       this.resourceWatcher = new ResourceWatcher(this.page);
@@ -233,7 +223,7 @@ export class CapturingBrowser extends BaseBrowser {
     return undefined;
   }
 
-  private async setViewport(opt: StrictScreenshotOptions, onPageRecreated?: () => void) {
+  private async setViewport(opt: StrictScreenshotOptions) {
     if (!this.currentStory) {
       throw new InvalidCurrentStoryStateError();
     }
@@ -267,22 +257,6 @@ export class CapturingBrowser extends BaseBrowser {
       nextViewport = opt.viewport;
     }
 
-    const nextEmulationProfile = emulationProfileKey(nextViewport);
-    let contextRecreated = false;
-    if (
-      this.opt.browserIsolation === 'context' &&
-      this.backend.name === 'playwright' &&
-      nextEmulationProfile !== this.currentEmulationProfile
-    ) {
-      this.debug('Recreate browser context for emulation profile', nextEmulationProfile);
-      await this.close();
-      await this.boot({ viewport: nextViewport });
-      onPageRecreated?.();
-      this.viewport = undefined;
-      this.touched = false;
-      contextRecreated = true;
-    }
-
     // Sometimes, `page.screenshot` is completed before applying viewport unfortunately.
     // So we compare the current viewport with the next viewport and wait for `opt.viewportDelay` time if they are different.
     if (!this.viewport || JSON.stringify(this.viewport) !== JSON.stringify(nextViewport)) {
@@ -291,13 +265,13 @@ export class CapturingBrowser extends BaseBrowser {
       // See also https://github.com/puppeteer/puppeteer/blob/main/docs/api/puppeteer.viewport.md
       const willBeReloaded =
         nextViewport.isMobile !== this.viewport?.isMobile || nextViewport.hasTouch !== this.viewport?.hasTouch;
-      if (willBeReloaded && !contextRecreated) {
+      if (willBeReloaded) {
         // Avoid racing Puppeteer's implicit reload against Storybook's preview lifecycle.
         await this.page.goto('about:blank', { waitUntil: 'domcontentloaded' });
       }
       await this.page.setViewport(nextViewport);
       this.viewport = nextViewport;
-      if (contextRecreated || willBeReloaded || this.opt.reloadAfterChangeViewport) {
+      if (willBeReloaded || this.opt.reloadAfterChangeViewport) {
         // Start a fresh owned request after the viewport has settled.
         await this.setCurrentStory(this.currentStory);
         await sleep(this.opt.viewportDelay);
@@ -523,13 +497,7 @@ export class CapturingBrowser extends BaseBrowser {
       }
     }
 
-    let unsubscribeConsole = this.page.subscribeConsole(onConsoleLog);
-    const rebindConsole = () => {
-      const unsubscribePreviousPage = unsubscribeConsole;
-      unsubscribeConsole = () => {};
-      unsubscribePreviousPage();
-      unsubscribeConsole = this.page.subscribeConsole(onConsoleLog);
-    };
+    const unsubscribeConsole = this.page.subscribeConsole(onConsoleLog);
     let traceStarted = false;
     // Capture this outside so it can be used for the filePath generation for the trace.
     let defaultVariantSuffix: string | undefined;
@@ -588,9 +556,7 @@ export class CapturingBrowser extends BaseBrowser {
 
       // Change browser's viewport if needed.
       const previousViewport = JSON.stringify(this.viewport);
-      const vpChanged = await this.measurePhase('viewport', () =>
-        this.setViewport(mergedScreenshotOptions, rebindConsole),
-      );
+      const vpChanged = await this.measurePhase('viewport', () => this.setViewport(mergedScreenshotOptions));
       // Skip to capture if the viewport option is invalid.
       if (!vpChanged) {
         this.diagnosticOutcome = 'skipped';

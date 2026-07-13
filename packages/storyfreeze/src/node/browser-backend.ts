@@ -93,6 +93,7 @@ export interface CapturePage {
 export interface BrowserSession {
   readonly page: CapturePage;
   close(): Promise<void>;
+  isHealthy(): boolean;
 }
 
 export interface BrowserInstance {

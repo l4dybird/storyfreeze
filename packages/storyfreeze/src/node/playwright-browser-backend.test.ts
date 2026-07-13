@@ -12,6 +12,10 @@ class FakePage extends EventEmitter {
     hover: vi.fn(async () => {}),
   };
   readonly $ = vi.fn(async () => this.element);
+
+  isClosed() {
+    return false;
+  }
 }
 
 class FakeCdp extends EventEmitter {
@@ -235,6 +239,7 @@ describe(PlaywrightCapturePage, () => {
     rawCdp.send.mockRejectedValueOnce(new Error('trace end failed'));
     await expect(page.stopTrace()).rejects.toThrow('trace end failed');
     expect(rawCdp.listenerCount('Tracing.tracingComplete')).toBe(0);
+    expect(page.isHealthy()).toBe(false);
     await expect(page.startTrace()).rejects.toThrow('Close the browser');
   });
 
@@ -254,25 +259,66 @@ describe(PlaywrightCapturePage, () => {
     expect(rawCdp.send).toHaveBeenCalledWith('IO.close', { handle: 'trace-stream' });
     await expect(page.startTrace()).rejects.toThrow('Close the browser');
   });
+
+  it('rejects a trace promptly when the CDP session closes', async () => {
+    const rawCdp = new FakeCdp();
+    rawCdp.send.mockImplementation(async method => {
+      if (method === 'Tracing.end') queueMicrotask(() => rawCdp.emit('close'));
+      return {};
+    });
+    const page = new PlaywrightCapturePage({} as Page, rawCdp as unknown as CDPSession);
+
+    await page.startTrace();
+    await expect(page.stopTrace()).rejects.toThrow('CDP session closed');
+    expect(page.isHealthy()).toBe(false);
+    expect(rawCdp.listenerCount('Tracing.tracingComplete')).toBe(0);
+    expect(rawCdp.listenerCount('close')).toBe(0);
+  });
+
+  it('consumes the trace completion rejection when Tracing.end also fails', async () => {
+    const rawCdp = new FakeCdp();
+    let rejectTraceEnd = (_error: Error) => {};
+    rawCdp.send.mockImplementation(method =>
+      method === 'Tracing.end'
+        ? new Promise((_, reject) => {
+            rejectTraceEnd = reject;
+          })
+        : Promise.resolve({}),
+    );
+    const page = new PlaywrightCapturePage({} as Page, rawCdp as unknown as CDPSession);
+
+    await page.startTrace();
+    const stopping = page.stopTrace();
+    await Promise.resolve();
+    rawCdp.emit('close');
+    rejectTraceEnd(new Error('trace end failed'));
+
+    await expect(stopping).rejects.toThrow('trace end failed');
+    expect(page.isHealthy()).toBe(false);
+    expect(rawCdp.listenerCount('Tracing.tracingComplete')).toBe(0);
+    expect(rawCdp.listenerCount('close')).toBe(0);
+  });
 });
 
 describe(PlaywrightBrowserBackend, () => {
   it('prefers the managed Chromium, maps devices, and creates one context per session', async () => {
-    const page = {} as Page;
+    const rawPage = new FakePage();
+    const page = rawPage as unknown as Page;
     const rawCdp = new FakeCdp();
     rawCdp.send.mockRejectedValueOnce(new Error('timeDomain is unsupported'));
     const cdp = rawCdp as unknown as CDPSession;
     const closeContext = vi.fn(async () => {});
-    const context = {
+    const context = Object.assign(new EventEmitter(), {
       close: closeContext,
       newCDPSession: vi.fn(async () => cdp),
       newPage: vi.fn(async () => page),
-    } as unknown as BrowserContext;
+    }) as unknown as BrowserContext;
     const closeBrowser = vi.fn(async () => {});
-    const browser = {
+    const browser = Object.assign(new EventEmitter(), {
       close: closeBrowser,
+      isConnected: vi.fn(() => true),
       newContext: vi.fn(async () => context),
-    } as unknown as Browser;
+    }) as unknown as Browser;
     const launch = vi.fn(async () => browser);
     const findChrome = vi.fn(async () => ({ executablePath: null, type: null }) as const);
     const backend = new PlaywrightBrowserBackend({
@@ -284,6 +330,9 @@ describe(PlaywrightBrowserBackend, () => {
 
     const instance = await backend.launch({ chromiumChannel: '*' });
     const session = await instance.newSession();
+    expect(session.isHealthy()).toBe(true);
+    rawPage.emit('crash');
+    expect(session.isHealthy()).toBe(false);
     await session.close();
     await instance.close();
 

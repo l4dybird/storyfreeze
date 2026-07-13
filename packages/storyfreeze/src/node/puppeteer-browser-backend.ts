@@ -370,6 +370,10 @@ class PuppeteerBrowserSession implements BrowserSession {
   close() {
     return this.rawPage.close();
   }
+
+  isHealthy() {
+    return !this.rawPage.isClosed();
+  }
 }
 
 class PuppeteerBrowserInstance implements BrowserInstance {

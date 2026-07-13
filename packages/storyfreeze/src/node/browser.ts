@@ -38,6 +38,10 @@ export class BaseBrowser {
     return this._executablePath;
   }
 
+  protected isSessionHealthy() {
+    return this.session?.isHealthy() ?? false;
+  }
+
   protected getDeviceDescriptors() {
     return browserDeviceDescriptors;
   }

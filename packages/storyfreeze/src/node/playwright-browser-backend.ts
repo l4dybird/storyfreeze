@@ -82,6 +82,10 @@ export class PlaywrightCapturePage implements CapturePage {
   private traceState: 'idle' | 'starting' | 'active' | 'stopping' | 'failed' = 'idle';
   private viewport?: Viewport;
 
+  isHealthy() {
+    return this.traceState !== 'failed';
+  }
+
   constructor(
     private readonly rawPage: Page,
     rawCdp: CDPSession,
@@ -278,14 +282,19 @@ export class PlaywrightCapturePage implements CapturePage {
     this.traceState = 'stopping';
     let completedReceived = false;
     let resolveCompleted!: (result: { stream?: string }) => void;
-    const completed = new Promise<{ stream?: string }>(resolve => {
+    let rejectCompleted!: (error: Error) => void;
+    const completed = new Promise<{ stream?: string }>((resolve, reject) => {
       resolveCompleted = resolve;
+      rejectCompleted = reject;
     });
+    void completed.catch(() => {});
     const onCompleted = (payload: unknown) => {
       completedReceived = true;
       resolveCompleted(payload as { stream?: string });
     };
+    const onCdpClose = () => rejectCompleted(new Error('The Chromium CDP session closed while tracing.'));
     this.cdp.once('Tracing.tracingComplete', onCompleted);
+    this.cdp.once('close', onCdpClose);
     try {
       await this.cdp.send('Tracing.end');
       const { stream } = await completed;
@@ -314,6 +323,7 @@ export class PlaywrightCapturePage implements CapturePage {
       throw error;
     } finally {
       if (!completedReceived) this.cdp.off('Tracing.tracingComplete', onCompleted);
+      this.cdp.off('close', onCdpClose);
     }
   }
 
@@ -367,17 +377,30 @@ export class PlaywrightCapturePage implements CapturePage {
 
 class PlaywrightBrowserSession implements BrowserSession {
   readonly page: CapturePage;
+  private healthy = true;
+  private readonly capturePage: PlaywrightCapturePage;
 
   constructor(
     private readonly context: BrowserContext,
-    rawPage: Page,
+    private readonly rawPage: Page,
     cdp: CDPSession,
+    private readonly rawBrowser: Browser,
   ) {
-    this.page = new PlaywrightCapturePage(rawPage, cdp);
+    this.capturePage = new PlaywrightCapturePage(rawPage, cdp);
+    this.page = this.capturePage;
+    const markUnhealthy = () => (this.healthy = false);
+    rawPage.on('crash', markUnhealthy);
+    rawPage.on('close', markUnhealthy);
+    context.on('close', markUnhealthy);
+    cdp.on('close', markUnhealthy);
   }
 
   close() {
     return this.context.close();
+  }
+
+  isHealthy() {
+    return this.healthy && !this.rawPage.isClosed() && this.rawBrowser.isConnected() && this.capturePage.isHealthy();
   }
 }
 
@@ -401,7 +424,7 @@ class PlaywrightBrowserInstance implements BrowserInstance {
       } catch {
         await cdp.send('Performance.enable').catch(() => {});
       }
-      return new PlaywrightBrowserSession(context, page, cdp);
+      return new PlaywrightBrowserSession(context, page, cdp, this.rawBrowser);
     } catch (error) {
       await context.close().catch(() => {});
       throw error;

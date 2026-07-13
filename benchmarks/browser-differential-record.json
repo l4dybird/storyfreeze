@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
   "kind": "browser-differential-aggregate",
-  "recordedAt": "2026-07-12T16:47:30.193Z",
+  "recordedAt": "2026-07-13T01:43:11.470Z",
   "conditions": {
     "arch": "x64",
     "browserRevision": "1228",
@@ -26,270 +26,6 @@
     "stories": 2
   },
   "baseline": {
-    "sourceCommit": "2b644340d1d81152240053439d8f0398a38e7b93",
-    "sourceTree": "3bf5eb06a67ff7f7f7d30d9e8681ecdbd08dfa4d",
-    "workflowRuns": [
-      "https://github.com/l4dybird/storyfreeze/actions/runs/29200246806",
-      "https://github.com/l4dybird/storyfreeze/actions/runs/29200247853",
-      "https://github.com/l4dybird/storyfreeze/actions/runs/29200248879",
-      "https://github.com/l4dybird/storyfreeze/actions/runs/29200249802"
-    ],
-    "backends": {
-      "puppeteer": {
-        "browserCrashRate": 0,
-        "captureFailureRate": 0,
-        "captureTimeP50Ms": 1410,
-        "captureTimeP95Ms": 3783,
-        "cpuTimeP50Ms": 10340,
-        "idleTimeoutEventCount": 40,
-        "maxBrowserRootCount": 5,
-        "maxChromiumProcessCount": 45,
-        "measuredRuns": 40,
-        "peakTreeRssP50Bytes": 4950519808,
-        "phaseTimings": {
-          "interaction": {
-            "p50Ms": 3.370042999999896,
-            "p95Ms": 23.360883000000285,
-            "samples": 360
-          },
-          "metrics": {
-            "p50Ms": 51.59669299999996,
-            "p95Ms": 59.49850100000003,
-            "samples": 360
-          },
-          "navigation": {
-            "p50Ms": 166.94134099999974,
-            "p95Ms": 346.2460100000003,
-            "samples": 688
-          },
-          "node-idle": {
-            "p50Ms": 0.9803519999995842,
-            "p95Ms": 3001.249892,
-            "samples": 360
-          },
-          "preview-ready": {
-            "p50Ms": 239.15144899999996,
-            "p95Ms": 305.61756200000036,
-            "samples": 688
-          },
-          "reset": {
-            "p50Ms": 294.83618099999967,
-            "p95Ms": 399.3930419999997,
-            "samples": 360
-          },
-          "resource": {
-            "p50Ms": 0.2836040000001958,
-            "p95Ms": 0.5430810000002566,
-            "samples": 360
-          },
-          "screenshot": {
-            "p50Ms": 59.044974000000366,
-            "p95Ms": 99.08661399999983,
-            "samples": 360
-          },
-          "viewport": {
-            "p50Ms": 302.17556300000024,
-            "p95Ms": 947.8384809999998,
-            "samples": 360
-          }
-        },
-        "retryRate": 0,
-        "storyVariants": {
-          "compatibility-fixture--console-error?keys=": {
-            "coefficientOfVariation": 0.0425121053444582,
-            "p50Ms": 895,
-            "p95Ms": 931,
-            "samples": 40
-          },
-          "compatibility-fixture--console-error?keys=SMALL": {
-            "coefficientOfVariation": 0.07137298088690658,
-            "p50Ms": 1558,
-            "p95Ms": 1705,
-            "samples": 40
-          },
-          "compatibility-fixture--interactions?keys=": {
-            "coefficientOfVariation": 0.0443438457221193,
-            "p50Ms": 963,
-            "p95Ms": 1002,
-            "samples": 40
-          },
-          "compatibility-fixture--interactions?keys=LARGE,focused": {
-            "coefficientOfVariation": 0.07003989071148616,
-            "p50Ms": 1001,
-            "p95Ms": 1088,
-            "samples": 40
-          },
-          "compatibility-fixture--interactions?keys=LARGE,hovered": {
-            "coefficientOfVariation": 0.056494327598548374,
-            "p50Ms": 1439,
-            "p95Ms": 1509,
-            "samples": 40
-          },
-          "compatibility-fixture--interactions?keys=SMALL": {
-            "coefficientOfVariation": 0.4376960572707781,
-            "p50Ms": 468,
-            "p95Ms": 1230,
-            "samples": 40
-          },
-          "compatibility-fixture--interactions?keys=SMALL,focused": {
-            "coefficientOfVariation": 0.04984449021279423,
-            "p50Ms": 1584,
-            "p95Ms": 1713,
-            "samples": 40
-          },
-          "compatibility-fixture--interactions?keys=SMALL,hovered": {
-            "coefficientOfVariation": 0.058026654542546616,
-            "p50Ms": 1882,
-            "p95Ms": 2046,
-            "samples": 40
-          },
-          "compatibility-fixture--interactions?keys=clicked": {
-            "coefficientOfVariation": 0.062120780215774885,
-            "p50Ms": 3780,
-            "p95Ms": 4532,
-            "samples": 40
-          }
-        },
-        "threeSecondTailEventCount": 40,
-        "timeoutRate": 0,
-        "visualCommitEventCount": 0,
-        "visualCommitFallbackCount": 0,
-        "visualCommitTimeoutCount": 0,
-        "wallTimeP50Ms": 8355,
-        "wallTimeP95Ms": 8754
-      },
-      "playwright": {
-        "browserCrashRate": 0,
-        "captureFailureRate": 0,
-        "captureTimeP50Ms": 1313,
-        "captureTimeP95Ms": 4437,
-        "cpuTimeP50Ms": 9580,
-        "idleTimeoutEventCount": 77,
-        "maxBrowserRootCount": 4,
-        "maxChromiumProcessCount": 32,
-        "measuredRuns": 40,
-        "peakTreeRssP50Bytes": 3697979392,
-        "phaseTimings": {
-          "interaction": {
-            "p50Ms": 17.10875699999997,
-            "p95Ms": 66.09112699999969,
-            "samples": 360
-          },
-          "metrics": {
-            "p50Ms": 52.103063999999904,
-            "p95Ms": 61.31265300000041,
-            "samples": 360
-          },
-          "navigation": {
-            "p50Ms": 106.03021900000022,
-            "p95Ms": 340.72608200000013,
-            "samples": 754
-          },
-          "node-idle": {
-            "p50Ms": 1.516697000000022,
-            "p95Ms": 3001.7151409999988,
-            "samples": 360
-          },
-          "preview-ready": {
-            "p50Ms": 222.50426200000038,
-            "p95Ms": 299.82995200000005,
-            "samples": 754
-          },
-          "reset": {
-            "p50Ms": 293.7406779999992,
-            "p95Ms": 379.2830840000006,
-            "samples": 360
-          },
-          "resource": {
-            "p50Ms": 0.2807790000006207,
-            "p95Ms": 0.5327769999998964,
-            "samples": 360
-          },
-          "screenshot": {
-            "p50Ms": 44.68982099999994,
-            "p95Ms": 70.3080460000001,
-            "samples": 360
-          },
-          "viewport": {
-            "p50Ms": 585.1669549999997,
-            "p95Ms": 695.692924,
-            "samples": 360
-          }
-        },
-        "retryRate": 0,
-        "storyVariants": {
-          "compatibility-fixture--console-error?keys=": {
-            "coefficientOfVariation": 0.9137216375393213,
-            "p50Ms": 881,
-            "p95Ms": 921,
-            "samples": 40
-          },
-          "compatibility-fixture--console-error?keys=SMALL": {
-            "coefficientOfVariation": 0.6803545768938192,
-            "p50Ms": 1276,
-            "p95Ms": 1402,
-            "samples": 40
-          },
-          "compatibility-fixture--interactions?keys=": {
-            "coefficientOfVariation": 1.0551810292557342,
-            "p50Ms": 952,
-            "p95Ms": 982,
-            "samples": 40
-          },
-          "compatibility-fixture--interactions?keys=LARGE,focused": {
-            "coefficientOfVariation": 0.13294936529621473,
-            "p50Ms": 966,
-            "p95Ms": 1031,
-            "samples": 40
-          },
-          "compatibility-fixture--interactions?keys=LARGE,hovered": {
-            "coefficientOfVariation": 0.8545730957549239,
-            "p50Ms": 1442,
-            "p95Ms": 1580,
-            "samples": 40
-          },
-          "compatibility-fixture--interactions?keys=SMALL": {
-            "coefficientOfVariation": 0.16897166206690373,
-            "p50Ms": 998,
-            "p95Ms": 1054,
-            "samples": 40
-          },
-          "compatibility-fixture--interactions?keys=SMALL,focused": {
-            "coefficientOfVariation": 1.2509002003319762,
-            "p50Ms": 1407,
-            "p95Ms": 10444,
-            "samples": 40
-          },
-          "compatibility-fixture--interactions?keys=SMALL,hovered": {
-            "coefficientOfVariation": 0.06248666312071383,
-            "p50Ms": 1605,
-            "p95Ms": 1789,
-            "samples": 40
-          },
-          "compatibility-fixture--interactions?keys=clicked": {
-            "coefficientOfVariation": 0.4143403921299619,
-            "p50Ms": 4388,
-            "p95Ms": 4472,
-            "samples": 40
-          }
-        },
-        "threeSecondTailEventCount": 51,
-        "timeoutRate": 0,
-        "visualCommitEventCount": 0,
-        "visualCommitFallbackCount": 0,
-        "visualCommitTimeoutCount": 0,
-        "wallTimeP50Ms": 8868,
-        "wallTimeP95Ms": 17351
-      }
-    },
-    "playwrightToPuppeteerRatios": {
-      "cpuTimeP50": 0.9264990328820116,
-      "peakTreeRssP50": 0.7469881013351558,
-      "wallTimeP50": 1.0614003590664274,
-      "wallTimeP95": 1.9820653415581448
-    }
-  },
-  "candidate": {
     "sourceCommit": "ca470b718ecc849abd71c1ed541c43734c5dc233",
     "sourceTree": "6d32f9b8ab152b7ca069824f883f797de0264ab4",
     "workflowRuns": [
@@ -553,517 +289,273 @@
       "wallTimeP95": 0.9904746263754312
     }
   },
-  "diagnostics": {
+  "candidate": {
+    "sourceCommit": "804aae4ebc528053237cb465fb042d36e4b45a44",
+    "sourceTree": "f3a1f0a082bb03da8674ee81e9deeb52ba74c724",
     "workflowRuns": [
-      "https://github.com/l4dybird/storyfreeze/actions/runs/29200648435",
-      "https://github.com/l4dybird/storyfreeze/actions/runs/29200649199"
+      "https://github.com/l4dybird/storyfreeze/actions/runs/29217842014",
+      "https://github.com/l4dybird/storyfreeze/actions/runs/29217844245",
+      "https://github.com/l4dybird/storyfreeze/actions/runs/29217846326",
+      "https://github.com/l4dybird/storyfreeze/actions/runs/29217848556"
     ],
-    "results": [
-      {
-        "backends": {
-          "puppeteer": {
-            "browserCrashRate": 0,
-            "captureFailureRate": 0,
-            "captureTimeP50Ms": 1433,
-            "captureTimeP95Ms": 1489,
-            "cpuTimeP50Ms": 7750,
-            "idleTimeoutEventCount": 0,
-            "maxBrowserRootCount": 1,
-            "maxChromiumProcessCount": 12,
-            "measuredRuns": 3,
-            "peakTreeRssP50Bytes": 1667350528,
-            "phaseTimings": {
-              "interaction": {
-                "p50Ms": 3.1274630000007164,
-                "p95Ms": 20.377298000000337,
-                "samples": 27
-              },
-              "metrics": {
-                "p50Ms": 50.57481600000028,
-                "p95Ms": 51.06079799999998,
-                "samples": 27
-              },
-              "navigation": {
-                "p50Ms": 62.29587900000001,
-                "p95Ms": 147.90119900000002,
-                "samples": 63
-              },
-              "preview-ready": {
-                "p50Ms": 234.77138600000035,
-                "p95Ms": 262.34681400000045,
-                "samples": 63
-              },
-              "reset": {
-                "p50Ms": 299.81399599999986,
-                "p95Ms": 337.38459499999954,
-                "samples": 27
-              },
-              "resource": {
-                "p50Ms": 0.27409399999987727,
-                "p95Ms": 0.4788929999999709,
-                "samples": 27
-              },
-              "screenshot": {
-                "p50Ms": 50.92299700000012,
-                "p95Ms": 53.07030200000008,
-                "samples": 27
-              },
-              "viewport": {
-                "p50Ms": 728.9121540000015,
-                "p95Ms": 739.2156020000002,
-                "samples": 27
-              },
-              "visual-commit": {
-                "p50Ms": 15.860626000001503,
-                "p95Ms": 32.40451699999994,
-                "samples": 24
-              }
-            },
-            "retryRate": 0,
-            "storyVariants": {
-              "compatibility-fixture--console-error?keys=": {
-                "coefficientOfVariation": 0.0024372487072349767,
-                "p50Ms": 775,
-                "p95Ms": 775,
-                "samples": 3
-              },
-              "compatibility-fixture--console-error?keys=SMALL": {
-                "coefficientOfVariation": 0.007148973754509981,
-                "p50Ms": 1019,
-                "p95Ms": 1034,
-                "samples": 3
-              },
-              "compatibility-fixture--interactions?keys=": {
-                "coefficientOfVariation": 0.0021486752129677,
-                "p50Ms": 380,
-                "p95Ms": 381,
-                "samples": 3
-              },
-              "compatibility-fixture--interactions?keys=LARGE,focused": {
-                "coefficientOfVariation": 0.011238769180009994,
-                "p50Ms": 1453,
-                "p95Ms": 1473,
-                "samples": 3
-              },
-              "compatibility-fixture--interactions?keys=LARGE,hovered": {
-                "coefficientOfVariation": 0.007337096927765984,
-                "p50Ms": 1472,
-                "p95Ms": 1481,
-                "samples": 3
-              },
-              "compatibility-fixture--interactions?keys=SMALL": {
-                "coefficientOfVariation": 0.007194430469541275,
-                "p50Ms": 1115,
-                "p95Ms": 1131,
-                "samples": 3
-              },
-              "compatibility-fixture--interactions?keys=SMALL,focused": {
-                "coefficientOfVariation": 0.006423052007002129,
-                "p50Ms": 1449,
-                "p95Ms": 1455,
-                "samples": 3
-              },
-              "compatibility-fixture--interactions?keys=SMALL,hovered": {
-                "coefficientOfVariation": 0.02304651275667335,
-                "p50Ms": 1464,
-                "p95Ms": 1527,
-                "samples": 3
-              },
-              "compatibility-fixture--interactions?keys=clicked": {
-                "coefficientOfVariation": 0.0076648410430789835,
-                "p50Ms": 1481,
-                "p95Ms": 1489,
-                "samples": 3
-              }
-            },
-            "threeSecondTailEventCount": 0,
-            "timeoutRate": 0,
-            "visualCommitEventCount": 87,
-            "visualCommitFallbackCount": 0,
-            "visualCommitTimeoutCount": 0,
-            "wallTimeP50Ms": 11800,
-            "wallTimeP95Ms": 12030
+    "backends": {
+      "puppeteer": {
+        "browserCrashRate": 0,
+        "captureFailureRate": 0,
+        "captureTimeP50Ms": 1101,
+        "captureTimeP95Ms": 1770,
+        "cpuTimeP50Ms": 10710,
+        "idleTimeoutEventCount": 0,
+        "maxBrowserRootCount": 5,
+        "maxChromiumProcessCount": 39,
+        "measuredRuns": 40,
+        "peakTreeRssP50Bytes": 4585390080,
+        "phaseTimings": {
+          "interaction": {
+            "p50Ms": 3.6644059999998717,
+            "p95Ms": 26.242318000000523,
+            "samples": 360
           },
-          "playwright": {
-            "browserCrashRate": 0,
-            "captureFailureRate": 0,
-            "captureTimeP50Ms": 1254,
-            "captureTimeP95Ms": 1331,
-            "cpuTimeP50Ms": 6360,
-            "idleTimeoutEventCount": 0,
-            "maxBrowserRootCount": 1,
-            "maxChromiumProcessCount": 8,
-            "measuredRuns": 3,
-            "peakTreeRssP50Bytes": 1140363264,
-            "phaseTimings": {
-              "interaction": {
-                "p50Ms": 13.407530000000406,
-                "p95Ms": 48.497417999999925,
-                "samples": 27
-              },
-              "metrics": {
-                "p50Ms": 50.980343000001085,
-                "p95Ms": 51.63637800000015,
-                "samples": 27
-              },
-              "navigation": {
-                "p50Ms": 59.084115000000565,
-                "p95Ms": 72.46451399999978,
-                "samples": 63
-              },
-              "preview-ready": {
-                "p50Ms": 215.2367750000003,
-                "p95Ms": 226.53023899999994,
-                "samples": 63
-              },
-              "reset": {
-                "p50Ms": 286.9587100000008,
-                "p95Ms": 294.1873150000001,
-                "samples": 27
-              },
-              "resource": {
-                "p50Ms": 0.25383400000009715,
-                "p95Ms": 0.45873200000005454,
-                "samples": 27
-              },
-              "screenshot": {
-                "p50Ms": 34.66196099999979,
-                "p95Ms": 53.32862599999953,
-                "samples": 27
-              },
-              "viewport": {
-                "p50Ms": 582.2541430000001,
-                "p95Ms": 593.9708129999999,
-                "samples": 27
-              },
-              "visual-commit": {
-                "p50Ms": 12.983170000000428,
-                "p95Ms": 31.140935000000354,
-                "samples": 24
-              }
-            },
-            "retryRate": 0,
-            "storyVariants": {
-              "compatibility-fixture--console-error?keys=": {
-                "coefficientOfVariation": 0.013591043695012508,
-                "p50Ms": 764,
-                "p95Ms": 781,
-                "samples": 3
-              },
-              "compatibility-fixture--console-error?keys=SMALL": {
-                "coefficientOfVariation": 0.00826421365886396,
-                "p50Ms": 918,
-                "p95Ms": 918,
-                "samples": 3
-              },
-              "compatibility-fixture--interactions?keys=": {
-                "coefficientOfVariation": 0.0013010244364057913,
-                "p50Ms": 362,
-                "p95Ms": 363,
-                "samples": 3
-              },
-              "compatibility-fixture--interactions?keys=LARGE,focused": {
-                "coefficientOfVariation": 0.002935254057185029,
-                "p50Ms": 1254,
-                "p95Ms": 1259,
-                "samples": 3
-              },
-              "compatibility-fixture--interactions?keys=LARGE,hovered": {
-                "coefficientOfVariation": 0.0018514661699041404,
-                "p50Ms": 1323,
-                "p95Ms": 1326,
-                "samples": 3
-              },
-              "compatibility-fixture--interactions?keys=SMALL": {
-                "coefficientOfVariation": 0.012644951800962001,
-                "p50Ms": 973,
-                "p95Ms": 991,
-                "samples": 3
-              },
-              "compatibility-fixture--interactions?keys=SMALL,focused": {
-                "coefficientOfVariation": 0.005381880687496499,
-                "p50Ms": 1268,
-                "p95Ms": 1282,
-                "samples": 3
-              },
-              "compatibility-fixture--interactions?keys=SMALL,hovered": {
-                "coefficientOfVariation": 0.0060309687914123136,
-                "p50Ms": 1331,
-                "p95Ms": 1347,
-                "samples": 3
-              },
-              "compatibility-fixture--interactions?keys=clicked": {
-                "coefficientOfVariation": 0.013362079113331083,
-                "p50Ms": 1314,
-                "p95Ms": 1321,
-                "samples": 3
-              }
-            },
-            "threeSecondTailEventCount": 0,
-            "timeoutRate": 0,
-            "visualCommitEventCount": 87,
-            "visualCommitFallbackCount": 0,
-            "visualCommitTimeoutCount": 0,
-            "wallTimeP50Ms": 10943,
-            "wallTimeP95Ms": 10947
+          "metrics": {
+            "p50Ms": 52.40706500000033,
+            "p95Ms": 66.10801300000003,
+            "samples": 360
+          },
+          "navigation": {
+            "p50Ms": 239.11118699999997,
+            "p95Ms": 393.444622,
+            "samples": 480
+          },
+          "preview-ready": {
+            "p50Ms": 266.299767,
+            "p95Ms": 319.5030069999998,
+            "samples": 480
+          },
+          "reset": {
+            "p50Ms": 13.332331999999951,
+            "p95Ms": 36.67840100000012,
+            "samples": 360
+          },
+          "resource": {
+            "p50Ms": 100.80848700000024,
+            "p95Ms": 101.78519000000006,
+            "samples": 360
+          },
+          "screenshot": {
+            "p50Ms": 62.67873299999974,
+            "p95Ms": 78.8889549999999,
+            "samples": 360
+          },
+          "viewport": {
+            "p50Ms": 301.9962730000002,
+            "p95Ms": 951.4193950000003,
+            "samples": 360
+          },
+          "visual-commit": {
+            "p50Ms": 9.776554999999462,
+            "p95Ms": 18.5915159999995,
+            "samples": 320
           }
         },
-        "parallel": 1,
-        "startingBackend": "puppeteer"
+        "retryRate": 0,
+        "storyVariants": {
+          "compatibility-fixture--console-error?keys=": {
+            "coefficientOfVariation": 0.01998319294860299,
+            "p50Ms": 1030,
+            "p95Ms": 1077,
+            "samples": 40
+          },
+          "compatibility-fixture--console-error?keys=SMALL": {
+            "coefficientOfVariation": 0.028858350543533626,
+            "p50Ms": 1736,
+            "p95Ms": 1821,
+            "samples": 40
+          },
+          "compatibility-fixture--interactions?keys=": {
+            "coefficientOfVariation": 0.02044673822369404,
+            "p50Ms": 1101,
+            "p95Ms": 1129,
+            "samples": 40
+          },
+          "compatibility-fixture--interactions?keys=LARGE,focused": {
+            "coefficientOfVariation": 0.05319695042332707,
+            "p50Ms": 820,
+            "p95Ms": 884,
+            "samples": 40
+          },
+          "compatibility-fixture--interactions?keys=LARGE,hovered": {
+            "coefficientOfVariation": 0.02833935071705802,
+            "p50Ms": 1280,
+            "p95Ms": 1329,
+            "samples": 40
+          },
+          "compatibility-fixture--interactions?keys=SMALL": {
+            "coefficientOfVariation": 0.028319732348043664,
+            "p50Ms": 531,
+            "p95Ms": 556,
+            "samples": 40
+          },
+          "compatibility-fixture--interactions?keys=SMALL,focused": {
+            "coefficientOfVariation": 0.025881701719584028,
+            "p50Ms": 1463,
+            "p95Ms": 1513,
+            "samples": 40
+          },
+          "compatibility-fixture--interactions?keys=SMALL,hovered": {
+            "coefficientOfVariation": 0.03300465460189165,
+            "p50Ms": 1739,
+            "p95Ms": 1811,
+            "samples": 40
+          },
+          "compatibility-fixture--interactions?keys=clicked": {
+            "coefficientOfVariation": 0.030119461520771534,
+            "p50Ms": 627,
+            "p95Ms": 658,
+            "samples": 40
+          }
+        },
+        "threeSecondTailEventCount": 0,
+        "timeoutRate": 0,
+        "visualCommitEventCount": 800,
+        "visualCommitFallbackCount": 0,
+        "visualCommitTimeoutCount": 0,
+        "wallTimeP50Ms": 5445,
+        "wallTimeP95Ms": 5736
       },
-      {
-        "backends": {
-          "puppeteer": {
-            "browserCrashRate": 0,
-            "captureFailureRate": 0,
-            "captureTimeP50Ms": 899,
-            "captureTimeP95Ms": 1617,
-            "cpuTimeP50Ms": 8910,
-            "idleTimeoutEventCount": 0,
-            "maxBrowserRootCount": 2,
-            "maxChromiumProcessCount": 21,
-            "measuredRuns": 3,
-            "peakTreeRssP50Bytes": 2711339008,
-            "phaseTimings": {
-              "interaction": {
-                "p50Ms": 3.061381000000438,
-                "p95Ms": 30.08917399999973,
-                "samples": 27
-              },
-              "metrics": {
-                "p50Ms": 51.129961000000094,
-                "p95Ms": 53.24745600000006,
-                "samples": 27
-              },
-              "navigation": {
-                "p50Ms": 96.44173200000023,
-                "p95Ms": 253.04608400000006,
-                "samples": 51
-              },
-              "preview-ready": {
-                "p50Ms": 238.52910200000042,
-                "p95Ms": 279.7930359999998,
-                "samples": 51
-              },
-              "reset": {
-                "p50Ms": 313.3950139999997,
-                "p95Ms": 359.3717749999996,
-                "samples": 27
-              },
-              "resource": {
-                "p50Ms": 0.3119329999999536,
-                "p95Ms": 0.5862960000004023,
-                "samples": 27
-              },
-              "screenshot": {
-                "p50Ms": 59.46937800000023,
-                "p95Ms": 66.67786100000012,
-                "samples": 27
-              },
-              "viewport": {
-                "p50Ms": 301.0683979999999,
-                "p95Ms": 805.0753850000001,
-                "samples": 27
-              },
-              "visual-commit": {
-                "p50Ms": 11.688010999999733,
-                "p95Ms": 31.461855999999898,
-                "samples": 24
-              }
-            },
-            "retryRate": 0,
-            "storyVariants": {
-              "compatibility-fixture--console-error?keys=": {
-                "coefficientOfVariation": 0.013262145767042238,
-                "p50Ms": 899,
-                "p95Ms": 917,
-                "samples": 3
-              },
-              "compatibility-fixture--console-error?keys=SMALL": {
-                "coefficientOfVariation": 0.019722001726429503,
-                "p50Ms": 1185,
-                "p95Ms": 1204,
-                "samples": 3
-              },
-              "compatibility-fixture--interactions?keys=": {
-                "coefficientOfVariation": 0.011375243066104285,
-                "p50Ms": 970,
-                "p95Ms": 985,
-                "samples": 3
-              },
-              "compatibility-fixture--interactions?keys=LARGE,focused": {
-                "coefficientOfVariation": 0.015150227829845517,
-                "p50Ms": 1607,
-                "p95Ms": 1630,
-                "samples": 3
-              },
-              "compatibility-fixture--interactions?keys=LARGE,hovered": {
-                "coefficientOfVariation": 0.015148410472768995,
-                "p50Ms": 820,
-                "p95Ms": 840,
-                "samples": 3
-              },
-              "compatibility-fixture--interactions?keys=SMALL": {
-                "coefficientOfVariation": 0.011167515567913887,
-                "p50Ms": 468,
-                "p95Ms": 468,
-                "samples": 3
-              },
-              "compatibility-fixture--interactions?keys=SMALL,focused": {
-                "coefficientOfVariation": 0.005174752022952707,
-                "p50Ms": 776,
-                "p95Ms": 784,
-                "samples": 3
-              },
-              "compatibility-fixture--interactions?keys=SMALL,hovered": {
-                "coefficientOfVariation": 0.011979350488858715,
-                "p50Ms": 1587,
-                "p95Ms": 1617,
-                "samples": 3
-              },
-              "compatibility-fixture--interactions?keys=clicked": {
-                "coefficientOfVariation": 0.007626330999585283,
-                "p50Ms": 814,
-                "p95Ms": 816,
-                "samples": 3
-              }
-            },
-            "threeSecondTailEventCount": 0,
-            "timeoutRate": 0,
-            "visualCommitEventCount": 75,
-            "visualCommitFallbackCount": 0,
-            "visualCommitTimeoutCount": 0,
-            "wallTimeP50Ms": 6226,
-            "wallTimeP95Ms": 6291
+      "playwright": {
+        "browserCrashRate": 0,
+        "captureFailureRate": 0,
+        "captureTimeP50Ms": 1083,
+        "captureTimeP95Ms": 1540,
+        "cpuTimeP50Ms": 9380,
+        "idleTimeoutEventCount": 0,
+        "maxBrowserRootCount": 4,
+        "maxChromiumProcessCount": 32,
+        "measuredRuns": 40,
+        "peakTreeRssP50Bytes": 3653197824,
+        "phaseTimings": {
+          "interaction": {
+            "p50Ms": 18.072747000000163,
+            "p95Ms": 68.75489199999993,
+            "samples": 360
           },
-          "playwright": {
-            "browserCrashRate": 0,
-            "captureFailureRate": 0,
-            "captureTimeP50Ms": 912,
-            "captureTimeP95Ms": 1409,
-            "cpuTimeP50Ms": 8000,
-            "idleTimeoutEventCount": 0,
-            "maxBrowserRootCount": 2,
-            "maxChromiumProcessCount": 16,
-            "measuredRuns": 3,
-            "peakTreeRssP50Bytes": 2001010688,
-            "phaseTimings": {
-              "interaction": {
-                "p50Ms": 17.654593999999634,
-                "p95Ms": 77.68257199999971,
-                "samples": 27
-              },
-              "metrics": {
-                "p50Ms": 52.222765999999865,
-                "p95Ms": 53.95367299999998,
-                "samples": 27
-              },
-              "navigation": {
-                "p50Ms": 78.4493150000003,
-                "p95Ms": 258.4105340000001,
-                "samples": 51
-              },
-              "preview-ready": {
-                "p50Ms": 220.8449129999999,
-                "p95Ms": 277.0916510000002,
-                "samples": 51
-              },
-              "reset": {
-                "p50Ms": 299.0351920000003,
-                "p95Ms": 326.8028239999994,
-                "samples": 27
-              },
-              "resource": {
-                "p50Ms": 0.2798130000001038,
-                "p95Ms": 0.5644649999999274,
-                "samples": 27
-              },
-              "screenshot": {
-                "p50Ms": 47.03300399999989,
-                "p95Ms": 63.764810000000125,
-                "samples": 27
-              },
-              "viewport": {
-                "p50Ms": 304.21448599999985,
-                "p95Ms": 614.9474620000001,
-                "samples": 27
-              },
-              "visual-commit": {
-                "p50Ms": 14.673071000000164,
-                "p95Ms": 30.28425500000003,
-                "samples": 24
-              }
-            },
-            "retryRate": 0,
-            "storyVariants": {
-              "compatibility-fixture--console-error?keys=": {
-                "coefficientOfVariation": 0.018361798214975824,
-                "p50Ms": 912,
-                "p95Ms": 932,
-                "samples": 3
-              },
-              "compatibility-fixture--console-error?keys=SMALL": {
-                "coefficientOfVariation": 0.0036333424398642305,
-                "p50Ms": 1013,
-                "p95Ms": 1018,
-                "samples": 3
-              },
-              "compatibility-fixture--interactions?keys=": {
-                "coefficientOfVariation": 0.012251073103265963,
-                "p50Ms": 943,
-                "p95Ms": 961,
-                "samples": 3
-              },
-              "compatibility-fixture--interactions?keys=LARGE,focused": {
-                "coefficientOfVariation": 0.013987236470263684,
-                "p50Ms": 1371,
-                "p95Ms": 1406,
-                "samples": 3
-              },
-              "compatibility-fixture--interactions?keys=LARGE,hovered": {
-                "coefficientOfVariation": 0.013601361964189658,
-                "p50Ms": 842,
-                "p95Ms": 866,
-                "samples": 3
-              },
-              "compatibility-fixture--interactions?keys=SMALL": {
-                "coefficientOfVariation": 0.040875447558251864,
-                "p50Ms": 392,
-                "p95Ms": 424,
-                "samples": 3
-              },
-              "compatibility-fixture--interactions?keys=SMALL,focused": {
-                "coefficientOfVariation": 0.01136958049515564,
-                "p50Ms": 754,
-                "p95Ms": 765,
-                "samples": 3
-              },
-              "compatibility-fixture--interactions?keys=SMALL,hovered": {
-                "coefficientOfVariation": 0.005490081528475326,
-                "p50Ms": 1409,
-                "p95Ms": 1413,
-                "samples": 3
-              },
-              "compatibility-fixture--interactions?keys=clicked": {
-                "coefficientOfVariation": 0.02265346475604574,
-                "p50Ms": 769,
-                "p95Ms": 801,
-                "samples": 3
-              }
-            },
-            "threeSecondTailEventCount": 0,
-            "timeoutRate": 0,
-            "visualCommitEventCount": 75,
-            "visualCommitFallbackCount": 0,
-            "visualCommitTimeoutCount": 0,
-            "wallTimeP50Ms": 6202,
-            "wallTimeP95Ms": 6206
+          "metrics": {
+            "p50Ms": 54.28801499999918,
+            "p95Ms": 61.15755600000011,
+            "samples": 360
+          },
+          "navigation": {
+            "p50Ms": 145.87690299999986,
+            "p95Ms": 399.4332629999999,
+            "samples": 482
+          },
+          "preview-ready": {
+            "p50Ms": 235.99085300000024,
+            "p95Ms": 302.9132459999996,
+            "samples": 482
+          },
+          "reset": {
+            "p50Ms": 6.42293299999983,
+            "p95Ms": 24.984207999999853,
+            "samples": 360
+          },
+          "resource": {
+            "p50Ms": 100.70470800000021,
+            "p95Ms": 101.80386099999987,
+            "samples": 360
+          },
+          "screenshot": {
+            "p50Ms": 50.565082000000075,
+            "p95Ms": 70.795298,
+            "samples": 360
+          },
+          "viewport": {
+            "p50Ms": 305.9085280000004,
+            "p95Ms": 677.0874060000001,
+            "samples": 360
+          },
+          "visual-commit": {
+            "p50Ms": 10.30576900000051,
+            "p95Ms": 20.407928999999967,
+            "samples": 322
           }
         },
-        "parallel": 2,
-        "startingBackend": "playwright"
+        "retryRate": 0,
+        "storyVariants": {
+          "compatibility-fixture--console-error?keys=": {
+            "coefficientOfVariation": 0.026325540151870108,
+            "p50Ms": 1017,
+            "p95Ms": 1068,
+            "samples": 40
+          },
+          "compatibility-fixture--console-error?keys=SMALL": {
+            "coefficientOfVariation": 0.12287852271807702,
+            "p50Ms": 1508,
+            "p95Ms": 1553,
+            "samples": 40
+          },
+          "compatibility-fixture--interactions?keys=": {
+            "coefficientOfVariation": 0.02179660369137064,
+            "p50Ms": 1080,
+            "p95Ms": 1110,
+            "samples": 40
+          },
+          "compatibility-fixture--interactions?keys=LARGE,focused": {
+            "coefficientOfVariation": 0.05465524856594405,
+            "p50Ms": 799,
+            "p95Ms": 881,
+            "samples": 40
+          },
+          "compatibility-fixture--interactions?keys=LARGE,hovered": {
+            "coefficientOfVariation": 0.03388736280776521,
+            "p50Ms": 1276,
+            "p95Ms": 1371,
+            "samples": 40
+          },
+          "compatibility-fixture--interactions?keys=SMALL": {
+            "coefficientOfVariation": 0.3247805048013517,
+            "p50Ms": 517,
+            "p95Ms": 1157,
+            "samples": 40
+          },
+          "compatibility-fixture--interactions?keys=SMALL,focused": {
+            "coefficientOfVariation": 0.07422779776991033,
+            "p50Ms": 1196,
+            "p95Ms": 1445,
+            "samples": 40
+          },
+          "compatibility-fixture--interactions?keys=SMALL,hovered": {
+            "coefficientOfVariation": 0.05205484867126982,
+            "p50Ms": 1501,
+            "p95Ms": 1653,
+            "samples": 40
+          },
+          "compatibility-fixture--interactions?keys=clicked": {
+            "coefficientOfVariation": 0.050773118150771075,
+            "p50Ms": 580,
+            "p95Ms": 662,
+            "samples": 40
+          }
+        },
+        "threeSecondTailEventCount": 0,
+        "timeoutRate": 0,
+        "visualCommitEventCount": 804,
+        "visualCommitFallbackCount": 0,
+        "visualCommitTimeoutCount": 0,
+        "wallTimeP50Ms": 5222,
+        "wallTimeP95Ms": 5813
       }
-    ]
+    },
+    "playwrightToPuppeteerRatios": {
+      "cpuTimeP50": 0.8758169934640523,
+      "peakTreeRssP50": 0.7967038267767178,
+      "wallTimeP50": 0.9590449954086318,
+      "wallTimeP95": 1.0134239888423988
+    }
+  },
+  "diagnostics": {
+    "workflowRuns": [],
+    "results": []
   },
   "traceValidation": {
     "gate": {
@@ -1072,7 +564,7 @@
     },
     "summaries": {
       "puppeteer": {
-        "bytes": 10047652,
+        "bytes": 10056611,
         "categories": [
           "__metadata",
           "benchmark",
@@ -1093,12 +585,12 @@
           "v8",
           "v8.execute"
         ],
-        "cpuProfileEventCount": 291,
+        "cpuProfileEventCount": 316,
         "errors": [],
-        "eventCount": 41928,
+        "eventCount": 42042,
         "files": [
           {
-            "bytes": 3371952,
+            "bytes": 3331847,
             "categories": [
               "__metadata",
               "benchmark",
@@ -1119,14 +611,14 @@
               "v8",
               "v8.execute"
             ],
-            "cpuProfileEventCount": 90,
+            "cpuProfileEventCount": 96,
             "errors": [],
-            "eventCount": 14050,
+            "eventCount": 13929,
             "path": "Compatibility/Fixture/Console Error_LARGE_trace.json",
-            "timelineEventCount": 5302
+            "timelineEventCount": 5212
           },
           {
-            "bytes": 6675700,
+            "bytes": 6724764,
             "categories": [
               "__metadata",
               "benchmark",
@@ -1147,19 +639,19 @@
               "v8",
               "v8.execute"
             ],
-            "cpuProfileEventCount": 201,
+            "cpuProfileEventCount": 220,
             "errors": [],
-            "eventCount": 27878,
+            "eventCount": 28113,
             "path": "Compatibility/Fixture/Console Error_SMALL_trace.json",
-            "timelineEventCount": 10117
+            "timelineEventCount": 10140
           }
         ],
-        "timelineEventCount": 15419,
+        "timelineEventCount": 15352,
         "traceCount": 2,
         "valid": true
       },
       "playwright": {
-        "bytes": 6931125,
+        "bytes": 7137866,
         "categories": [
           "__metadata",
           "benchmark",
@@ -1181,17 +673,16 @@
           "v8",
           "v8.execute"
         ],
-        "cpuProfileEventCount": 204,
+        "cpuProfileEventCount": 219,
         "errors": [],
-        "eventCount": 28661,
+        "eventCount": 29676,
         "files": [
           {
-            "bytes": 2745738,
+            "bytes": 2830060,
             "categories": [
               "__metadata",
               "benchmark",
               "blink",
-              "blink.animations",
               "blink.console",
               "blink.user_timing",
               "cc",
@@ -1208,14 +699,14 @@
               "v8",
               "v8.execute"
             ],
-            "cpuProfileEventCount": 91,
+            "cpuProfileEventCount": 99,
             "errors": [],
-            "eventCount": 11302,
+            "eventCount": 11703,
             "path": "Compatibility/Fixture/Console Error_LARGE_trace.json",
-            "timelineEventCount": 4572
+            "timelineEventCount": 4660
           },
           {
-            "bytes": 4185387,
+            "bytes": 4307806,
             "categories": [
               "__metadata",
               "benchmark",
@@ -1237,27 +728,27 @@
               "v8",
               "v8.execute"
             ],
-            "cpuProfileEventCount": 113,
+            "cpuProfileEventCount": 120,
             "errors": [],
-            "eventCount": 17359,
+            "eventCount": 17973,
             "path": "Compatibility/Fixture/Console Error_SMALL_trace.json",
-            "timelineEventCount": 6818
+            "timelineEventCount": 7119
           }
         ],
-        "timelineEventCount": 11390,
+        "timelineEventCount": 11779,
         "traceCount": 2,
         "valid": true
       }
     },
-    "workflowRun": "https://github.com/l4dybird/storyfreeze/actions/runs/29200634450"
+    "workflowRun": "https://github.com/l4dybird/storyfreeze/actions/runs/29217850658"
   },
   "candidatePlaywrightChange": {
-    "captureTimeP50": 0.9984767707539984,
-    "captureTimeP95": 0.39080459770114945,
-    "cpuTimeP50": 0.964509394572025,
-    "peakTreeRssP50": 1.0018885124171075,
-    "wallTimeP50": 0.656405051871899,
-    "wallTimeP95": 0.34758803527174226
+    "captureTimeP50": 0.8260869565217391,
+    "captureTimeP95": 0.8881199538638985,
+    "cpuTimeP50": 1.0151515151515151,
+    "peakTreeRssP50": 0.9860281338858106,
+    "wallTimeP50": 0.8970967187768425,
+    "wallTimeP95": 0.9638534239761234
   },
   "acceptance": {
     "browserCrashRateIsZero": true,

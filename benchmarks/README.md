@@ -33,23 +33,23 @@ The workflow runs the PR profile with explicit browser installation when benchma
 
 ## Current browser differential
 
-The [aggregated browser differential record](./browser-differential-record.json) compares the instrumented idle-wait baseline `2b64434` with visual-commit candidate `ca470b7`. Each snapshot contains four successful explicit-install dispatches, two per starting backend, for 40 measured runs per backend. All capture, retry, timeout, crash, PNG, and trace gates passed with Chromium 149.0.7827.55.
+The [aggregated browser differential record](./browser-differential-record.json) compares the visual-commit baseline `ca470b7` with `master` after reset, watcher, and Playwright recovery hardening (`804aae4`). Each snapshot contains four successful explicit-install dispatches, two per starting backend, for 40 measured runs per backend. All record gates passed, and the separate candidate trace gate passed, with Chromium 149.0.7827.55.
 
 The raw 40-run summaries are:
 
 | Metric                    |  Baseline Puppeteer | Baseline Playwright | Candidate Puppeteer | Candidate Playwright | Candidate PW/P ratio |
 | ------------------------- | ------------------: | ------------------: | ------------------: | -------------------: | -------------------: |
-| wall p50                  |            8,355 ms |            8,868 ms |            5,755 ms |             5,821 ms |                1.011 |
-| wall p95                  |            8,754 ms |           17,351 ms |            6,089 ms |             6,031 ms |                0.990 |
-| capture-request p50       |            1,410 ms |            1,313 ms |            1,070 ms |             1,311 ms |                    — |
-| capture-request p95       |            3,783 ms |            4,437 ms |            1,988 ms |             1,734 ms |                    — |
-| peak process-tree RSS p50 | 4,950,519,808 bytes | 3,697,979,392 bytes | 4,644,823,040 bytes |  3,704,963,072 bytes |                0.798 |
-| sampled CPU time p50      |           10,340 ms |            9,580 ms |           10,710 ms |             9,240 ms |                0.863 |
-| max Chromium processes    |                  45 |                  32 |                  41 |                   32 |                    — |
+| wall p50                  |            5,755 ms |            5,821 ms |            5,445 ms |             5,222 ms |                0.959 |
+| wall p95                  |            6,089 ms |            6,031 ms |            5,736 ms |             5,813 ms |                1.013 |
+| capture-request p50       |            1,070 ms |            1,311 ms |            1,101 ms |             1,083 ms |                    — |
+| capture-request p95       |            1,988 ms |            1,734 ms |            1,770 ms |             1,540 ms |                    — |
+| peak process-tree RSS p50 | 4,644,823,040 bytes | 3,704,963,072 bytes | 4,585,390,080 bytes |  3,653,197,824 bytes |                0.797 |
+| sampled CPU time p50      |           10,710 ms |            9,240 ms |           10,710 ms |             9,380 ms |                0.876 |
+| max Chromium processes    |                  41 |                  32 |                  39 |                   32 |                    — |
 
-Playwright idle timeout events fell from 77 to 0, and its capture requests taking at least three seconds fell from 51 to 0. Candidate visual-commit timeout and animation-frame fallback counts were both 0. Playwright wall p50 improved by 34.4%, wall p95 by 65.2%, and capture-request p95 by 60.9% relative to the instrumented baseline.
+Relative to the visual-commit baseline, Puppeteer wall p50/p95 improved by 5.4%/5.8% and capture-request p95 improved by 11.0%. Playwright wall p50/p95 improved by 10.3%/3.6%, capture-request p50/p95 improved by 17.4%/11.2%, and peak RSS improved by 1.4%. The candidate recorded no three-second capture tails, idle or visual-commit timeouts, or animation-frame fallbacks for either backend.
 
-The candidate met the recorded default-readiness targets: wall p50 ratio at most 1.05, wall p95 ratio at most 1.10, RSS ratio at most 0.80, CPU ratio at most 1.00, and zero correctness failures. This PR does not change the default backend; reset, watcher, and recovery hardening remain separate work.
+The candidate met the recorded default-readiness targets: wall p50 ratio at most 1.05, wall p95 ratio at most 1.10, RSS ratio at most 0.80, CPU ratio at most 1.00, and zero correctness failures. This record does not change the default backend; it captures the cumulative result after the separately merged reset, watcher, and recovery hardening.
 
 The container comparison was not rerun for the wait change. The historical PR #33 result used three dispatches: explicit-install job median 207 seconds, pinned-container median 205 seconds, 27-second median container initialization, and roughly 3–4% higher process-tree RSS in the container. Explicit installation therefore remains standard CI, while the [official Playwright container](https://playwright.dev/docs/docker) remains a manual comparison only.
 

@@ -7,6 +7,14 @@ export class InvalidCurrentStoryStateError extends Error {
   }
 }
 
+export class CaptureAttemptTimeoutError extends Error {
+  name = 'CaptureAttemptTimeoutError';
+
+  constructor(timeout: number, requestId: string) {
+    super(`Capture ${requestId} did not finish within ${timeout} msec.`);
+  }
+}
+
 export class PreviewProtocolVersionError extends Error {
   name = 'PreviewProtocolVersionError';
 

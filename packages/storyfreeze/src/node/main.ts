@@ -226,17 +226,14 @@ export async function main(mainOptions: MainOptions, overrides: Partial<MainDepe
     logger.debug('Created workers.');
 
     // Execution caputuring procedure.
-    const captured = await abortable(
-      createScreenshotService({
-        workers,
-        stories: shardedStories,
-        fileSystem,
-        logger,
-        forwardConsoleLogs: mainOptions.forwardConsoleLogs,
-        trace: mainOptions.trace,
-      }).execute(),
-      mainOptions.signal,
-    );
+    const captured = await createScreenshotService({
+      workers,
+      stories: shardedStories,
+      fileSystem,
+      logger,
+      forwardConsoleLogs: mainOptions.forwardConsoleLogs,
+      trace: mainOptions.trace,
+    }).execute();
     logger.debug('Ended ScreenshotService execution.');
     return captured;
   } catch (error) {

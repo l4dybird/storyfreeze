@@ -7,7 +7,9 @@ import type { MainOptions } from './types.js';
 import { bootCaptureWorkers, disposeRuntimeResources, filterStories, main } from './main.js';
 import type { StoryDescriptor } from './story-index-provider.js';
 import { CAPTURE_DIAGNOSTIC_PREFIX } from './capture-diagnostics.js';
-import { PreviewReadyTimeoutError } from './errors.js';
+import { CaptureAttemptTimeoutError, PreviewReadyTimeoutError } from './errors.js';
+import { CaptureDeadline } from './capture-deadline.js';
+import { StoryNavigator } from './story-navigator.js';
 
 function story(id: string, title: string, name: string): StoryDescriptor {
   return { id, title, name };
@@ -147,6 +149,74 @@ describe(CapturingBrowser, () => {
     else process.env.STORYFREEZE_CAPTURE_DIAGNOSTICS = originalCaptureDiagnostics;
   });
 
+  function createStalledCapture(options: {
+    captureTimeout: number;
+    delay?: number;
+    maxRetryCount: number;
+    mode: 'managed' | 'simple';
+    signal?: AbortSignal;
+  }) {
+    const order: string[] = [];
+    let rejectReady = (_error: Error) => {};
+    const mainOptions = {
+      captureMaxRetryCount: options.maxRetryCount,
+      captureTimeout: options.captureTimeout,
+      delay: options.delay ?? 0,
+      disableCssAnimation: false,
+      disableWaitAssets: false,
+      logger: new Logger('silent'),
+      signal: options.signal,
+      viewports: ['800x600'],
+    } as MainOptions;
+    const browser = new CapturingBrowser(
+      { url: 'https://example.test' } as ManagedStorybookConnection,
+      mainOptions,
+      options.mode,
+      0,
+    );
+    const unsubscribe = vi.fn();
+    const page = {
+      addStyleFile: vi.fn(async () => {}),
+      currentUrl: vi.fn(() => 'https://example.test/iframe.html'),
+      evaluate: vi.fn(
+        () =>
+          new Promise<never>((_resolve, reject) => {
+            rejectReady = reject;
+          }),
+      ),
+      goto: vi.fn(async () => {}),
+      subscribeConsole: vi.fn(() => unsubscribe),
+    };
+    vi.spyOn(BaseBrowser.prototype, 'page', 'get').mockReturnValue(page as never);
+    const navigator = new StoryNavigator(page as never, new URL('https://example.test'), 0);
+    const navigate = vi.spyOn(navigator, 'navigate');
+    const waitForReady = vi.spyOn(navigator, 'waitForReady');
+    Object.assign(browser, {
+      navigator,
+      resourceWatcher: { clear: vi.fn() },
+    });
+    const close = vi.spyOn(browser, 'close').mockImplementation(async () => {
+      order.push('close');
+      rejectReady(new Error('session closed'));
+    });
+    const boot = vi.spyOn(browser, 'boot').mockImplementation(async () => {
+      order.push('boot');
+      return browser;
+    });
+    const capture = (retryCount: number) =>
+      browser.screenshot(
+        'fixture--default',
+        { id: 'fixture--default', kind: 'Fixture', story: 'Default', version: 'v5' },
+        { isDefault: true, keys: [] },
+        retryCount,
+        mainOptions.logger,
+        false,
+        false,
+        { saveTrace: vi.fn() } as never,
+      );
+    return { boot, capture, close, navigate, order, unsubscribe, waitForReady };
+  }
+
   it('resets browser input without navigating after a touched capture', async () => {
     const browser = new CapturingBrowser(
       { url: 'https://example.test' } as ManagedStorybookConnection,
@@ -234,33 +304,44 @@ describe(CapturingBrowser, () => {
       const boot = vi.spyOn(browser, 'boot').mockResolvedValue(browser);
       const setViewport = (
         browser as unknown as {
-          setViewport(options: {
-            viewport: {
-              width: number;
-              height: number;
-              deviceScaleFactor: number;
-              hasTouch: boolean;
-              isMobile: boolean;
-            };
-          }): Promise<boolean>;
+          setViewport(
+            options: {
+              viewport: {
+                width: number;
+                height: number;
+                deviceScaleFactor: number;
+                hasTouch: boolean;
+                isMobile: boolean;
+              };
+            },
+            deadline: CaptureDeadline,
+          ): Promise<boolean>;
         }
       ).setViewport.bind(browser);
+      const deadline = new CaptureDeadline(5000, 'fixture--default');
 
       await expect(
-        setViewport({
-          viewport: {
-            width: 375,
-            height: 667,
-            deviceScaleFactor: 2,
-            hasTouch: true,
-            isMobile: true,
+        setViewport(
+          {
+            viewport: {
+              width: 375,
+              height: 667,
+              deviceScaleFactor: 2,
+              hasTouch: true,
+              isMobile: true,
+            },
           },
-        }),
+          deadline,
+        ),
       ).resolves.toBe(true);
+      deadline.dispose();
 
       expect(close).not.toHaveBeenCalled();
       expect(boot).not.toHaveBeenCalled();
-      expect(page.goto).toHaveBeenCalledWith('about:blank', { waitUntil: 'domcontentloaded' });
+      expect(page.goto).toHaveBeenCalledWith('about:blank', {
+        timeout: expect.any(Number),
+        waitUntil: 'domcontentloaded',
+      });
       expect(page.setViewport).toHaveBeenCalledWith({
         width: 375,
         height: 667,
@@ -268,7 +349,7 @@ describe(CapturingBrowser, () => {
         hasTouch: true,
         isMobile: true,
       });
-      expect(navigate).toHaveBeenCalledWith('fixture--default');
+      expect(navigate).toHaveBeenCalledWith('fixture--default', expect.any(Number), 0);
       expect(waitForReady).toHaveBeenCalledTimes(1);
       expect(order).toEqual(['about:blank', 'setViewport', 'navigate', 'preview-ready']);
     },
@@ -461,6 +542,61 @@ describe(CapturingBrowser, () => {
     expect(close).toHaveBeenCalledTimes(1);
     expect(boot).toHaveBeenCalledTimes(1);
     expect(unsubscribe).toHaveBeenCalledTimes(1);
+  });
+
+  it('closes a stalled capture, drains its page operation, and then reboots for a retry', async () => {
+    const { boot, capture, close, navigate, order, unsubscribe, waitForReady } = createStalledCapture({
+      captureTimeout: 20,
+      maxRetryCount: 2,
+      mode: 'managed',
+    });
+
+    await expect(capture(0)).resolves.toEqual({
+      buffer: null,
+      succeeded: false,
+      variantKeysToPush: [],
+      defaultVariantSuffix: '',
+    });
+
+    expect(waitForReady).toHaveBeenCalledTimes(1);
+    expect(navigate.mock.calls[0][1]).toBeGreaterThan(0);
+    expect(navigate.mock.calls[0][1]).toBeLessThanOrEqual(20);
+    expect(order).toEqual(['close', 'boot']);
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(boot).toHaveBeenCalledTimes(1);
+    expect(unsubscribe).toHaveBeenCalledTimes(1);
+  });
+
+  it('applies the attempt deadline to simple mode and preserves the timeout after the final retry', async () => {
+    const { boot, capture, close } = createStalledCapture({
+      captureTimeout: 20,
+      delay: 1000,
+      maxRetryCount: 1,
+      mode: 'simple',
+    });
+
+    await expect(capture(1)).rejects.toBeInstanceOf(CaptureAttemptTimeoutError);
+
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(boot).not.toHaveBeenCalled();
+  });
+
+  it('closes and drains a stalled attempt on run abort without rebooting it', async () => {
+    const controller = new AbortController();
+    const { boot, capture, close, waitForReady } = createStalledCapture({
+      captureTimeout: 1000,
+      maxRetryCount: 2,
+      mode: 'managed',
+      signal: controller.signal,
+    });
+    const capturing = capture(0);
+    await vi.waitFor(() => expect(waitForReady).toHaveBeenCalledTimes(1));
+
+    controller.abort(new Error('interrupted by test'));
+
+    await expect(capturing).rejects.toThrow('interrupted by test');
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(boot).not.toHaveBeenCalled();
   });
 });
 

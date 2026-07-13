@@ -4,6 +4,8 @@ import { Fixture } from './Fixture';
 const retrySessionKey = 'storyfreeze-fixture-retry-ready';
 
 async function waitForRetryRequest() {
+  const retryCount = Number(new URLSearchParams(window.location.search).get('storyfreezeRetryCount') ?? 0);
+  if (retryCount > 0) return;
   if (sessionStorage.getItem(retrySessionKey)) return;
   sessionStorage.setItem(retrySessionKey, 'true');
   await new Promise(resolve => setTimeout(resolve, 3500));

@@ -20,11 +20,13 @@ import {
 
 type ExpectedPreviewState = { storyId: string; requestId: string };
 
+const STORYFREEZE_RETRY_COUNT_PARAM = 'storyfreezeRetryCount';
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-export function createStoryPreviewUrl(baseUrl: URL, storyId: string, requestId: string): URL {
+export function createStoryPreviewUrl(baseUrl: URL, storyId: string, requestId: string, retryCount?: number): URL {
   const url = new URL(baseUrl);
   url.pathname = `${url.pathname.replace(/\/$/, '')}/iframe.html`;
   url.search = '';
@@ -32,6 +34,9 @@ export function createStoryPreviewUrl(baseUrl: URL, storyId: string, requestId: 
   url.searchParams.set('id', storyId);
   url.searchParams.set('viewMode', 'story');
   url.searchParams.set(STORYFREEZE_REQUEST_ID_PARAM, requestId);
+  if (retryCount !== undefined && Number.isFinite(retryCount) && retryCount > 0) {
+    url.searchParams.set(STORYFREEZE_RETRY_COUNT_PARAM, String(retryCount));
+  }
   return url;
 }
 
@@ -112,11 +117,11 @@ export class StoryNavigator {
     private readonly workerId: number,
   ) {}
 
-  async navigate(storyId: string): Promise<void> {
+  async navigate(storyId: string, timeout = 60_000, retryCount = 0): Promise<void> {
     const requestId = `${this.workerId}-${++this.sequence}`;
     this.current = { storyId, requestId };
-    const url = createStoryPreviewUrl(this.baseUrl, storyId, requestId);
-    await this.page.goto(url.href, { timeout: 60000, waitUntil: 'domcontentloaded' });
+    const url = createStoryPreviewUrl(this.baseUrl, storyId, requestId, retryCount);
+    await this.page.goto(url.href, { timeout, waitUntil: 'domcontentloaded' });
   }
 
   async waitForReady(timeout: number, signal?: AbortSignal): Promise<NormalizedScreenshotOptions> {

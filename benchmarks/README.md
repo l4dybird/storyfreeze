@@ -47,6 +47,20 @@ The raw 40-run summaries are:
 | sampled CPU time p50      |           10,710 ms |            9,240 ms |           10,710 ms |             9,380 ms |                0.876 |
 | max Chromium processes    |                  41 |                  32 |                  39 |                   32 |                    — |
 
+Comparing the candidate backends directly (negative means Playwright used less time or resources):
+
+| Metric                    | Puppeteer candidate | Playwright candidate | Playwright vs Puppeteer |
+| ------------------------- | ------------------: | -------------------: | ----------------------: |
+| wall p50                  |            5,445 ms |             5,222 ms |                   -4.1% |
+| wall p95                  |            5,736 ms |             5,813 ms |                   +1.3% |
+| capture-request p50       |            1,101 ms |             1,083 ms |                   -1.6% |
+| capture-request p95       |            1,770 ms |             1,540 ms |                  -13.0% |
+| peak process-tree RSS p50 | 4,585,390,080 bytes |  3,653,197,824 bytes |                  -20.3% |
+| sampled CPU time p50      |           10,710 ms |             9,380 ms |                  -12.4% |
+| max Chromium processes    |                  39 |                   32 |                  -17.9% |
+
+Playwright was 4.1% faster at wall p50 and 13.0% faster at capture-request p95 while using 20.3% less peak RSS and 12.4% less sampled CPU time. Its wall p95 was 77 ms (1.3%) slower than Puppeteer, which remains within the recorded 10% readiness allowance. Correctness and timeout results were identical: both backends completed without failures, retries, timeouts, crashes, PNG differences, or three-second capture tails.
+
 Relative to the visual-commit baseline, Puppeteer wall p50/p95 improved by 5.4%/5.8% and capture-request p95 improved by 11.0%. Playwright wall p50/p95 improved by 10.3%/3.6%, capture-request p50/p95 improved by 17.4%/11.2%, and peak RSS improved by 1.4%. The candidate recorded no three-second capture tails, idle or visual-commit timeouts, or animation-frame fallbacks for either backend.
 
 The candidate met the recorded default-readiness targets: wall p50 ratio at most 1.05, wall p95 ratio at most 1.10, RSS ratio at most 0.80, CPU ratio at most 1.00, and zero correctness failures. This record does not change the default backend; it captures the cumulative result after the separately merged reset, watcher, and recovery hardening.

@@ -87,7 +87,7 @@ const storyfreezeCommandArgs = {
   },
   viewportDelay: {
     type: 'number',
-    default: 300,
+    default: 0,
     description: 'Delay time [msec] between changing viewport and capturing.',
   },
   reloadAfterChangeViewport: {

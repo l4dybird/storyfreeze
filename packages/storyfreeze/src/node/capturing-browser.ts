@@ -625,7 +625,8 @@ export class CapturingBrowser extends BaseBrowser {
 
           // Calculate the suffix and save the trace to the file.
           const suffix = variantKey.isDefault && defaultVariantSuffix ? [defaultVariantSuffix] : variantKey.keys;
-          await fileSystem.saveTrace(story.kind, story.story, suffix, traceBuffer);
+          const logicalId = JSON.stringify({ storyId: story.id, variantKey });
+          await fileSystem.saveTrace(story.kind, story.story, suffix, traceBuffer, logicalId);
         });
       }
     }

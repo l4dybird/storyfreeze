@@ -471,10 +471,7 @@ export class PlaywrightBrowserBackend implements BrowserBackend {
     const executablePath = await this.locateChromium(options);
     if (!executablePath) throw new ChromiumNotFoundError();
 
-    const launchOptions = options.launchOptions ?? {
-      args: ['--no-sandbox', '--disable-setuid-sandbox'],
-      headless: true,
-    };
+    const launchOptions = options.launchOptions ?? { headless: true };
     const browser = await this.dependencies.launch({
       ...(launchOptions.args ? { args: launchOptions.args } : {}),
       ...(launchOptions.headless === undefined ? {} : { headless: launchOptions.headless }),

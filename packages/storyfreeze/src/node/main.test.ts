@@ -383,6 +383,7 @@ describe(CapturingBrowser, () => {
     } as unknown as MainOptions;
     const browser = new CapturingBrowser({ url: 'invalid' } as ManagedStorybookConnection, options, 'managed', 0);
     const unsubscribe = vi.fn();
+    const discard = vi.fn(async () => {});
     const page = {
       startTrace: vi.fn(async () => Promise.reject(new Error('trace start failed'))),
       stopTrace: vi.fn(async () => Buffer.from('trace')),
@@ -400,11 +401,14 @@ describe(CapturingBrowser, () => {
         new Logger('silent'),
         false,
         true,
-        { saveTrace: vi.fn() } as never,
+        {
+          createTraceFile: vi.fn(async () => ({ write: vi.fn(), commit: vi.fn(), discard })),
+        } as never,
       ),
     ).rejects.toThrow('trace start failed');
     expect(unsubscribe).toHaveBeenCalledTimes(1);
     expect(page.stopTrace).not.toHaveBeenCalled();
+    expect(discard).toHaveBeenCalledTimes(1);
   });
 
   it('returns a retry after an unhealthy Playwright capture closes and reboots the worker', async () => {

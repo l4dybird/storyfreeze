@@ -30,6 +30,11 @@ function request(url = 'https://example.test/image.png') {
   } as Request;
 }
 
+function createTraceCollector() {
+  const chunks: Buffer[] = [];
+  return { chunks, sink: { write: vi.fn(async (chunk: Buffer) => void chunks.push(chunk)) } };
+}
+
 describe(PlaywrightCapturePage, () => {
   it('normalizes browser events, performs immediate element interactions, and removes listeners', async () => {
     const rawPage = new FakePage();
@@ -218,15 +223,17 @@ describe(PlaywrightCapturePage, () => {
     ]);
     failCapture = false;
     rawCdp.send.mockClear();
+    const { chunks, sink } = createTraceCollector();
 
     let releaseTraceStart = () => {};
     rawCdp.send.mockImplementationOnce(async () => new Promise<void>(resolve => (releaseTraceStart = resolve)));
-    const startingTrace = page.startTrace();
+    const startingTrace = page.startTrace(sink);
     await Promise.resolve();
-    await expect(page.startTrace()).rejects.toThrow('already running');
+    await expect(page.startTrace(sink)).rejects.toThrow('already running');
     releaseTraceStart();
     await startingTrace;
-    await expect(page.stopTrace()).resolves.toEqual(Buffer.from('{"traceEvents":[]}'));
+    await expect(page.stopTrace()).resolves.toBeUndefined();
+    expect(Buffer.concat(chunks)).toEqual(Buffer.from('{"traceEvents":[]}'));
     expect(rawCdp.send).toHaveBeenCalledWith('Tracing.start', {
       categories:
         '-*,devtools.timeline,v8.execute,disabled-by-default-devtools.timeline,disabled-by-default-devtools.timeline.frame,toplevel,blink.console,blink.user_timing,latencyInfo,disabled-by-default-devtools.timeline.stack,disabled-by-default-v8.cpu_profiler,disabled-by-default-v8.cpu_profiler.hires',
@@ -234,13 +241,13 @@ describe(PlaywrightCapturePage, () => {
     });
     expect(rawCdp.send).toHaveBeenCalledWith('IO.close', { handle: 'trace-stream' });
     rawCdp.send.mockRejectedValueOnce(new Error('trace start failed'));
-    await expect(page.startTrace()).rejects.toThrow('trace start failed');
-    await page.startTrace();
+    await expect(page.startTrace(sink)).rejects.toThrow('trace start failed');
+    await page.startTrace(sink);
     rawCdp.send.mockRejectedValueOnce(new Error('trace end failed'));
     await expect(page.stopTrace()).rejects.toThrow('trace end failed');
     expect(rawCdp.listenerCount('Tracing.tracingComplete')).toBe(0);
     expect(page.isHealthy()).toBe(false);
-    await expect(page.startTrace()).rejects.toThrow('Close the browser');
+    await expect(page.startTrace(sink)).rejects.toThrow('Close the browser');
   });
 
   it('closes a Chromium trace stream when reading fails', async () => {
@@ -253,11 +260,12 @@ describe(PlaywrightCapturePage, () => {
       return {};
     });
     const page = new PlaywrightCapturePage({} as Page, rawCdp as unknown as CDPSession);
+    const { sink } = createTraceCollector();
 
-    await page.startTrace();
+    await page.startTrace(sink);
     await expect(page.stopTrace()).rejects.toThrow('trace read failed');
     expect(rawCdp.send).toHaveBeenCalledWith('IO.close', { handle: 'trace-stream' });
-    await expect(page.startTrace()).rejects.toThrow('Close the browser');
+    await expect(page.startTrace(sink)).rejects.toThrow('Close the browser');
   });
 
   it('rejects a trace promptly when the CDP session closes', async () => {
@@ -267,8 +275,9 @@ describe(PlaywrightCapturePage, () => {
       return {};
     });
     const page = new PlaywrightCapturePage({} as Page, rawCdp as unknown as CDPSession);
+    const { sink } = createTraceCollector();
 
-    await page.startTrace();
+    await page.startTrace(sink);
     await expect(page.stopTrace()).rejects.toThrow('CDP session closed');
     expect(page.isHealthy()).toBe(false);
     expect(rawCdp.listenerCount('Tracing.tracingComplete')).toBe(0);
@@ -286,8 +295,9 @@ describe(PlaywrightCapturePage, () => {
         : Promise.resolve({}),
     );
     const page = new PlaywrightCapturePage({} as Page, rawCdp as unknown as CDPSession);
+    const { sink } = createTraceCollector();
 
-    await page.startTrace();
+    await page.startTrace(sink);
     const stopping = page.stopTrace();
     await Promise.resolve();
     rawCdp.emit('close');

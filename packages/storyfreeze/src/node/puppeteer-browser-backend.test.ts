@@ -3,6 +3,11 @@ import type { Browser, HTTPRequest, Page } from 'puppeteer-core';
 import { describe, expect, it, vi } from 'vite-plus/test';
 import { PuppeteerBrowserBackend, PuppeteerCapturePage } from './puppeteer-browser-backend.js';
 
+function createTraceCollector() {
+  const chunks: Buffer[] = [];
+  return { chunks, sink: { write: vi.fn(async (chunk: Buffer) => void chunks.push(chunk)) } };
+}
+
 describe(PuppeteerCapturePage, () => {
   it('keeps request identity across start and completion events', () => {
     const rawPage = new EventEmitter() as unknown as Page;
@@ -49,21 +54,23 @@ describe(PuppeteerCapturePage, () => {
     const start = vi.fn(async () => new Promise<void>(resolve => (releaseTraceStart = resolve)));
     const stop = vi.fn(async () => trace);
     const page = new PuppeteerCapturePage({ tracing: { start, stop } } as unknown as Page);
+    const { chunks, sink } = createTraceCollector();
 
-    const startingTrace = page.startTrace();
+    const startingTrace = page.startTrace(sink);
     await Promise.resolve();
-    await expect(page.startTrace()).rejects.toThrow('already running');
+    await expect(page.startTrace(sink)).rejects.toThrow('already running');
     releaseTraceStart();
     await startingTrace;
-    await expect(page.stopTrace()).resolves.toBe(trace);
+    await expect(page.stopTrace()).resolves.toBeUndefined();
+    expect(chunks).toEqual([trace]);
     await expect(page.stopTrace()).rejects.toThrow('has not been started');
     start.mockImplementation(async () => {});
     start.mockRejectedValueOnce(new Error('trace start failed'));
-    await expect(page.startTrace()).rejects.toThrow('trace start failed');
-    await page.startTrace();
+    await expect(page.startTrace(sink)).rejects.toThrow('trace start failed');
+    await page.startTrace(sink);
     stop.mockRejectedValueOnce(new Error('trace stop failed'));
     await expect(page.stopTrace()).rejects.toThrow('trace stop failed');
-    await expect(page.startTrace()).rejects.toThrow('Close the browser');
+    await expect(page.startTrace(sink)).rejects.toThrow('Close the browser');
     expect(start).toHaveBeenCalledTimes(3);
   });
 });

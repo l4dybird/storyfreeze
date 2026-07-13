@@ -39,6 +39,7 @@ import {
   type NavigationOptions,
   type RequestListeners,
   type ScreenshotCaptureOptions,
+  type TraceSink,
 } from './browser-backend.js';
 
 const require = createRequire(import.meta.url);
@@ -217,6 +218,7 @@ export async function findChrome(options: FindChromeOptions): Promise<FindChrome
 export class PuppeteerCapturePage implements CapturePage {
   private readonly requests = new WeakMap<HTTPRequest, BrowserRequest>();
   private traceState: 'idle' | 'starting' | 'active' | 'stopping' | 'failed' = 'idle';
+  private traceSink?: TraceSink;
 
   constructor(private readonly rawPage: Page) {}
 
@@ -294,7 +296,7 @@ export class PuppeteerCapturePage implements CapturePage {
     return this.rawPage.setViewport(viewport);
   }
 
-  async startTrace() {
+  async startTrace(sink: TraceSink) {
     if (this.traceState === 'failed') {
       throw new Error('The Chromium trace state is unavailable. Close the browser before tracing again.');
     }
@@ -302,9 +304,11 @@ export class PuppeteerCapturePage implements CapturePage {
     this.traceState = 'starting';
     try {
       await this.rawPage.tracing.start();
+      this.traceSink = sink;
       this.traceState = 'active';
     } catch (error) {
       this.traceState = 'idle';
+      this.traceSink = undefined;
       throw error;
     }
   }
@@ -314,10 +318,12 @@ export class PuppeteerCapturePage implements CapturePage {
     this.traceState = 'stopping';
     try {
       const trace = await this.rawPage.tracing.stop();
+      if (trace) await this.traceSink!.write(trace);
       this.traceState = 'idle';
-      return trace;
+      this.traceSink = undefined;
     } catch (error) {
       this.traceState = 'failed';
+      this.traceSink = undefined;
       throw error;
     }
   }

@@ -11,6 +11,13 @@ export type RunMode = 'simple' | 'managed';
 
 /**
  *
+ * Controls whether capture workers use separate browser processes or browser contexts.
+ *
+ **/
+export type BrowserIsolationMode = 'process' | 'context';
+
+/**
+ *
  * Parameters for sharding.
  *
  **/
@@ -44,6 +51,7 @@ export interface MainOptions extends BrowserRuntimeOptions {
   trace: boolean;
   forwardConsoleLogs: boolean;
   parallel: number;
+  browserIsolation: BrowserIsolationMode;
   shard: ShardOptions;
   metricsWatchRetryCount: number;
   chromiumChannel: ChromeChannel;

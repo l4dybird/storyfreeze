@@ -1,6 +1,7 @@
 import { fileURLToPath } from 'node:url';
 import { BaseBrowser, MetricsWatcher } from './browser.js';
-import type { BrowserBackend, BrowserConsoleMessage } from './browser-backend.js';
+import type { BrowserBackend, BrowserConsoleMessage, BrowserSessionOptions } from './browser-backend.js';
+import type { BrowserSessionSource } from './browser-process-coordinator.js';
 import { sleep } from './async-utils.js';
 import type { Story } from './story.js';
 import type { ManagedStorybookConnection } from './managed-storybook-connection.js';
@@ -65,6 +66,14 @@ export function shouldRecoverPlaywrightWorker(options: {
   );
 }
 
+export function emulationProfileKey(viewport: Viewport) {
+  return JSON.stringify({
+    deviceScaleFactor: viewport.deviceScaleFactor ?? 1,
+    hasTouch: viewport.hasTouch ?? false,
+    isMobile: viewport.isMobile ?? false,
+  });
+}
+
 /**
  *
  * A worker to capture screenshot images.
@@ -82,6 +91,7 @@ export class CapturingBrowser extends BaseBrowser {
   private navigator?: StoryNavigator;
   private diagnosticLastPhase?: string;
   private diagnosticOutcome: 'captured' | 'failed' | 'retry' | 'skipped' = 'failed';
+  private currentEmulationProfile = emulationProfileKey({ width: 800, height: 600 });
 
   /**
    *
@@ -98,8 +108,9 @@ export class CapturingBrowser extends BaseBrowser {
     private mode: RunMode,
     private readonly idx: number,
     backend?: BrowserBackend,
+    sessionSource?: BrowserSessionSource,
   ) {
-    super(opt, backend, { role: 'capture-worker', workerId: idx });
+    super(opt, backend, { role: 'capture-worker', workerId: idx }, sessionSource);
     this.baseScreenshotOptions = createBaseScreenshotOptions(opt);
   }
 
@@ -116,8 +127,9 @@ export class CapturingBrowser extends BaseBrowser {
    * @override
    *
    **/
-  async boot() {
-    await super.boot();
+  async boot(sessionOptions?: BrowserSessionOptions) {
+    await super.boot(sessionOptions);
+    this.currentEmulationProfile = emulationProfileKey(sessionOptions?.viewport ?? { width: 800, height: 600 });
     try {
       await this.expose();
       this.resourceWatcher = new ResourceWatcher(this.page);
@@ -221,7 +233,7 @@ export class CapturingBrowser extends BaseBrowser {
     return undefined;
   }
 
-  private async setViewport(opt: StrictScreenshotOptions) {
+  private async setViewport(opt: StrictScreenshotOptions, onPageRecreated?: () => void) {
     if (!this.currentStory) {
       throw new InvalidCurrentStoryStateError();
     }
@@ -255,6 +267,22 @@ export class CapturingBrowser extends BaseBrowser {
       nextViewport = opt.viewport;
     }
 
+    const nextEmulationProfile = emulationProfileKey(nextViewport);
+    let contextRecreated = false;
+    if (
+      this.opt.browserIsolation === 'context' &&
+      this.backend.name === 'playwright' &&
+      nextEmulationProfile !== this.currentEmulationProfile
+    ) {
+      this.debug('Recreate browser context for emulation profile', nextEmulationProfile);
+      await this.close();
+      await this.boot({ viewport: nextViewport });
+      onPageRecreated?.();
+      this.viewport = undefined;
+      this.touched = false;
+      contextRecreated = true;
+    }
+
     // Sometimes, `page.screenshot` is completed before applying viewport unfortunately.
     // So we compare the current viewport with the next viewport and wait for `opt.viewportDelay` time if they are different.
     if (!this.viewport || JSON.stringify(this.viewport) !== JSON.stringify(nextViewport)) {
@@ -263,13 +291,13 @@ export class CapturingBrowser extends BaseBrowser {
       // See also https://github.com/puppeteer/puppeteer/blob/main/docs/api/puppeteer.viewport.md
       const willBeReloaded =
         nextViewport.isMobile !== this.viewport?.isMobile || nextViewport.hasTouch !== this.viewport?.hasTouch;
-      if (willBeReloaded) {
+      if (willBeReloaded && !contextRecreated) {
         // Avoid racing Puppeteer's implicit reload against Storybook's preview lifecycle.
         await this.page.goto('about:blank', { waitUntil: 'domcontentloaded' });
       }
       await this.page.setViewport(nextViewport);
       this.viewport = nextViewport;
-      if (willBeReloaded || this.opt.reloadAfterChangeViewport) {
+      if (contextRecreated || willBeReloaded || this.opt.reloadAfterChangeViewport) {
         // Start a fresh owned request after the viewport has settled.
         await this.setCurrentStory(this.currentStory);
         await sleep(this.opt.viewportDelay);
@@ -385,6 +413,10 @@ export class CapturingBrowser extends BaseBrowser {
     this.opt.logger.warn(
       `Playwright browser session became unusable. Restarting this capture worker. ${originalMessage}`,
     );
+    await this.restartCaptureSession(error);
+  }
+
+  private async restartCaptureSession(originalError?: unknown) {
     await this.close();
     this._currentStory = undefined;
     this.viewport = undefined;
@@ -392,7 +424,10 @@ export class CapturingBrowser extends BaseBrowser {
     try {
       await this.boot();
     } catch (recoveryError) {
-      throw new AggregateError([error, recoveryError], 'Failed to restart the Playwright capture worker.');
+      if (originalError !== undefined) {
+        throw new AggregateError([originalError, recoveryError], 'Failed to restart the Playwright capture worker.');
+      }
+      throw recoveryError;
     }
   }
 
@@ -488,7 +523,13 @@ export class CapturingBrowser extends BaseBrowser {
       }
     }
 
-    const unsubscribeConsole = this.page.subscribeConsole(onConsoleLog);
+    let unsubscribeConsole = this.page.subscribeConsole(onConsoleLog);
+    const rebindConsole = () => {
+      const unsubscribePreviousPage = unsubscribeConsole;
+      unsubscribeConsole = () => {};
+      unsubscribePreviousPage();
+      unsubscribeConsole = this.page.subscribeConsole(onConsoleLog);
+    };
     let traceStarted = false;
     // Capture this outside so it can be used for the filePath generation for the trace.
     let defaultVariantSuffix: string | undefined;
@@ -505,6 +546,7 @@ export class CapturingBrowser extends BaseBrowser {
       } catch (error) {
         if (error instanceof PreviewReadyTimeoutError && this.currentStoryRetryCount < this.opt.captureMaxRetryCount) {
           this.opt.logger.warn(`${error.message} Retry to screenshot this story after this sequence.`);
+          if (this.opt.browserIsolation === 'context') await this.restartCaptureSession();
           this.diagnosticOutcome = 'retry';
           return { buffer: null, succeeded: false, variantKeysToPush: [], defaultVariantSuffix: '' };
         }
@@ -546,7 +588,9 @@ export class CapturingBrowser extends BaseBrowser {
 
       // Change browser's viewport if needed.
       const previousViewport = JSON.stringify(this.viewport);
-      const vpChanged = await this.measurePhase('viewport', () => this.setViewport(mergedScreenshotOptions));
+      const vpChanged = await this.measurePhase('viewport', () =>
+        this.setViewport(mergedScreenshotOptions, rebindConsole),
+      );
       // Skip to capture if the viewport option is invalid.
       if (!vpChanged) {
         this.diagnosticOutcome = 'skipped';

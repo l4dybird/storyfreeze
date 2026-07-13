@@ -329,11 +329,22 @@ describe(PlaywrightBrowserBackend, () => {
     });
 
     const instance = await backend.launch({ chromiumChannel: '*' });
-    const session = await instance.newSession();
+    const session = await instance.newSession({
+      viewport: {
+        width: 390,
+        height: 844,
+        deviceScaleFactor: 3,
+        isMobile: true,
+        hasTouch: true,
+      },
+    });
+    const secondSession = await instance.newSession();
+    expect(instance.isHealthy()).toBe(true);
     expect(session.isHealthy()).toBe(true);
     rawPage.emit('crash');
     expect(session.isHealthy()).toBe(false);
     await session.close();
+    await secondSession.close();
     await instance.close();
 
     expect(launch).toHaveBeenCalledWith({
@@ -342,11 +353,43 @@ describe(PlaywrightBrowserBackend, () => {
       headless: true,
     });
     expect(findChrome).not.toHaveBeenCalled();
-    expect(vi.mocked(browser.newContext)).toHaveBeenCalledWith({ viewport: { width: 800, height: 600 } });
+    expect(vi.mocked(browser.newContext)).toHaveBeenNthCalledWith(1, {
+      viewport: { width: 390, height: 844 },
+      deviceScaleFactor: 3,
+      isMobile: true,
+      hasTouch: true,
+    });
+    expect(vi.mocked(browser.newContext)).toHaveBeenNthCalledWith(2, { viewport: { width: 800, height: 600 } });
     expect(rawCdp.send).toHaveBeenCalledWith('Performance.enable', { timeDomain: 'threadTicks' });
     expect(rawCdp.send).toHaveBeenCalledWith('Performance.enable');
-    expect(closeContext).toHaveBeenCalledTimes(1);
+    expect(closeContext).toHaveBeenCalledTimes(2);
     expect(closeBrowser).toHaveBeenCalledTimes(1);
+  });
+
+  it('closes a context when session creation fails', async () => {
+    const closeContext = vi.fn(async () => {});
+    const context = Object.assign(new EventEmitter(), {
+      close: closeContext,
+      newPage: vi.fn(async () => {
+        throw new Error('page creation failed');
+      }),
+    }) as unknown as BrowserContext;
+    const browser = Object.assign(new EventEmitter(), {
+      close: vi.fn(async () => {}),
+      isConnected: vi.fn(() => true),
+      newContext: vi.fn(async () => context),
+    }) as unknown as Browser;
+    const backend = new PlaywrightBrowserBackend({
+      canAccess: () => true,
+      findChrome: vi.fn(async () => ({ executablePath: null, type: null }) as const),
+      launch: vi.fn(async () => browser),
+      managedExecutablePath: () => '/managed/chromium',
+    });
+
+    const instance = await backend.launch({});
+
+    await expect(instance.newSession()).rejects.toThrow('page creation failed');
+    expect(closeContext).toHaveBeenCalledTimes(1);
   });
 
   it('honors an explicitly requested installed channel before managed Chromium', async () => {

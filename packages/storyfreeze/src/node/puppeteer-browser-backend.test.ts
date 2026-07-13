@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events';
-import type { HTTPRequest, Page } from 'puppeteer-core';
+import type { Browser, HTTPRequest, Page } from 'puppeteer-core';
 import { describe, expect, it, vi } from 'vite-plus/test';
-import { PuppeteerCapturePage } from './puppeteer-browser-backend.js';
+import { PuppeteerBrowserBackend, PuppeteerCapturePage } from './puppeteer-browser-backend.js';
 
 describe(PuppeteerCapturePage, () => {
   it('keeps request identity across start and completion events', () => {
@@ -65,5 +65,30 @@ describe(PuppeteerCapturePage, () => {
     await expect(page.stopTrace()).rejects.toThrow('trace stop failed');
     await expect(page.startTrace()).rejects.toThrow('Close the browser');
     expect(start).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe(PuppeteerBrowserBackend, () => {
+  it('reports whether its browser process is connected', async () => {
+    let connected = true;
+    const browser = {
+      close: vi.fn(async () => {}),
+      isConnected: vi.fn(() => connected),
+    } as unknown as Browser;
+    class TestBackend extends PuppeteerBrowserBackend {
+      protected override locateChrome() {
+        return Promise.resolve({ executablePath: '/chromium', type: 'user' } as const);
+      }
+
+      protected override launchBrowser() {
+        return Promise.resolve(browser);
+      }
+    }
+
+    const instance = await new TestBackend().launch({});
+
+    expect(instance.isHealthy()).toBe(true);
+    connected = false;
+    expect(instance.isHealthy()).toBe(false);
   });
 });

@@ -23,6 +23,7 @@ import {
   type BrowserRequest,
   type BrowserRuntimeOptions,
   type BrowserSession,
+  type BrowserSessionOptions,
   type CapturePage,
   type NavigationOptions,
   type RequestListeners,
@@ -414,8 +415,18 @@ class PlaywrightBrowserInstance implements BrowserInstance {
     return this.rawBrowser.close();
   }
 
-  async newSession() {
-    const context = await this.rawBrowser.newContext({ viewport: { width: 800, height: 600 } });
+  isHealthy() {
+    return this.rawBrowser.isConnected();
+  }
+
+  async newSession(options?: BrowserSessionOptions) {
+    const viewport = options?.viewport ?? { width: 800, height: 600 };
+    const context = await this.rawBrowser.newContext({
+      viewport: { width: viewport.width, height: viewport.height },
+      ...(viewport.deviceScaleFactor === undefined ? {} : { deviceScaleFactor: viewport.deviceScaleFactor }),
+      ...(viewport.isMobile === undefined ? {} : { isMobile: viewport.isMobile }),
+      ...(viewport.hasTouch === undefined ? {} : { hasTouch: viewport.hasTouch }),
+    });
     try {
       const page = await context.newPage();
       const cdp = await context.newCDPSession(page);

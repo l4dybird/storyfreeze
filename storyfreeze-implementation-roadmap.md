@@ -2,13 +2,13 @@
 
 - 文書版: 0.2-draft
 - 作成日: 2026-07-11
-- 更新日: 2026-07-12
+- 更新日: 2026-07-13
 - ベースリポジトリ: `huuyafwww/storycapture`
 - 新プロジェクト名: **StoryFreeze**
 - npm パッケージ候補: `storyfreeze`
 - CLI: `storyfreeze`
 - 対象: Storybook 10 / Chromium / Playwright
-- ステータス: Phase 5B実装中
+- ステータス: Phase 5E実装中
 
 ## 1. 結論
 
@@ -940,6 +940,19 @@ storyfreeze <url> --browser-isolation=process
 
 CPU traceがbrowser単位で競合する場合、`--trace` 時はprocess modeまたは直列化へ自動切替する。
 
+PR-530での決定:
+
+- CLIに `--browser-isolation process|context` を追加し、性能gateを満たすまでは `process` をdefaultとする
+- `context` はPlaywright専用とし、Puppeteer fallbackとの組み合わせはエラーにする
+- `--trace` と `context` の組み合わせは警告してeffective modeを `process` へ変更し、`parallel=4` を含む指定parallel数は維持する
+- verbose logにeffective isolation modeを出力する
+- 既存managed Storybook E2Eを `context` / `parallel=4` へ転用し、E2E件数は増やさない。default process runと明示Puppeteer fallback runは維持する
+- defaultが変わらないため、このPRではmigration guideを追加しない
+
+判断記録:
+
+- [ADR-012: Browser process and context isolation](docs/adr/012-browser-isolation.md)
+
 #### 性能gate
 
 Context modeをdefaultにする目標:
@@ -1145,7 +1158,7 @@ nightly:
 | [ADR-009](docs/adr/009-playwright-browser-distribution.md)       | Playwright browser配布方針                               |
 | [ADR-010](docs/adr/010-capture-beyond-viewport-compatibility.md) | `captureBeyondViewport`互換方針                          |
 | [ADR-011](docs/adr/011-cpu-trace-parallelism.md)                 | CPU traceとparallelism                                   |
-| ADR-012                                                          | process/context isolationのdefault                       |
+| [ADR-012](docs/adr/012-browser-isolation.md)                     | process/context isolationのdefault                       |
 
 ## 17. IssueラベルとMilestone
 

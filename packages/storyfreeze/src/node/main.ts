@@ -1,6 +1,7 @@
 import nanomatch from 'nanomatch';
 import { BaseBrowser, ChromiumNotFoundError, puppeteerBrowserBackend } from './browser.js';
 import type { BrowserBackend } from './browser-backend.js';
+import { BrowserProcessCoordinator, type BrowserSessionSource } from './browser-process-coordinator.js';
 import type { Story } from './story.js';
 import { CapturingBrowser } from './capturing-browser.js';
 import type { MainOptions, RunMode } from './types.js';
@@ -74,9 +75,10 @@ async function bootCapturingBrowserAsWorkers(
   opt: MainOptions,
   mode: RunMode,
   backend: BrowserBackend,
+  sessionSource?: BrowserSessionSource,
 ) {
   const browsers = [...new Array(Math.max(opt.parallel, 1)).keys()].map(
-    i => new CapturingBrowser(connection, opt, mode, i, backend),
+    i => new CapturingBrowser(connection, opt, mode, i, backend, sessionSource),
   );
   await bootCaptureWorkers(browsers, opt.signal);
   opt.logger.debug(`Started ${browsers.length} capture browsers`);
@@ -105,6 +107,7 @@ function toLegacyStory(descriptor: StoryDescriptor): Story {
 type RuntimeResources = {
   workers: Array<Pick<CapturingBrowser, 'close'>>;
   storiesBrowser?: Pick<BaseBrowser, 'close'>;
+  browserProcess?: Pick<BrowserProcessCoordinator, 'close'>;
   connection?: Pick<ManagedStorybookConnection, 'disconnect'>;
 };
 
@@ -122,6 +125,9 @@ export async function disposeRuntimeResources(resources: RuntimeResources, logge
   );
   if (resources.storiesBrowser) {
     await closeSafely('stories browser', () => resources.storiesBrowser!.close());
+  }
+  if (resources.browserProcess) {
+    await closeSafely('shared browser process', () => resources.browserProcess!.close());
   }
   if (resources.connection) {
     await closeSafely('Storybook connection', () => resources.connection!.disconnect());
@@ -146,9 +152,13 @@ const defaultMainDependencies: MainDependencies = {
 export async function main(mainOptions: MainOptions, overrides: Partial<MainDependencies> = {}) {
   const { browserBackend } = { ...defaultMainDependencies, ...overrides };
   const logger = mainOptions.logger;
+  const browserIsolation = mainOptions.trace ? 'process' : mainOptions.browserIsolation;
+  const browserOptions =
+    browserIsolation === mainOptions.browserIsolation ? mainOptions : { ...mainOptions, browserIsolation };
   const fileSystem = new FileSystem(mainOptions);
   let connection: ManagedStorybookConnection | undefined;
   let storiesBrowser: BaseBrowser | undefined;
+  let browserProcess: BrowserProcessCoordinator | undefined;
   let workers: CapturingBrowser[] = [];
 
   try {
@@ -157,8 +167,15 @@ export async function main(mainOptions: MainOptions, overrides: Partial<MainDepe
     await abortable(connection.connect(), mainOptions.signal);
     logger.debug('Created to connection.');
 
+    if (browserIsolation === 'context' && browserBackend.name !== 'playwright') {
+      throw new Error('Context browser isolation is supported only by the Playwright backend.');
+    }
+    if (browserIsolation === 'context') {
+      browserProcess = new BrowserProcessCoordinator(browserBackend, browserOptions);
+    }
+
     // Launch a browser process and fetch names of all stories.
-    storiesBrowser = new BaseBrowser(mainOptions, browserBackend, { role: 'story-index' });
+    storiesBrowser = new BaseBrowser(browserOptions, browserBackend, { role: 'story-index' }, browserProcess);
     await storiesBrowser.boot();
     throwIfAborted(mainOptions.signal);
     logger.log('Executable Chromium path:', logger.color.magenta(storiesBrowser.executablePath));
@@ -177,7 +194,7 @@ export async function main(mainOptions: MainOptions, overrides: Partial<MainDepe
     }
 
     // Detect managed mode from StoryFreeze's owned preview protocol on the story iframe.
-    const mode = await abortable(detectRunMode(storiesBrowser, mainOptions), mainOptions.signal);
+    const mode = await abortable(detectRunMode(storiesBrowser, browserOptions), mainOptions.signal);
     await storiesBrowser.close();
     storiesBrowser = undefined;
 
@@ -205,7 +222,7 @@ export async function main(mainOptions: MainOptions, overrides: Partial<MainDepe
     }
 
     // Launch browser processes to capture each story.
-    workers = await bootCapturingBrowserAsWorkers(connection, mainOptions, mode, browserBackend);
+    workers = await bootCapturingBrowserAsWorkers(connection, browserOptions, mode, browserBackend, browserProcess);
     logger.debug('Created workers.');
 
     // Execution caputuring procedure.
@@ -236,7 +253,7 @@ export async function main(mainOptions: MainOptions, overrides: Partial<MainDepe
     throw error;
   } finally {
     // Shutdown workers and dispose connection.
-    await disposeRuntimeResources({ workers, storiesBrowser, connection }, logger);
+    await disposeRuntimeResources({ workers, storiesBrowser, browserProcess, connection }, logger);
     logger.debug('Ended to dispose workers.');
     logger.debug('Ended to dispose connection.');
   }

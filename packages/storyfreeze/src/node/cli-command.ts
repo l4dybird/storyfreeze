@@ -22,7 +22,7 @@ import {
 import { Logger } from './logger.js';
 import { main } from './main.js';
 import { parseShardOptions } from './shard-utilities.js';
-import type { MainOptions } from './types.js';
+import type { BrowserIsolationMode, MainOptions } from './types.js';
 
 const packageVersion = (
   JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as { version: string }
@@ -31,6 +31,7 @@ const packageVersion = (
 const defaultBrowserLaunchOptions =
   '{ "args": ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"] }';
 const chromiumChannels = ['puppeteer', 'canary', 'stable', '*'] as const;
+const browserIsolationModes = ['process', 'context'] as const;
 
 const storyfreezeCommandArgs = {
   'storybook-url': {
@@ -114,6 +115,12 @@ const storyfreezeCommandArgs = {
     default: 'playwright',
     description: 'Browser automation backend.',
   },
+  browserIsolation: {
+    type: 'enum',
+    choices: browserIsolationModes,
+    default: 'process',
+    description: 'Browser isolation mode for capture workers.',
+  },
   browserLaunchOptions: {
     type: 'string',
     description: `JSON string of browser launch options. (default: ${defaultBrowserLaunchOptions})`,
@@ -152,6 +159,7 @@ export interface StoryfreezeCliValues {
   chromiumChannel: ChromeChannel;
   chromiumPath: string;
   browserBackend: BrowserBackendName;
+  browserIsolation: BrowserIsolationMode;
   browserLaunchOptions?: string;
   puppeteerLaunchConfig?: string;
 }
@@ -227,6 +235,13 @@ function toMainOptions(
   const parsedLaunchOptions = JSON.parse(
     values.browserLaunchOptions ?? values.puppeteerLaunchConfig ?? defaultBrowserLaunchOptions,
   ) as BrowserLaunchOptions;
+  let browserIsolation = values.browserIsolation;
+  if (values.trace && browserIsolation === 'context') {
+    logger.warn(
+      `--trace requires process browser isolation. Using --browser-isolation process with --parallel ${values.parallel}.`,
+    );
+    browserIsolation = 'process';
+  }
   return {
     serverOptions: {
       storybookUrl: values.storybookUrl,
@@ -240,6 +255,7 @@ function toMainOptions(
     delay: values.delay,
     viewports: values.viewport ?? ['800x600'],
     parallel: values.parallel,
+    browserIsolation,
     shard: parseShardOptions(values.shard),
     captureTimeout: values.captureTimeout,
     captureMaxRetryCount: values.captureMaxRetryCount,
@@ -283,6 +299,10 @@ async function execute(values: StoryfreezeCliValues, dependencies: CliDependenci
     logError(logger, error);
     return 1;
   }
+  if (browserBackend.name === 'puppeteer' && values.browserIsolation === 'context') {
+    logger.error('--browser-isolation context is only supported by the Playwright backend.');
+    return 1;
+  }
 
   let opt: MainOptions;
   try {
@@ -312,6 +332,7 @@ async function execute(values: StoryfreezeCliValues, dependencies: CliDependenci
 
   logger.debug('Option:', rest);
   logger.debug('Browser backend:', browserBackend.name);
+  logger.debug('Browser isolation:', opt.browserIsolation);
 
   try {
     const [numberOfCaptured, duration] = await time(

@@ -1,7 +1,8 @@
 import type { Browser, BrowserLaunchArgumentOptions, LaunchOptions, Page } from 'puppeteer-core';
 import { describe, expect, it, vi } from 'vite-plus/test';
-import type { BrowserMetrics, CapturePage } from './browser-backend.js';
+import type { BrowserMetrics, BrowserSession, CapturePage } from './browser-backend.js';
 import { BaseBrowser, ChromiumNotFoundError, MetricsWatcher, getDeviceDescriptors } from './browser.js';
+import type { BrowserSessionSource } from './browser-process-coordinator.js';
 import {
   PuppeteerBrowserBackend,
   findChrome,
@@ -116,6 +117,41 @@ describe(BaseBrowser, () => {
 
     await expect(browser.close()).resolves.toBeUndefined();
     expect(backend.closeBrowser).toHaveBeenCalledTimes(1);
+  });
+
+  it('closes only its session when using a shared browser process', async () => {
+    let current = true;
+    const session = {
+      close: vi.fn(async () => Promise.reject(new Error('context close failed'))),
+      isHealthy: vi.fn(() => true),
+      page: {},
+    } as unknown as BrowserSession;
+    const source = {
+      close: vi.fn(async () => {}),
+      isCurrent: vi.fn(() => current),
+      openSession: vi.fn(async () => ({ executablePath: '/shared/chromium', generation: 7, session })),
+    } satisfies BrowserSessionSource;
+    const backend = new TestBackend();
+    class SharedBrowser extends BaseBrowser {
+      healthy() {
+        return this.isSessionHealthy();
+      }
+    }
+    const browser = new SharedBrowser({}, backend, {}, source);
+
+    await browser.boot();
+    expect(browser.executablePath).toBe('/shared/chromium');
+    expect(browser.healthy()).toBe(true);
+    current = false;
+    expect(browser.healthy()).toBe(false);
+
+    await expect(browser.close()).resolves.toBeUndefined();
+    await browser.close();
+
+    expect(source.openSession).toHaveBeenCalledTimes(1);
+    expect(session.close).toHaveBeenCalledTimes(1);
+    expect(source.close).not.toHaveBeenCalled();
+    expect(backend.closeBrowser).not.toHaveBeenCalled();
   });
 });
 

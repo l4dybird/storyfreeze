@@ -5,9 +5,11 @@ import type { MainOptions } from './types.js';
 import sanitize from 'sanitize-filename';
 
 export class FileSystem {
+  private readonly reservedPaths = new Map<string, string>();
+
   constructor(private opt: MainOptions) {}
 
-  private getPath(kind: string, story: string, suffix: string[], extension: string) {
+  private getPath(kind: string, story: string, suffix: string[], extension: string, logicalId?: string) {
     const name = this.opt.flat
       ? sanitize((kind + '_' + story).replace(/\//g, '_'))
       : kind
@@ -16,9 +18,26 @@ export class FileSystem {
           .join('/') +
         '/' +
         sanitize(story);
-    const filePath = path.join(this.opt.outDir, name + (suffix.length ? `_${suffix.join('_')}` : '') + extension);
+    const safeSuffix = suffix.map(part => sanitize(part));
+    const relativePath = name + (safeSuffix.length ? `_${safeSuffix.join('_')}` : '') + extension;
+    const outputRoot = path.resolve(this.opt.outDir);
+    const resolvedPath = path.resolve(outputRoot, relativePath);
+    const relativeToRoot = path.relative(outputRoot, resolvedPath);
+    if (!relativeToRoot || relativeToRoot.startsWith(`..${path.sep}`) || path.isAbsolute(relativeToRoot)) {
+      throw new Error(`Refusing to write outside the screenshot output directory: ${relativePath}`);
+    }
 
-    return filePath;
+    const reservationKey = process.platform === 'win32' ? resolvedPath.toLowerCase() : resolvedPath;
+    const identity = logicalId ?? JSON.stringify({ extension, kind, story, suffix });
+    const reservedBy = this.reservedPaths.get(reservationKey);
+    if (reservedBy !== undefined && reservedBy !== identity) {
+      throw new Error(
+        `Output path collision for ${relativePath}. Use unique story names and variant suffixes so captures cannot overwrite each other.`,
+      );
+    }
+    this.reservedPaths.set(reservationKey, identity);
+
+    return path.join(this.opt.outDir, relativePath);
   }
 
   private async writeAtomic(filePath: string, buffer: Buffer) {
@@ -45,8 +64,8 @@ export class FileSystem {
    * @returns Absolute file path
    *
    **/
-  async saveScreenshot(kind: string, story: string, suffix: string[], buffer: Buffer) {
-    const filePath = this.getPath(kind, story, suffix, '.png');
+  async saveScreenshot(kind: string, story: string, suffix: string[], buffer: Buffer, logicalId?: string) {
+    const filePath = this.getPath(kind, story, suffix, '.png', logicalId);
 
     await this.writeAtomic(filePath, buffer);
 
@@ -64,8 +83,8 @@ export class FileSystem {
    * @returns Absolute file path
    *
    **/
-  async saveTrace(kind: string, story: string, suffix: string[], buffer: Buffer) {
-    const filePath = this.getPath(kind, story, [...suffix, 'trace'], '.json');
+  async saveTrace(kind: string, story: string, suffix: string[], buffer: Buffer, logicalId?: string) {
+    const filePath = this.getPath(kind, story, [...suffix, 'trace'], '.json', logicalId);
 
     await this.writeAtomic(filePath, buffer);
 

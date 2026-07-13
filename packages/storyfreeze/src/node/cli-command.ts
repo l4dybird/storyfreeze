@@ -223,11 +223,28 @@ function createLogger(values: Pick<StoryfreezeCliValues, 'silent' | 'verbose'>) 
   return new Logger(values.verbose ? 'verbose' : values.silent ? 'silent' : 'normal');
 }
 
+function assertSafeInteger(name: string, value: number, minimum: number) {
+  if (Number.isSafeInteger(value) && value >= minimum) return;
+  throw new Error(`--${name} must be a safe integer greater than or equal to ${minimum}.`);
+}
+
+function validateNumericOptions(values: StoryfreezeCliValues) {
+  assertSafeInteger('parallel', values.parallel, 1);
+  assertSafeInteger('delay', values.delay, 0);
+  assertSafeInteger('server-timeout', values.serverTimeout, 1);
+  assertSafeInteger('capture-timeout', values.captureTimeout, 1);
+  assertSafeInteger('capture-max-retry-count', values.captureMaxRetryCount, 0);
+  assertSafeInteger('metrics-watch-retry-count', values.metricsWatchRetryCount, 1);
+  assertSafeInteger('viewport-delay', values.viewportDelay, 0);
+  assertSafeInteger('state-change-delay', values.stateChangeDelay, 0);
+}
+
 function toMainOptions(
   values: StoryfreezeCliValues,
   logger = createLogger(values),
   env: NodeJS.ProcessEnv = process.env,
 ): MainOptions {
+  validateNumericOptions(values);
   if (values.browserLaunchOptions !== undefined && values.puppeteerLaunchConfig !== undefined) {
     throw new Error('--browser-launch-options and --puppeteer-launch-config cannot be used together.');
   }
@@ -291,6 +308,14 @@ async function execute(values: StoryfreezeCliValues, dependencies: CliDependenci
     return 0;
   }
 
+  let opt: MainOptions;
+  try {
+    opt = toMainOptions(values, logger, dependencies.env);
+  } catch (error) {
+    logError(logger, error);
+    return 1;
+  }
+
   let browserBackend: BrowserBackend;
   try {
     browserBackend = await dependencies.resolveBrowserBackend(values.browserBackend);
@@ -300,14 +325,6 @@ async function execute(values: StoryfreezeCliValues, dependencies: CliDependenci
   }
   if (browserBackend.name === 'puppeteer' && values.browserIsolation === 'context') {
     logger.error('--browser-isolation context is only supported by the Playwright backend.');
-    return 1;
-  }
-
-  let opt: MainOptions;
-  try {
-    opt = toMainOptions(values, logger, dependencies.env);
-  } catch (error) {
-    logError(logger, error);
     return 1;
   }
   if (values.puppeteerLaunchConfig !== undefined) {

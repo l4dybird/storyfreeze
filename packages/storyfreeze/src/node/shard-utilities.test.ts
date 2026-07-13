@@ -34,6 +34,10 @@ describe(parseShardOptions, () => {
     expect(() => parseShardOptions('4/')).toThrowError();
     expect(() => parseShardOptions('4/3')).toThrowError();
     expect(() => parseShardOptions('ab/c')).toThrowError();
+    expect(() => parseShardOptions('1foo/2bar')).toThrowError();
+    expect(() => parseShardOptions('1.9/2')).toThrowError();
+    expect(() => parseShardOptions('1e2/200')).toThrowError();
+    expect(() => parseShardOptions('9007199254740992/9007199254740992')).toThrowError();
   });
 });
 

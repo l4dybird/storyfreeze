@@ -2,13 +2,15 @@ import type { Story } from './story.js';
 import type { ShardOptions } from './types.js';
 
 export const parseShardOptions = (arg: string): ShardOptions => {
-  const split = arg.split('/');
-
-  const shardNumber = parseInt(split[0].trim(), 10);
-  const totalShards = parseInt(split[1].trim(), 10);
-
-  if (split.length !== 2 || Number.isNaN(shardNumber) || Number.isNaN(totalShards)) {
+  const match = arg.match(/^\s*(\d+)\s*\/\s*(\d+)\s*$/);
+  if (!match) {
     throw new Error(`The shard argument must be in the format <shardNumber>/<totalShards>.`);
+  }
+  const shardNumber = Number(match[1]);
+  const totalShards = Number(match[2]);
+
+  if (!Number.isSafeInteger(shardNumber) || !Number.isSafeInteger(totalShards)) {
+    throw new Error(`The shard arguments must be safe integers.`);
   }
 
   if (shardNumber === 0 || totalShards === 0) {

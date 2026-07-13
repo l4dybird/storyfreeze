@@ -260,6 +260,7 @@ describe(PlaywrightBrowserBackend, () => {
   it('prefers the managed Chromium, maps devices, and creates one context per session', async () => {
     const page = {} as Page;
     const rawCdp = new FakeCdp();
+    rawCdp.send.mockRejectedValueOnce(new Error('timeDomain is unsupported'));
     const cdp = rawCdp as unknown as CDPSession;
     const closeContext = vi.fn(async () => {});
     const context = {
@@ -294,6 +295,7 @@ describe(PlaywrightBrowserBackend, () => {
     expect(findChrome).not.toHaveBeenCalled();
     expect(vi.mocked(browser.newContext)).toHaveBeenCalledWith({ viewport: { width: 800, height: 600 } });
     expect(rawCdp.send).toHaveBeenCalledWith('Performance.enable', { timeDomain: 'threadTicks' });
+    expect(rawCdp.send).toHaveBeenCalledWith('Performance.enable');
     expect(closeContext).toHaveBeenCalledTimes(1);
     expect(closeBrowser).toHaveBeenCalledTimes(1);
   });

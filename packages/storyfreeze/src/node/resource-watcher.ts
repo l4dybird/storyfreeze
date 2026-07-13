@@ -75,11 +75,12 @@ export class ResourceWatcher {
     };
   }
 
-  private async waitForActivity(timeoutMs: number, signal?: AbortSignal) {
+  private async waitForActivity(timeoutMs: number, signal?: AbortSignal, expectedGeneration = this.activityGeneration) {
     let resolveActivity = () => {};
     const activity = new Promise<void>(resolve => {
       resolveActivity = resolve;
       this.activityWaiters.add(resolve);
+      if (this.activityGeneration !== expectedGeneration) resolve();
     });
     try {
       return await raceAgainstTimeout(activity, timeoutMs, signal);
@@ -118,11 +119,11 @@ export class ResourceWatcher {
         const quietRemaining = quietMs - (now - quietStartedAt);
         if (quietRemaining <= 0) return result(false);
         if (now >= deadline) return result(true);
-        await this.waitForActivity(Math.min(quietRemaining, deadline - now), options.signal);
+        await this.waitForActivity(Math.min(quietRemaining, deadline - now), options.signal, quietGeneration);
       } else {
         quietStartedAt = undefined;
         if (now >= deadline) return result(true);
-        const activity = await this.waitForActivity(deadline - now, options.signal);
+        const activity = await this.waitForActivity(deadline - now, options.signal, this.activityGeneration);
         if (activity.timedOut) return result(true);
       }
     }

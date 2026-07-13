@@ -1,0 +1,99 @@
+name: Browser isolation benchmark
+
+on:
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: Benchmark repetition profile
+        required: true
+        type: choice
+        options:
+          - pr
+          - record
+        default: pr
+      parallel:
+        description: Capture worker count
+        required: true
+        type: choice
+        options:
+          - '1'
+          - '2'
+          - '4'
+        default: '4'
+      starting_isolation:
+        description: Isolation mode measured first in the first pair
+        required: true
+        type: choice
+        options:
+          - process
+          - context
+        default: process
+  pull_request:
+    paths:
+      - '.github/workflows/browser_isolation_benchmark.yml'
+      - 'benchmarks/**'
+      - 'examples/react-vite/.storybook/**'
+      - 'examples/react-vite/public/**'
+      - 'examples/react-vite/src/**'
+      - 'examples/react-vite/package.json'
+      - 'pnpm-lock.yaml'
+      - 'packages/storyfreeze/package.json'
+      - 'packages/storyfreeze/src/client/**'
+      - 'packages/storyfreeze/src/node/**'
+      - 'packages/storyfreeze/src/shared/**'
+      - 'scripts/aggregate-browser-isolation-benchmarks*.js'
+      - 'scripts/browser-performance-benchmark.js'
+      - 'scripts/e2e-prestorybook.js'
+
+permissions:
+  contents: read
+
+jobs:
+  isolation-differential-explicit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Set up Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1.15.0
+        with:
+          node-version: '22.18.0'
+          cache: true
+          cache-dependency-path: pnpm-lock.yaml
+          run-install: false
+      - uses: pnpm/action-setup@v6
+      - run: vp install --frozen-lockfile
+      - run: pnpm build
+      - name: Test isolation benchmark aggregation
+        run: node --test scripts/aggregate-browser-isolation-benchmarks.test.js
+      - name: Install Playwright Chromium
+        run: pnpm --filter storyfreeze exec playwright-core install --with-deps chromium
+      - name: Record source tree
+        run: echo "STORYFREEZE_BENCHMARK_TREE=$(git rev-parse 'HEAD^{tree}')" >> "$GITHUB_ENV"
+      - name: Compare process and context isolation
+        env:
+          STORYFREEZE_BENCHMARK_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+          STORYFREEZE_BENCHMARK_COMPARISON: isolation
+          STORYFREEZE_BENCHMARK_PARALLEL: ${{ github.event_name == 'workflow_dispatch' && inputs.parallel || '4' }}
+          STORYFREEZE_BENCHMARK_PROFILE: ${{ github.event_name == 'workflow_dispatch' && inputs.profile || 'pr' }}
+          STORYFREEZE_BENCHMARK_START_ISOLATION: ${{ github.event_name == 'workflow_dispatch' && inputs.starting_isolation || 'process' }}
+          STORYFREEZE_BENCHMARK_TRACE: 'false'
+          STORYFREEZE_BROWSER_PROVISIONING: explicit-install
+        run: >-
+          node scripts/e2e-prestorybook.js examples/react-vite browser-performance-benchmark.js
+          "$RUNNER_TEMP/browser-isolation-explicit.json"
+      - name: Print benchmark record
+        if: always()
+        run: test ! -f "$RUNNER_TEMP/browser-isolation-explicit.json" || cat "$RUNNER_TEMP/browser-isolation-explicit.json"
+      - name: Upload benchmark record and failure logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-isolation-explicit-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/browser-isolation-explicit.json
+            ${{ runner.temp }}/browser-isolation-explicit-failures
+          if-no-files-found: error

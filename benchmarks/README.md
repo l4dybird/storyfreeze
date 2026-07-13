@@ -31,6 +31,29 @@ The blocking differential gate requires the same observed Chromium executable, s
 
 The workflow runs the PR profile with explicit browser installation when benchmark-related files change. Manual dispatch selects the `pr` or `record` profile, parallelism, first backend, and whether to run the independent trace control. A pinned official Playwright container comparison remains available only through `workflow_dispatch` with `compare_container=true`.
 
+## Browser isolation differential
+
+The isolation differential is independent of the schema 3 browser backend comparison above. It compares Playwright `process` and `context` isolation with the same packed React/Vite managed static fixture, explicit `playwright-core` Chromium executable, launch options, viewport data, and story selection. It does not add a fixture, smoke job, or pixel suite; the existing Storybook 10 E2E remains responsible for broad path, filter, shard, retry, and lifecycle coverage.
+
+The pull-request profile is the blocking correctness check. It runs at `parallel=4` with one warm-up pair and three measured pairs, beginning with `process` in the first pair and alternating pair order. Manual dispatches select the `pr` or `record` profile, `parallel=1|2|4`, and the isolation mode that begins the first pair. The record profile uses two warm-up pairs and ten measured pairs. A default-readiness record comprises four successful `parallel=4` record dispatches, two per starting isolation, for 40 measured runs per isolation. Dispatch medians are not pooled; the aggregate recomputes percentiles from the raw runs after verifying balanced order and matching source tree, workflow, Chromium, fixture, runner, Node, options, and successful correctness gates.
+
+Isolation dispatches use their own schema 1 with `kind: "browser-isolation-differential"`. The record identifies the source commit and tree, environment, provisioning, scenario and execution order; stores raw runs and summaries under `isolations.process` and `isolations.context`; stores pixel comparisons and context-to-process ratios under `isolationDifferential`; and records gate evidence separately. The independent tracked aggregate also uses schema 1 with `kind: "browser-isolation-aggregate"`; it records its source commit and tree, workflow runs and conditions, raw isolation summaries, context-to-process ratios, pixel comparisons, optional `parallel=1`/`parallel=2` diagnostics, and default acceptance result. It does not modify or replace the tracked backend differential record.
+
+One optional `parallel=1` PR-profile dispatch and one optional `parallel=2` PR-profile dispatch, each with three measured pairs, diagnose scaling and fixed browser overhead. They remain separate from the 40-run `parallel=4` population, headline ratios, and default acceptance gate. Dependency installation, package build, Storybook static build, and the Vite preview server remain outside the sampled CLI/Chromium process tree for every profile.
+
+Trace is always disabled for the isolation comparison. `--trace` forces context isolation back to process isolation, so including it would not measure the intended topology. Trace correctness and overhead remain covered by the independent backend differential workflow.
+
+The pull-request gate requires successful paired captures without retries, timeouts, or crashes, matching story and PNG counts, stable PNG paths/dimensions/pixels, and the expected browser topology. Hosted-runner performance ratios are recorded but do not block a single PR dispatch. Changing the default to `context` requires the balanced 40-run aggregate to meet every acceptance threshold:
+
+- context/process median peak-RSS ratio at most `0.80`
+- context/process wall-time p50 and p95 ratios both at most `1.00`
+- context/process capture-request p95 ratio at most `1.05`
+- zero capture failures, retries, timeouts, crashes, or pixel mismatches
+- zero capture requests taking at least three seconds
+- lower browser-root and total Chromium process peaks, with one browser root in every context run
+
+PR-531 only adds this evidence pipeline: `process` remains the default regardless of the result.
+
 ## Current browser differential
 
 The [aggregated browser differential record](./browser-differential-record.json) compares the visual-commit baseline `ca470b7` with `master` after reset, watcher, and Playwright recovery hardening (`804aae4`). Each snapshot contains four successful explicit-install dispatches, two per starting backend, for 40 measured runs per backend. All record gates passed, and the separate candidate trace gate passed, with Chromium 149.0.7827.55.

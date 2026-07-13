@@ -40,6 +40,7 @@ describe(runCli, () => {
       include: [],
       exclude: [],
       delay: 0,
+      viewportDelay: 0,
       viewports: ['800x600'],
       shard: { shardNumber: 1, totalShards: 1 },
       chromiumChannel: '*',

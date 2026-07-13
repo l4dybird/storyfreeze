@@ -360,7 +360,7 @@ OPTIONS:
   --capture-timeout [capture-timeout]                              Timeout [msec] for capturing a story. (default: 5000)
   --capture-max-retry-count [capture-max-retry-count]              Number of times to retry capture. (default: 3)
   --metrics-watch-retry-count [metrics-watch-retry-count]          Number of times to retry until browser metrics are stable. (default: 1000)
-  --viewport-delay [viewport-delay]                                Delay time [msec] between changing viewport and capturing. (default: 300)
+  --viewport-delay <viewport-delay>                                Delay time [msec] between changing viewport and capturing. (default: 0)
   --reload-after-change-viewport                                   Whether to reload after viewport changed. (default: false)
   --state-change-delay <state-change-delay>                        Delay time [msec] after changing element's state. (default: 0)
   --list-devices                                                   List available device descriptors. (default: false)

@@ -28,6 +28,7 @@ import {
   type NavigationOptions,
   type RequestListeners,
   type ScreenshotCaptureOptions,
+  type TraceSink,
 } from './browser-backend.js';
 import { findChrome, type FindChromeOptions, type FindChromeResult } from './puppeteer-browser-backend.js';
 
@@ -81,6 +82,7 @@ export class PlaywrightCapturePage implements CapturePage {
   private readonly requests = new WeakMap<Request, BrowserRequest>();
   private readonly cdp: CdpClient;
   private traceState: 'idle' | 'starting' | 'active' | 'stopping' | 'failed' = 'idle';
+  private traceSink?: TraceSink;
   private viewport?: Viewport;
 
   isHealthy() {
@@ -256,7 +258,7 @@ export class PlaywrightCapturePage implements CapturePage {
     });
   }
 
-  async startTrace() {
+  async startTrace(sink: TraceSink) {
     if (this.traceState === 'failed') {
       throw new Error('The Chromium trace state is unavailable. Close the browser before tracing again.');
     }
@@ -267,9 +269,11 @@ export class PlaywrightCapturePage implements CapturePage {
         categories: traceCategories,
         transferMode: 'ReturnAsStream',
       });
+      this.traceSink = sink;
       this.traceState = 'active';
     } catch (error) {
       this.traceState = 'idle';
+      this.traceSink = undefined;
       throw error;
     }
   }
@@ -297,7 +301,6 @@ export class PlaywrightCapturePage implements CapturePage {
       const { stream } = await completed;
       if (!stream) throw new Error('Chromium did not provide a trace stream.');
 
-      const chunks: Buffer[] = [];
       try {
         let eof = false;
         while (!eof) {
@@ -306,17 +309,17 @@ export class PlaywrightCapturePage implements CapturePage {
             data: string;
             eof?: boolean;
           };
-          chunks.push(Buffer.from(result.data, result.base64Encoded ? 'base64' : 'utf8'));
+          await this.traceSink!.write(Buffer.from(result.data, result.base64Encoded ? 'base64' : 'utf8'));
           eof = Boolean(result.eof);
         }
       } finally {
         await this.cdp.send('IO.close', { handle: stream });
       }
-      const buffer = Buffer.concat(chunks);
       this.traceState = 'idle';
-      return buffer;
+      this.traceSink = undefined;
     } catch (error) {
       this.traceState = 'failed';
+      this.traceSink = undefined;
       throw error;
     } finally {
       if (!completedReceived) this.cdp.off('Tracing.tracingComplete', onCompleted);

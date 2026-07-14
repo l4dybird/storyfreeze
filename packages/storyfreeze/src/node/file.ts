@@ -12,8 +12,11 @@ export interface TraceFile {
 
 export class FileSystem {
   private readonly reservedPaths = new Map<string, string>();
+  private readonly outputRoot: string;
 
-  constructor(private opt: MainOptions) {}
+  constructor(private opt: MainOptions) {
+    this.outputRoot = path.resolve(opt.outDir);
+  }
 
   private getPath(kind: string, story: string, suffix: string[], extension: string, logicalId?: string) {
     const name = this.opt.flat
@@ -26,9 +29,8 @@ export class FileSystem {
         sanitize(story);
     const safeSuffix = suffix.map(part => sanitize(part));
     const relativePath = name + (safeSuffix.length ? `_${safeSuffix.join('_')}` : '') + extension;
-    const outputRoot = path.resolve(this.opt.outDir);
-    const resolvedPath = path.resolve(outputRoot, relativePath);
-    const relativeToRoot = path.relative(outputRoot, resolvedPath);
+    const resolvedPath = path.resolve(this.outputRoot, relativePath);
+    const relativeToRoot = path.relative(this.outputRoot, resolvedPath);
     if (!relativeToRoot || relativeToRoot.startsWith(`..${path.sep}`) || path.isAbsolute(relativeToRoot)) {
       throw new Error(`Refusing to write outside the output directory: ${relativePath}`);
     }
@@ -79,9 +81,9 @@ export class FileSystem {
   }
 
   async createTraceFile(): Promise<TraceFile> {
-    await fs.mkdir(this.opt.outDir, { recursive: true });
+    await fs.mkdir(this.outputRoot, { recursive: true });
     const temporaryPath = path.join(
-      this.opt.outDir,
+      this.outputRoot,
       `.storyfreeze-trace.${process.pid}.${randomBytes(6).toString('hex')}.tmp`,
     );
     const handle = await fs.open(temporaryPath, 'wx');

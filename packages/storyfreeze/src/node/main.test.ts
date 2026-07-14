@@ -386,7 +386,7 @@ describe(CapturingBrowser, () => {
     const discard = vi.fn(async () => {});
     const page = {
       startTrace: vi.fn(async () => Promise.reject(new Error('trace start failed'))),
-      stopTrace: vi.fn(async () => Buffer.from('trace')),
+      stopTrace: vi.fn(async () => {}),
       subscribeConsole: vi.fn(() => unsubscribe),
     };
     vi.spyOn(BaseBrowser.prototype, 'page', 'get').mockReturnValue(page as never);

@@ -66,6 +66,9 @@ function runFailure(command, args, options = {}) {
 function runNpm(args, cwd) {
   if (process.platform !== 'win32') return run('npm', args, { cwd, timeout: 180000 });
   const npmCli = path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js');
+  if (!fs.existsSync(npmCli)) {
+    throw new Error(`Unable to locate the npm CLI at ${npmCli}.`);
+  }
   return run(process.execPath, [npmCli, ...args], { cwd, timeout: 180000 });
 }
 

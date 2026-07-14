@@ -33,7 +33,7 @@ function canAccess(file: string | undefined): file is string {
   }
 }
 
-function findChromeExecutables(folder: string) {
+export function findChromeExecutables(folder: string) {
   const argumentsRegex = /(^[^ ]+).*/;
   const chromeExecRegex = '^Exec=/.*/(google-chrome|chrome|chromium)-.*';
   const installations: string[] = [];
@@ -41,10 +41,10 @@ function findChromeExecutables(folder: string) {
   if (canAccess(folder)) {
     let execPaths: Buffer;
     try {
-      execPaths = execSync(`grep -ER "${chromeExecRegex}" ${folder} | awk -F '=' '{print $2}'`);
+      execPaths = execFileSync('grep', ['-ER', chromeExecRegex, folder]);
     } catch {
       try {
-        execPaths = execSync(`grep -Er "${chromeExecRegex}" ${folder} | awk -F '=' '{print $2}'`);
+        execPaths = execFileSync('grep', ['-Er', chromeExecRegex, folder]);
       } catch {
         return installations;
       }
@@ -52,6 +52,7 @@ function findChromeExecutables(folder: string) {
     execPaths
       .toString()
       .split(newLineRegex)
+      .map(line => line.slice(line.indexOf('Exec=') + 'Exec='.length))
       .map(execPath => execPath.replace(argumentsRegex, '$1'))
       .forEach(execPath => canAccess(execPath) && installations.push(execPath));
   }

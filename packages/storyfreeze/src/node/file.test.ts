@@ -38,6 +38,18 @@ describe(FileSystem, () => {
     expect(path.relative(outDir, savedPath)).toBe('Forms_Input_Default.png');
   });
 
+  it('returns the validated absolute path when outDir is relative', async () => {
+    await fs.rm(outDir, { recursive: true, force: true });
+    outDir = await fs.mkdtemp(path.join(process.cwd(), '.storyfreeze-file-'));
+    const relativeOutDir = path.relative(process.cwd(), outDir);
+    const fileSystem = new FileSystem({ outDir: relativeOutDir, flat: false } as MainOptions);
+
+    const savedPath = await fileSystem.saveScreenshot('Button', 'Primary', [], Buffer.from('png baseline'));
+
+    expect(path.isAbsolute(relativeOutDir)).toBe(false);
+    expect(savedPath).toBe(path.resolve(relativeOutDir, 'Button', 'Primary.png'));
+  });
+
   it('atomically replaces an existing screenshot without leaving temporary files', async () => {
     const fileSystem = createFileSystem(false);
     const savedPath = await fileSystem.saveScreenshot('Button', 'Primary', [], Buffer.from('first'));
@@ -46,5 +58,48 @@ describe(FileSystem, () => {
 
     await expect(fs.readFile(savedPath, 'utf8')).resolves.toBe('second');
     await expect(fs.readdir(path.dirname(savedPath))).resolves.toEqual(['Primary.png']);
+  });
+
+  it('sanitizes every variant suffix and keeps the resolved path inside outDir', async () => {
+    const fileSystem = createFileSystem(false);
+
+    const savedPath = await fileSystem.saveScreenshot(
+      'Button',
+      'Primary',
+      ['../../../../../outside'],
+      Buffer.from('safe'),
+    );
+    const relativePath = path.relative(outDir, path.resolve(savedPath));
+
+    expect(relativePath.startsWith(`..${path.sep}`)).toBe(false);
+    expect(path.isAbsolute(relativePath)).toBe(false);
+    await expect(fs.readFile(savedPath, 'utf8')).resolves.toBe('safe');
+  });
+
+  it('rejects nested story names that sanitize to the same output path', async () => {
+    const fileSystem = createFileSystem(false);
+    await fileSystem.saveScreenshot('Button', 'Focused: state', [], Buffer.from('first'));
+
+    await expect(fileSystem.saveScreenshot('Button', 'Focused state', [], Buffer.from('second'))).rejects.toThrow(
+      'Output path collision',
+    );
+  });
+
+  it('rejects flat story paths that normalize to the same output path', async () => {
+    const fileSystem = createFileSystem(true);
+    await fileSystem.saveScreenshot('Forms/Input', 'Default', [], Buffer.from('first'));
+
+    await expect(fileSystem.saveScreenshot('Forms_Input', 'Default', [], Buffer.from('second'))).rejects.toThrow(
+      'Output path collision',
+    );
+  });
+
+  it('rejects variant keys that join to the same suffix', async () => {
+    const fileSystem = createFileSystem(false);
+    await fileSystem.saveScreenshot('Button', 'Primary', ['a_b'], Buffer.from('first'));
+
+    await expect(fileSystem.saveScreenshot('Button', 'Primary', ['a', 'b'], Buffer.from('second'))).rejects.toThrow(
+      'Output path collision',
+    );
   });
 });

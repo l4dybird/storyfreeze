@@ -108,7 +108,8 @@ export function createScreenshotService({
 
         if (buffer) {
           const suffix = variantKey.isDefault && defaultVariantSuffix ? [defaultVariantSuffix] : variantKey.keys;
-          const path = await fileSystem.saveScreenshot(story.kind, story.story, suffix, buffer);
+          const logicalId = JSON.stringify({ storyId: story.id, variantKey });
+          const path = await fileSystem.saveScreenshot(story.kind, story.story, suffix, buffer, logicalId);
           logger.log(`Screenshot stored: ${logger.color.magenta(path)} in ${elapsedTime} msec.`);
           emitCaptureDiagnostic({
             type: 'capture-output',

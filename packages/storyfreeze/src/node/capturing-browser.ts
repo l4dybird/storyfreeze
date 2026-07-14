@@ -23,7 +23,7 @@ import {
   type InvalidVariantKeysReason,
 } from '../shared/screenshot-options-helper.js';
 import { Logger } from './logger.js';
-import { FileSystem } from './file.js';
+import { FileSystem, type TraceFile } from './file.js';
 import { ResourceWatcher } from './resource-watcher.js';
 import { StoryNavigator } from './story-navigator.js';
 import { captureDiagnosticsEnabled, emitCaptureDiagnostic, measureCaptureDiagnostic } from './capture-diagnostics.js';
@@ -554,13 +554,14 @@ export class CapturingBrowser extends BaseBrowser {
 
     const unsubscribeConsole = this.page.subscribeConsole(onConsoleLog);
     let traceStarted = false;
+    let traceFile: TraceFile | undefined;
     // Capture this outside so it can be used for the filePath generation for the trace.
     let defaultVariantSuffix: string | undefined;
 
     try {
       if (trace) {
-        // Begin CPU trace, don't write to file, store it in memory.
-        await this.page.startTrace();
+        traceFile = await fileSystem.createTraceFile();
+        await this.page.startTrace(traceFile);
         traceStarted = true;
       }
 
@@ -663,16 +664,17 @@ export class CapturingBrowser extends BaseBrowser {
     } finally {
       unsubscribeConsole();
 
-      if (traceStarted) {
-        // Finish CPU trace.
-        await this.measurePhase('trace-flush', async () => {
-          const traceBuffer = await this.page.stopTrace();
-
-          // Calculate the suffix and save the trace to the file.
-          const suffix = variantKey.isDefault && defaultVariantSuffix ? [defaultVariantSuffix] : variantKey.keys;
-          const logicalId = JSON.stringify({ storyId: story.id, variantKey });
-          await fileSystem.saveTrace(story.kind, story.story, suffix, traceBuffer, logicalId);
-        });
+      try {
+        if (traceStarted) {
+          await this.measurePhase('trace-flush', async () => {
+            await this.page.stopTrace();
+            const suffix = variantKey.isDefault && defaultVariantSuffix ? [defaultVariantSuffix] : variantKey.keys;
+            const logicalId = JSON.stringify({ storyId: story.id, variantKey });
+            await traceFile!.commit(story.kind, story.story, suffix, logicalId);
+          });
+        }
+      } finally {
+        await traceFile?.discard();
       }
     }
   }

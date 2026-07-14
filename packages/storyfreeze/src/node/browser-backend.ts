@@ -65,6 +65,10 @@ export interface RequestListeners {
   started(request: BrowserRequest): void;
 }
 
+export interface TraceSink {
+  write(chunk: Buffer): Promise<void>;
+}
+
 export interface CapturePage {
   addStyleFile(path: string): Promise<void>;
   click(selector: string): Promise<void>;
@@ -86,8 +90,8 @@ export interface CapturePage {
   resetPointer(): Promise<void>;
   screenshot(options: ScreenshotCaptureOptions): Promise<Buffer | null>;
   setViewport(viewport: Viewport): Promise<void>;
-  startTrace(): Promise<void>;
-  stopTrace(): Promise<Buffer>;
+  startTrace(sink: TraceSink): Promise<void>;
+  stopTrace(): Promise<void>;
   subscribeConsole(listener: (message: BrowserConsoleMessage) => void): () => void;
   subscribeRequests(listeners: RequestListeners): () => void;
   waitForVisualCommit(options: VisualCommitOptions, signal?: AbortSignal): Promise<VisualCommitResult>;

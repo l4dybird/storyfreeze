@@ -60,6 +60,20 @@ describe(FileSystem, () => {
     await expect(fs.readdir(path.dirname(savedPath))).resolves.toEqual(['Primary.png']);
   });
 
+  it('streams trace chunks through a temporary file before committing the final path', async () => {
+    const fileSystem = createFileSystem(false);
+    const traceFile = await fileSystem.createTraceFile();
+
+    await traceFile.write(Buffer.from('{"trace'));
+    await traceFile.write(Buffer.from('Events":[]}'));
+    const savedPath = await traceFile.commit('Button', 'Primary', [], 'button--primary');
+    await traceFile.discard();
+
+    expect(path.relative(outDir, savedPath)).toBe(path.join('Button', 'Primary_trace.json'));
+    await expect(fs.readFile(savedPath, 'utf8')).resolves.toBe('{"traceEvents":[]}');
+    await expect(fs.readdir(outDir)).resolves.toEqual(['Button']);
+  });
+
   it('sanitizes every variant suffix and keeps the resolved path inside outDir', async () => {
     const fileSystem = createFileSystem(false);
 

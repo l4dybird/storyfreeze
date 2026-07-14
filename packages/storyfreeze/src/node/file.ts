@@ -4,6 +4,12 @@ import { randomBytes } from 'crypto';
 import type { MainOptions } from './types.js';
 import sanitize from 'sanitize-filename';
 
+export interface TraceFile {
+  write(chunk: Buffer): Promise<void>;
+  commit(kind: string, story: string, suffix: string[], logicalId?: string): Promise<string>;
+  discard(): Promise<void>;
+}
+
 export class FileSystem {
   private readonly reservedPaths = new Map<string, string>();
 
@@ -72,22 +78,50 @@ export class FileSystem {
     return filePath;
   }
 
-  /**
-   *
-   * Save captured tracing buffer as a json file.
-   *
-   * @param kind - Story kind
-   * @param story - Name of this story
-   * @param suffix - File name suffix
-   * @param buffer - PNG image buffer to save
-   * @returns Absolute file path
-   *
-   **/
-  async saveTrace(kind: string, story: string, suffix: string[], buffer: Buffer, logicalId?: string) {
-    const filePath = this.getPath(kind, story, [...suffix, 'trace'], '.json', logicalId);
+  async createTraceFile(): Promise<TraceFile> {
+    await fs.mkdir(this.opt.outDir, { recursive: true });
+    const temporaryPath = path.join(
+      this.opt.outDir,
+      `.storyfreeze-trace.${process.pid}.${randomBytes(6).toString('hex')}.tmp`,
+    );
+    const handle = await fs.open(temporaryPath, 'wx');
+    let state: 'open' | 'committed' | 'discarded' = 'open';
+    let closed = false;
+    const close = async () => {
+      if (closed) return;
+      await handle.close();
+      closed = true;
+    };
 
-    await this.writeAtomic(filePath, buffer);
-
-    return filePath;
+    return {
+      write: async chunk => {
+        if (state !== 'open') throw new Error('Cannot write to a finalized Chromium trace.');
+        await handle.writeFile(chunk);
+      },
+      commit: async (kind, story, suffix, logicalId) => {
+        if (state !== 'open') throw new Error('Cannot commit a finalized Chromium trace.');
+        const filePath = this.getPath(kind, story, [...suffix, 'trace'], '.json', logicalId);
+        await fs.mkdir(path.dirname(filePath), { recursive: true });
+        await close();
+        try {
+          await fs.rename(temporaryPath, filePath);
+          state = 'committed';
+          return filePath;
+        } catch (error) {
+          state = 'discarded';
+          await fs.rm(temporaryPath, { force: true });
+          throw error;
+        }
+      },
+      discard: async () => {
+        if (state !== 'open') return;
+        state = 'discarded';
+        try {
+          await close();
+        } finally {
+          await fs.rm(temporaryPath, { force: true });
+        }
+      },
+    };
   }
 }

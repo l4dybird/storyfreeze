@@ -316,4 +316,25 @@ describe(runCli, () => {
     await expect(runCli([option], { main })).resolves.toBe(0);
     expect(main).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ['fractional parallelism', ['--parallel=1.5'], '--parallel'],
+    ['zero parallelism', ['--parallel=0'], '--parallel'],
+    ['negative delay', ['--delay=-1'], '--delay'],
+    ['zero server timeout', ['--server-timeout=0'], '--server-timeout'],
+    ['zero capture timeout', ['--capture-timeout=0'], '--capture-timeout'],
+    ['negative retry count', ['--capture-max-retry-count=-1'], '--capture-max-retry-count'],
+    ['zero metrics samples', ['--metrics-watch-retry-count=0'], '--metrics-watch-retry-count'],
+    ['fractional viewport delay', ['--viewport-delay=1.5'], '--viewport-delay'],
+    ['negative state delay', ['--state-change-delay=-1'], '--state-change-delay'],
+  ])('rejects %s before resolving a browser backend', async (_label, args, option) => {
+    const main = vi.fn(async (_options: MainOptions) => 0);
+    const resolveBrowserBackend = vi.fn(async () => ({ name: 'playwright' }) as unknown as BrowserBackend);
+
+    await expect(runCli(args, { main, resolveBrowserBackend })).resolves.toBe(1);
+
+    expect(main).not.toHaveBeenCalled();
+    expect(resolveBrowserBackend).not.toHaveBeenCalled();
+    expect(error.mock.calls.flat().join(' ')).toContain(option);
+  });
 });

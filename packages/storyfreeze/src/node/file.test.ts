@@ -74,6 +74,29 @@ describe(FileSystem, () => {
     await expect(fs.readdir(outDir)).resolves.toEqual(['Button']);
   });
 
+  it('keeps a relative trace output path stable when cwd changes', async () => {
+    await fs.rm(outDir, { recursive: true, force: true });
+    const originalCwd = process.cwd();
+    outDir = await fs.mkdtemp(path.join(originalCwd, '.storyfreeze-file-'));
+    const alternateCwd = await fs.mkdtemp(path.join(os.tmpdir(), 'storyfreeze-cwd-'));
+    const fileSystem = new FileSystem({ outDir: path.relative(originalCwd, outDir), flat: false } as MainOptions);
+    const traceFile = await fileSystem.createTraceFile();
+    let savedPath = '';
+
+    try {
+      process.chdir(alternateCwd);
+      await traceFile.write(Buffer.from('{"traceEvents":[]}'));
+      savedPath = await traceFile.commit('Button', 'Primary', [], 'button--primary');
+    } finally {
+      process.chdir(originalCwd);
+      await traceFile.discard();
+      await fs.rm(alternateCwd, { recursive: true, force: true });
+    }
+
+    expect(savedPath).toBe(path.resolve(outDir, 'Button', 'Primary_trace.json'));
+    await expect(fs.readFile(savedPath, 'utf8')).resolves.toBe('{"traceEvents":[]}');
+  });
+
   it('sanitizes every variant suffix and keeps the resolved path inside outDir', async () => {
     const fileSystem = createFileSystem(false);
 

@@ -51,6 +51,7 @@ const benchmarkExclude = 'Compatibility/Fixture/Retry';
 const traceStoryCount = 1;
 const tracePngCount = 2;
 const traceInclude = 'Compatibility/Fixture/Console Error';
+const traceCaptureTimeoutMs = 30_000;
 const backends = ['puppeteer', 'playwright'];
 const isolations = ['process', 'context'];
 const captureDiagnosticPrefix = 'STORYFREEZE_CAPTURE_DIAGNOSTIC=';
@@ -218,6 +219,7 @@ function copyFailureFile(category, label, relativePath, source) {
 function measureCapture({
   backend,
   browser,
+  captureTimeoutMs,
   exclude,
   expectedPngs,
   expectedStories,
@@ -252,6 +254,7 @@ function measureCapture({
     '--browser-isolation',
     isolation || 'process',
   ];
+  if (captureTimeoutMs !== undefined) args.push('--capture-timeout', String(captureTimeoutMs));
   if (trace) args.push('--trace');
   if (include) args.push('--include', include);
   if (exclude) args.push('--exclude', exclude);
@@ -986,6 +989,7 @@ async function main() {
         traceControls[backend] = await measureCapture({
           backend,
           browser,
+          captureTimeoutMs: traceCaptureTimeoutMs,
           expectedPngs: tracePngCount,
           expectedStories: traceStoryCount,
           include: traceInclude,
@@ -996,6 +1000,7 @@ async function main() {
         traceRuns[backend] = await measureCapture({
           backend,
           browser,
+          captureTimeoutMs: traceCaptureTimeoutMs,
           expectedPngs: tracePngCount,
           expectedStories: traceStoryCount,
           include: traceInclude,
@@ -1086,7 +1091,15 @@ async function main() {
         stories: expectedStoryCount,
         startingBackend,
         storybook: fixturePackage.devDependencies.storybook,
-        trace: includeTrace ? { include: traceInclude, pngs: tracePngCount, runs: 1, stories: traceStoryCount } : null,
+        trace: includeTrace
+          ? {
+              captureTimeoutMs: traceCaptureTimeoutMs,
+              include: traceInclude,
+              pngs: tracePngCount,
+              runs: 1,
+              stories: traceStoryCount,
+            }
+          : null,
         warmupRuns,
         warmupExecutionOrder: warmupExecutionOrder.map(run => run.label),
         measuredExecutionOrder: measuredExecutionOrder.map(run => run.label),

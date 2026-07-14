@@ -38,7 +38,14 @@ describe(createStoryPreviewUrl, () => {
     expect(url.searchParams.get('id')).toBe('button/primary value');
     expect(url.searchParams.get('viewMode')).toBe('story');
     expect(url.searchParams.get('storyfreezeRequestId')).toBe('0-1');
+    expect(url.searchParams.has('storyfreezeRetryCount')).toBe(false);
     expect(url.searchParams.has('old')).toBe(false);
+  });
+
+  it.each([0, -1, Number.NaN, Number.POSITIVE_INFINITY])('omits an invalid retry count: %s', retryCount => {
+    const url = createStoryPreviewUrl(new URL('https://example.test/storybook'), 'button--primary', '0-1', retryCount);
+
+    expect(url.searchParams.has('storyfreezeRetryCount')).toBe(false);
   });
 });
 
@@ -79,12 +86,15 @@ describe(StoryNavigator, () => {
     await navigator.navigate('button--primary');
     await expect(navigator.waitForReady(100)).resolves.toEqual({ fullPage: true });
     current = state('ready', 'button--primary', '7-2');
-    await navigator.navigate('button--primary');
+    await navigator.navigate('button--primary', 1234, 2);
     await expect(navigator.waitForReady(100)).resolves.toEqual({ fullPage: true });
 
     expect(page.goto).toHaveBeenCalledTimes(2);
     expect(vi.mocked(page.goto).mock.calls[0][0]).toContain('storyfreezeRequestId=7-1');
     expect(vi.mocked(page.goto).mock.calls[1][0]).toContain('storyfreezeRequestId=7-2');
+    expect(vi.mocked(page.goto).mock.calls[0][0]).not.toContain('storyfreezeRetryCount');
+    expect(vi.mocked(page.goto).mock.calls[1][0]).toContain('storyfreezeRetryCount=2');
+    expect(vi.mocked(page.goto).mock.calls.map(([, options]) => options?.timeout)).toEqual([60_000, 1234]);
   });
 
   it.each([

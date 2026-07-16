@@ -27,8 +27,12 @@ if (benchmarkComparison !== 'isolation') {
   throw new Error(`This benchmark supports only isolation comparison, received: ${benchmarkComparison}`);
 }
 const { measuredRuns, warmupRuns } = benchmarkProfiles[benchmarkProfile];
-const parallel = Number(process.env.STORYFREEZE_BENCHMARK_PARALLEL || 4);
-if (![1, 2, 4].includes(parallel)) throw new Error(`Unsupported benchmark parallel value: ${parallel}`);
+function parseParallel(value) {
+  const parsed = Number(value);
+  if (![1, 2, 4, 8, 16].includes(parsed)) throw new Error(`Unsupported benchmark parallel value: ${value}`);
+  return parsed;
+}
+const parallel = parseParallel(process.env.STORYFREEZE_BENCHMARK_PARALLEL || 4);
 const startingIsolation = process.env.STORYFREEZE_BENCHMARK_START_ISOLATION || 'process';
 if (!['process', 'context'].includes(startingIsolation)) {
   throw new Error(`Unsupported starting isolation: ${startingIsolation}`);
@@ -113,6 +117,12 @@ function isChromiumProcess(process) {
 
 function isChromiumBrowserRoot(process) {
   return isChromiumProcess(process) && !process.argv.some(argument => /(?:^|\s)--type=/.test(argument));
+}
+
+function chromiumProcessType(process) {
+  if (isChromiumBrowserRoot(process)) return 'browser';
+  const value = process.argv.find(argument => argument.startsWith('--type='))?.slice('--type='.length);
+  return ['gpu-process', 'renderer', 'utility', 'zygote'].includes(value) ? value : 'other';
 }
 
 function normalizeExecutable(executable) {
@@ -255,6 +265,14 @@ function measureCapture({
     let peakTreeRssBytes = 0;
     let peakProcessCount = 0;
     let peakChromiumProcessCount = 0;
+    const peakChromiumProcessCountsByType = {
+      browser: 0,
+      'gpu-process': 0,
+      other: 0,
+      renderer: 0,
+      utility: 0,
+      zygote: 0,
+    };
     let peakBrowserRootCount = 0;
     let samples = 0;
     const browserLaunches = new Set();
@@ -275,6 +293,18 @@ function measureCapture({
       peakProcessCount = Math.max(peakProcessCount, tree.length);
       peakChromiumProcessCount = Math.max(peakChromiumProcessCount, chromium.length);
       peakBrowserRootCount = Math.max(peakBrowserRootCount, browserRoots.length);
+      const chromiumProcessCountsByType = Object.fromEntries(
+        Object.keys(peakChromiumProcessCountsByType).map(type => [
+          type,
+          chromium.filter(process => chromiumProcessType(process) === type).length,
+        ]),
+      );
+      for (const type of Object.keys(peakChromiumProcessCountsByType)) {
+        peakChromiumProcessCountsByType[type] = Math.max(
+          peakChromiumProcessCountsByType[type],
+          chromiumProcessCountsByType[type],
+        );
+      }
       for (const process of tree) {
         const key = `${process.pid}:${process.startedAt}`;
         cpuTicks.set(key, Math.max(cpuTicks.get(key) || 0, process.cpuTicks));
@@ -345,6 +375,7 @@ function measureCapture({
         ...(pairStartingIsolation ? { pairStartingIsolation } : {}),
         peakBrowserRootCount,
         peakChromiumProcessCount,
+        peakChromiumProcessCountsByType,
         peakProcessCount,
         peakTreeRssBytes,
         pngCount: pngPaths.length,
@@ -577,6 +608,34 @@ function summarizeRuns(runs) {
       return [phase, { p50Ms: percentile(values, 0.5), p95Ms: percentile(values, 0.95), samples: values.length }];
     }),
   );
+  const runtimePhaseNames = [
+    ...new Set(
+      diagnosticEvents
+        .filter(event => event.type === 'runtime-phase' && event.state === 'end')
+        .map(event => event.phase),
+    ),
+  ];
+  const runtimePhaseTimings = Object.fromEntries(
+    runtimePhaseNames.sort().map(phase => {
+      const values = diagnosticEvents
+        .filter(
+          event =>
+            event.type === 'runtime-phase' &&
+            event.state === 'end' &&
+            event.phase === phase &&
+            typeof event.durationMs === 'number',
+        )
+        .map(event => event.durationMs);
+      return [phase, { p50Ms: percentile(values, 0.5), p95Ms: percentile(values, 0.95), samples: values.length }];
+    }),
+  );
+  const queueWaitTimes = diagnosticEvents
+    .filter(event => event.type === 'queue-task' && event.state === 'start' && typeof event.durationMs === 'number')
+    .map(event => event.durationMs);
+  const queueSummaries = diagnosticEvents.filter(event => event.type === 'queue-summary');
+  const queueUtilization = queueSummaries
+    .map(event => event.busyWorkerUtilization)
+    .filter(value => typeof value === 'number');
   const idleEvents = diagnosticEvents.filter(event => event.type === 'idle-wait');
   const visualCommitEvents = diagnosticEvents.filter(event => event.type === 'visual-commit');
   return {
@@ -590,6 +649,17 @@ function summarizeRuns(runs) {
       idleTimeoutEventCount: idleEvents.filter(event => event.didTimeout).length,
       idleTimeoutRate: idleEvents.length ? idleEvents.filter(event => event.didTimeout).length / idleEvents.length : 0,
       phaseTimings,
+      queue: {
+        busyWorkerUtilizationP50: percentile(queueUtilization, 0.5),
+        busyWorkerUtilizationP95: percentile(queueUtilization, 0.95),
+        peakInFlight: queueSummaries.length ? Math.max(...queueSummaries.map(event => event.peakInFlight)) : null,
+        peakQueued: queueSummaries.length ? Math.max(...queueSummaries.map(event => event.peakQueued)) : null,
+        waitMaxMs: queueWaitTimes.length ? Math.max(...queueWaitTimes) : null,
+        waitP50Ms: percentile(queueWaitTimes, 0.5),
+        waitP95Ms: percentile(queueWaitTimes, 0.95),
+        waitSamples: queueWaitTimes.length,
+      },
+      runtimePhaseTimings,
       threeSecondTailEventCount: diagnosticEvents.filter(
         event => event.type === 'capture-output' && typeof event.durationMs === 'number' && event.durationMs >= 3000,
       ).length,
@@ -598,6 +668,14 @@ function summarizeRuns(runs) {
       visualCommitTimeoutCount: visualCommitEvents.filter(event => event.didTimeout).length,
     },
     maxChromiumProcessCount: Math.max(...runs.map(run => run.peakChromiumProcessCount)),
+    maxChromiumProcessCountsByType: Object.fromEntries(
+      Object.keys(successful[0]?.peakChromiumProcessCountsByType ?? {}).map(type => [
+        type,
+        Math.max(...successful.map(run => run.peakChromiumProcessCountsByType[type])),
+      ]),
+    ),
+    maxPeakProcessCount: Math.max(...runs.map(run => run.peakProcessCount)),
+    maxUniqueBrowserLaunchCount: Math.max(...runs.map(run => run.uniqueBrowserLaunchCount)),
     maxPeakTreeRssBytes: Math.max(...runs.map(run => run.peakTreeRssBytes)),
     medianCpuTimeMs: median(successful.map(run => run.cpuTimeMs)),
     medianPeakTreeRssBytes: median(successful.map(run => run.peakTreeRssBytes)),
@@ -915,32 +993,36 @@ async function main() {
   }
 }
 
-main().catch(error => {
-  const message = error instanceof Error ? error.stack || error.message : String(error);
-  if (outputFile && !fs.existsSync(outputFile)) {
-    fs.mkdirSync(path.dirname(outputFile), { recursive: true });
-    fs.writeFileSync(
-      outputFile,
-      `${JSON.stringify(
-        {
-          schemaVersion: benchmarkComparison === 'isolation' ? 1 : 3,
-          ...(benchmarkComparison === 'isolation'
-            ? {
-                kind: 'browser-isolation-differential',
-                storyfreezeCommit: process.env.STORYFREEZE_BENCHMARK_COMMIT || 'unknown',
-                storyfreezeTree: process.env.STORYFREEZE_BENCHMARK_TREE || 'unknown',
-              }
-            : {}),
-          recordedAt: new Date().toISOString(),
-          fatalError: message,
-          gate: { errors: [message], passed: false },
-        },
-        null,
-        2,
-      )}\n`,
-    );
-  }
-  writeFailureLog('fatal', '', message);
-  console.error(error);
-  process.exitCode = 1;
-});
+if (require.main === module) {
+  main().catch(error => {
+    const message = error instanceof Error ? error.stack || error.message : String(error);
+    if (outputFile && !fs.existsSync(outputFile)) {
+      fs.mkdirSync(path.dirname(outputFile), { recursive: true });
+      fs.writeFileSync(
+        outputFile,
+        `${JSON.stringify(
+          {
+            schemaVersion: benchmarkComparison === 'isolation' ? 1 : 3,
+            ...(benchmarkComparison === 'isolation'
+              ? {
+                  kind: 'browser-isolation-differential',
+                  storyfreezeCommit: process.env.STORYFREEZE_BENCHMARK_COMMIT || 'unknown',
+                  storyfreezeTree: process.env.STORYFREEZE_BENCHMARK_TREE || 'unknown',
+                }
+              : {}),
+            recordedAt: new Date().toISOString(),
+            fatalError: message,
+            gate: { errors: [message], passed: false },
+          },
+          null,
+          2,
+        )}\n`,
+      );
+    }
+    writeFailureLog('fatal', '', message);
+    console.error(error);
+    process.exitCode = 1;
+  });
+}
+
+module.exports = { chromiumProcessType, parseParallel, summarizeRuns };

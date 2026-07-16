@@ -28,12 +28,18 @@ function makeRun({
   return {
     backend: 'playwright',
     browserCrashCount: 0,
-    captureDiagnostics: storyDurationsMs.map((durationMs, captureIndex) => ({
-      durationMs,
-      storyId: 'fixture--story',
-      type: 'capture-output',
-      variantKey: captureIndex === 0 ? [] : [`variant-${captureIndex}`],
-    })),
+    captureDiagnostics: storyDurationsMs
+      .flatMap((durationMs, captureIndex) => [
+        {
+          durationMs,
+          storyId: 'fixture--story',
+          type: 'capture-output',
+          variantKey: captureIndex === 0 ? [] : [`variant-${captureIndex}`],
+        },
+        { durationMs: captureIndex + 1, phase: 'navigation', state: 'end', type: 'capture-phase' },
+        { durationMs: captureIndex + 2, state: 'start', type: 'queue-task' },
+      ])
+      .concat([{ durationMs: 20 + globalIndex, phase: 'capture-worker-boot', state: 'end', type: 'runtime-phase' }]),
     cpuTimeMs: (isolation === 'process' ? 500 : 400) + globalIndex,
     isolation,
     iteration,
@@ -193,6 +199,11 @@ test('pools raw runs and captures and evaluates the isolation acceptance gate', 
   assert.equal(output.diagnostics.p1.isolations.process.measuredRuns, 3);
   assert.equal(output.diagnostics.p1.workflowRun, 'https://github.com/example/storyfreeze/actions/runs/5');
   assert.equal(output.diagnostics.p2.parallel, 2);
+  assert.equal(output.isolations.process.phaseTimings.navigation.samples, 360);
+  assert.equal(output.isolations.process.phaseTimings.navigation.p95Ms, 9);
+  assert.equal(output.isolations.process.queueWait.samples, 360);
+  assert.equal(output.isolations.process.queueWait.p95Ms, 10);
+  assert.equal(output.isolations.process.runtimePhaseTimings['capture-worker-boot'].samples, 40);
   assert.equal(output.contextToProcessRatios.cpuTimeP50, 419 / 519);
   assert.equal(output.acceptance.passed, true);
 });

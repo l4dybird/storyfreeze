@@ -11,6 +11,7 @@ import { shardStories } from './shard-utilities.js';
 import { ManagedStorybookConnection } from './managed-storybook-connection.js';
 import { StorybookStoryIndexProvider, type StoryDescriptor } from './story-index-provider.js';
 import { detectPreviewMode } from './story-navigator.js';
+import { captureDiagnosticsEnabled, emitCaptureDiagnostic, measureCaptureDiagnostic } from './capture-diagnostics.js';
 
 async function abortable<T>(operation: Promise<T>, signal?: AbortSignal): Promise<T> {
   if (!signal) return operation;
@@ -29,6 +30,10 @@ async function abortable<T>(operation: Promise<T>, signal?: AbortSignal): Promis
 function throwIfAborted(signal?: AbortSignal) {
   if (!signal?.aborted) return;
   throw signal.reason instanceof Error ? signal.reason : new Error('StoryFreeze was interrupted.');
+}
+
+function measureRuntimePhase<T>(phase: string, action: () => Promise<T>) {
+  return measureCaptureDiagnostic({ type: 'runtime-phase', phase }, action);
 }
 
 async function detectRunMode(storiesBrowser: BaseBrowser, opt: MainOptions) {
@@ -55,7 +60,11 @@ export async function bootCaptureWorkers<T extends BootableCaptureWorker<T>>(
   signal?: AbortSignal,
 ): Promise<T[]> {
   throwIfAborted(signal);
-  const results = await Promise.allSettled(workers.map(worker => worker.boot()));
+  const results = await Promise.allSettled(
+    workers.map((worker, workerId) =>
+      measureCaptureDiagnostic({ type: 'runtime-phase', phase: 'capture-worker-boot', workerId }, () => worker.boot()),
+    ),
+  );
   const failure = results.find((result): result is PromiseRejectedResult => result.status === 'rejected');
   const interrupted = signal?.aborted
     ? signal.reason instanceof Error
@@ -151,6 +160,7 @@ const defaultMainDependencies: MainDependencies = {
  *
  **/
 export async function main(mainOptions: MainOptions, overrides: Partial<MainDependencies> = {}) {
+  const startupStartedAt = captureDiagnosticsEnabled() ? performance.now() : undefined;
   const { browserBackend } = { ...defaultMainDependencies, ...overrides };
   const logger = mainOptions.logger;
   const browserIsolation = mainOptions.trace ? 'process' : mainOptions.browserIsolation;
@@ -165,7 +175,7 @@ export async function main(mainOptions: MainOptions, overrides: Partial<MainDepe
   try {
     // Wait for connection to Storybook server.
     connection = new ManagedStorybookConnection(mainOptions.serverOptions, logger);
-    await abortable(connection.connect(), mainOptions.signal);
+    await measureRuntimePhase('storybook-connect', () => abortable(connection!.connect(), mainOptions.signal));
     logger.debug('Created to connection.');
 
     if (browserIsolation === 'context') {
@@ -174,13 +184,15 @@ export async function main(mainOptions: MainOptions, overrides: Partial<MainDepe
 
     // Launch a browser process and fetch names of all stories.
     storiesBrowser = new BaseBrowser(browserOptions, browserBackend, { role: 'story-index' }, browserProcess);
-    await storiesBrowser.boot();
+    await measureRuntimePhase('story-index-browser-boot', () => storiesBrowser!.boot());
     throwIfAborted(mainOptions.signal);
     logger.log('Executable Chromium path:', logger.color.magenta(storiesBrowser.executablePath));
     const storyIndexProvider = new StorybookStoryIndexProvider();
-    const allStories = await abortable(
-      storyIndexProvider.load(new URL(mainOptions.serverOptions.storybookUrl), mainOptions.signal),
-      mainOptions.signal,
+    const allStories = await measureRuntimePhase('story-index-load', () =>
+      abortable(
+        storyIndexProvider.load(new URL(mainOptions.serverOptions.storybookUrl), mainOptions.signal),
+        mainOptions.signal,
+      ),
     );
     logger.debug('Ended to fetch stories metadata.');
 
@@ -192,8 +204,10 @@ export async function main(mainOptions: MainOptions, overrides: Partial<MainDepe
     }
 
     // Detect managed mode from StoryFreeze's owned preview protocol on the story iframe.
-    const mode = await abortable(detectRunMode(storiesBrowser, browserOptions), mainOptions.signal);
-    await storiesBrowser.close();
+    const mode = await measureRuntimePhase('preview-mode-detection', () =>
+      abortable(detectRunMode(storiesBrowser!, browserOptions), mainOptions.signal),
+    );
+    await measureRuntimePhase('story-index-browser-close', () => storiesBrowser!.close());
     storiesBrowser = undefined;
 
     const shardedStories = shardStories(
@@ -220,18 +234,30 @@ export async function main(mainOptions: MainOptions, overrides: Partial<MainDepe
     }
 
     // Launch browser processes to capture each story.
-    workers = await bootCapturingBrowserAsWorkers(connection, browserOptions, mode, browserBackend, browserProcess);
+    workers = await measureRuntimePhase('capture-workers-boot', () =>
+      bootCapturingBrowserAsWorkers(connection!, browserOptions, mode, browserBackend, browserProcess),
+    );
+    if (startupStartedAt !== undefined) {
+      emitCaptureDiagnostic({
+        type: 'runtime-phase',
+        phase: 'startup-complete',
+        state: 'end',
+        durationMs: performance.now() - startupStartedAt,
+      });
+    }
     logger.debug('Created workers.');
 
     // Execution caputuring procedure.
-    const captured = await createScreenshotService({
-      workers,
-      stories: shardedStories,
-      fileSystem,
-      logger,
-      forwardConsoleLogs: mainOptions.forwardConsoleLogs,
-      trace: mainOptions.trace,
-    }).execute();
+    const captured = await measureRuntimePhase('capture-execution', () =>
+      createScreenshotService({
+        workers,
+        stories: shardedStories,
+        fileSystem,
+        logger,
+        forwardConsoleLogs: mainOptions.forwardConsoleLogs,
+        trace: mainOptions.trace,
+      }).execute(),
+    );
     logger.debug('Ended ScreenshotService execution.');
     return captured;
   } catch (error) {
@@ -243,7 +269,9 @@ export async function main(mainOptions: MainOptions, overrides: Partial<MainDepe
     throw error;
   } finally {
     // Shutdown workers and dispose connection.
-    await disposeRuntimeResources({ workers, storiesBrowser, browserProcess, connection }, logger);
+    await measureRuntimePhase('runtime-dispose', () =>
+      disposeRuntimeResources({ workers, storiesBrowser, browserProcess, connection }, logger),
+    );
     logger.debug('Ended to dispose workers.');
     logger.debug('Ended to dispose connection.');
   }

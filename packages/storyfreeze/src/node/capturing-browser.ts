@@ -1,6 +1,11 @@
 import { fileURLToPath } from 'node:url';
 import { BaseBrowser, MetricsWatcher } from './browser.js';
-import type { BrowserBackend, BrowserConsoleMessage, BrowserSessionOptions } from './browser-backend.js';
+import type {
+  BrowserBackend,
+  BrowserConsoleMessage,
+  BrowserDeviceDescriptor,
+  BrowserSessionOptions,
+} from './browser-backend.js';
 import type { BrowserSessionSource } from './browser-process-coordinator.js';
 import type { Story } from './story.js';
 import type { ManagedStorybookConnection } from './managed-storybook-connection.js';
@@ -60,6 +65,19 @@ export function shouldRecoverPlaywrightWorker(options: {
   return !options.aborted && !options.healthy && options.retryCount < options.maxRetryCount;
 }
 
+export function resolveViewport(
+  viewport: StrictScreenshotOptions['viewport'],
+  deviceDescriptors: readonly BrowserDeviceDescriptor[],
+): Viewport | undefined {
+  if (typeof viewport !== 'string') return viewport;
+  if (/^\d+$/.test(viewport)) return { width: Number(viewport), height: 600 };
+  if (/^\d+x\d+$/.test(viewport)) {
+    const [width, height] = viewport.split('x').map(Number);
+    return { width, height };
+  }
+  return deviceDescriptors.find(descriptor => descriptor.name === viewport)?.viewport;
+}
+
 /**
  *
  * A worker to capture screenshot images.
@@ -114,7 +132,10 @@ export class CapturingBrowser extends BaseBrowser {
    *
    **/
   async boot(sessionOptions?: BrowserSessionOptions) {
-    await super.boot(sessionOptions);
+    const initialViewport =
+      sessionOptions?.viewport ?? resolveViewport(this.baseScreenshotOptions.viewport, this.getDeviceDescriptors());
+    await super.boot(initialViewport ? { ...sessionOptions, viewport: initialViewport } : sessionOptions);
+    this.viewport = initialViewport;
     try {
       await this.expose();
       this.resourceWatcher = new ResourceWatcher(this.page);
@@ -224,33 +245,16 @@ export class CapturingBrowser extends BaseBrowser {
       throw new InvalidCurrentStoryStateError();
     }
 
-    let nextViewport: Viewport;
-
-    if (typeof opt.viewport === 'string') {
-      if (opt.viewport.match(/^\d+$/)) {
-        // For case such as `--viewport "800"`.
-        nextViewport = { width: +opt.viewport, height: 600 };
-      } else if (opt.viewport.match(/^\d+x\d+$/)) {
-        // For case such as `--viewport "800x600"`.
-        const [w, h] = opt.viewport.split('x');
-        nextViewport = { width: +w, height: +h };
-      } else {
-        // Handle as a StoryFreeze device descriptor.
-        const hit = this.getDeviceDescriptors().find(d => d.name === opt.viewport);
-        if (!hit) {
-          this.opt.logger.warn(
-            `Skip screenshot for ${this.opt.logger.color.yellow(
-              JSON.stringify(this.currentStory),
-            )} because the viewport ${this.opt.logger.color.magenta(
-              opt.viewport,
-            )} is not registered in the StoryFreeze device registry.`,
-          );
-          return false;
-        }
-        nextViewport = hit.viewport;
-      }
-    } else {
-      nextViewport = opt.viewport;
+    const nextViewport = resolveViewport(opt.viewport, this.getDeviceDescriptors());
+    if (!nextViewport) {
+      this.opt.logger.warn(
+        `Skip screenshot for ${this.opt.logger.color.yellow(
+          JSON.stringify(this.currentStory),
+        )} because the viewport ${this.opt.logger.color.magenta(
+          String(opt.viewport),
+        )} is not registered in the StoryFreeze device registry.`,
+      );
+      return false;
     }
 
     // Sometimes, `page.screenshot` is completed before applying viewport unfortunately.

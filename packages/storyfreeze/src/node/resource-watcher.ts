@@ -13,6 +13,7 @@ export class ResourceWatcher {
   private requestedAssetUrls = new Set<string>();
   private unsubscribe?: () => void;
   private activityGeneration = 0;
+  private lastActivityAt = Date.now();
   private activityWaiters = new Set<() => void>();
 
   constructor(private page: Pick<CapturePage, 'subscribeRequests'>) {}
@@ -35,6 +36,7 @@ export class ResourceWatcher {
 
   private notifyActivity() {
     this.activityGeneration += 1;
+    this.lastActivityAt = Date.now();
     const waiters = [...this.activityWaiters];
     this.activityWaiters.clear();
     waiters.forEach(resolve => resolve());
@@ -113,7 +115,7 @@ export class ResourceWatcher {
       const now = Date.now();
       if (this.inFlight.size === 0) {
         if (quietStartedAt === undefined || quietGeneration !== this.activityGeneration) {
-          quietStartedAt = now;
+          quietStartedAt = this.lastActivityAt;
           quietGeneration = this.activityGeneration;
         }
         const quietRemaining = quietMs - (now - quietStartedAt);

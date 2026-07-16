@@ -85,14 +85,22 @@ async function bootCapturingBrowserAsWorkers(
   opt: MainOptions,
   mode: RunMode,
   backend: BrowserBackend,
-  sessionSource?: BrowserSessionSource,
+  sessionSourceForWorker?: (workerId: number) => BrowserSessionSource | undefined,
 ) {
   const browsers = [...new Array(Math.max(opt.parallel, 1)).keys()].map(
-    i => new CapturingBrowser(connection, opt, mode, i, backend, sessionSource),
+    i => new CapturingBrowser(connection, opt, mode, i, backend, sessionSourceForWorker?.(i)),
   );
   await bootCaptureWorkers(browsers, opt.signal);
   opt.logger.debug(`Started ${browsers.length} capture browsers`);
   return browsers;
+}
+
+export function selectCaptureWorkerSessionSource(
+  browserIsolation: MainOptions['browserIsolation'],
+  workerId: number,
+  source: BrowserSessionSource,
+) {
+  return browserIsolation === 'context' || workerId === 0 ? source : undefined;
 }
 
 export function filterStories(
@@ -178,9 +186,7 @@ export async function main(mainOptions: MainOptions, overrides: Partial<MainDepe
     await measureRuntimePhase('storybook-connect', () => abortable(connection!.connect(), mainOptions.signal));
     logger.debug('Created to connection.');
 
-    if (browserIsolation === 'context') {
-      browserProcess = new BrowserProcessCoordinator(browserBackend, browserOptions);
-    }
+    browserProcess = new BrowserProcessCoordinator(browserBackend, browserOptions);
 
     // Launch a browser process and fetch names of all stories.
     storiesBrowser = new BaseBrowser(browserOptions, browserBackend, { role: 'story-index' }, browserProcess);
@@ -235,7 +241,9 @@ export async function main(mainOptions: MainOptions, overrides: Partial<MainDepe
 
     // Launch browser processes to capture each story.
     workers = await measureRuntimePhase('capture-workers-boot', () =>
-      bootCapturingBrowserAsWorkers(connection!, browserOptions, mode, browserBackend, browserProcess),
+      bootCapturingBrowserAsWorkers(connection!, browserOptions, mode, browserBackend, workerId =>
+        selectCaptureWorkerSessionSource(browserIsolation, workerId, browserProcess!),
+      ),
     );
     if (startupStartedAt !== undefined) {
       emitCaptureDiagnostic({

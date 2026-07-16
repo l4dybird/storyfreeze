@@ -61,6 +61,23 @@ describe(findChrome, () => {
 });
 
 describe(BaseBrowser, () => {
+  it('reports direct browser launches when diagnostics are enabled', async () => {
+    vi.stubEnv('STORYFREEZE_CAPTURE_DIAGNOSTICS', '1');
+    const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    const { browser } = createBrowser();
+
+    try {
+      await browser.boot();
+
+      expect(write).toHaveBeenCalledWith(expect.stringContaining('"type":"browser-launch"'));
+      expect(write).toHaveBeenCalledWith(expect.stringContaining('"source":"direct"'));
+    } finally {
+      await browser.close();
+      write.mockRestore();
+      vi.unstubAllEnvs();
+    }
+  });
+
   it('uses the explicit launch path and preserves caller launch options', async () => {
     const { backend, browser } = createBrowser({
       chromiumPath: '/custom/chrome',

@@ -288,6 +288,41 @@ function commonConditions(records) {
   };
 }
 
+function runnerHardwareEvidence(records, workflowRuns) {
+  const dispatches = records.map((record, index) => {
+    const cpuModel = record.environment?.cpuModel;
+    const cpuCount = record.environment?.cpuCount;
+    const totalMemoryBytes = record.environment?.totalMemoryBytes;
+    if (typeof cpuModel !== 'string' || cpuModel.length === 0) {
+      fail(`Workflow run ${index + 1} is missing its runner CPU model.`);
+    }
+    if (!Number.isInteger(cpuCount) || cpuCount < 1) {
+      fail(`Workflow run ${index + 1} has an invalid runner CPU count.`);
+    }
+    if (!Number.isFinite(totalMemoryBytes) || totalMemoryBytes <= 0) {
+      fail(`Workflow run ${index + 1} has invalid runner memory evidence.`);
+    }
+    return {
+      workflowRun: workflowRuns[index],
+      cpuModel,
+      cpuCount,
+      totalMemoryBytes,
+    };
+  });
+  const cpuModels = [...new Set(dispatches.map(dispatch => dispatch.cpuModel))];
+  const cpuCounts = [...new Set(dispatches.map(dispatch => dispatch.cpuCount))];
+  const memoryValues = dispatches.map(dispatch => dispatch.totalMemoryBytes);
+  return {
+    cpuModelMatched: cpuModels.length === 1,
+    cpuModels,
+    cpuCountMatched: cpuCounts.length === 1,
+    cpuCounts,
+    totalMemoryBytesMin: Math.min(...memoryValues),
+    totalMemoryBytesMax: Math.max(...memoryValues),
+    dispatches,
+  };
+}
+
 function summarizeIsolation(runs, expectedCapturesPerRun) {
   const captureTimes = runs.flatMap(run => run.storyDurationsMs);
   const diagnosticEvents = runs.flatMap(run => run.captureDiagnostics ?? []);
@@ -333,6 +368,7 @@ function summarizeIsolation(runs, expectedCapturesPerRun) {
     idleTimeoutEventCount,
     maxBrowserRootCount: Math.max(...runs.map(run => run.peakBrowserRootCount)),
     maxChromiumProcessCount: Math.max(...runs.map(run => run.peakChromiumProcessCount)),
+    maxRuntimeBrowserLaunchCount: Math.max(...runs.map(run => run.runtimeBrowserLaunchCount)),
     measuredRuns: runs.length,
     phaseTimings: summarizePhaseTimings(diagnosticEvents, 'capture-phase'),
     peakTreeRssP50Bytes: percentile(
@@ -390,6 +426,7 @@ function contextToProcessRatios(summaries) {
     cpuTimeP50: ratio(context.cpuTimeP50Ms, process.cpuTimeP50Ms),
     maxBrowserRootCount: ratio(context.maxBrowserRootCount, process.maxBrowserRootCount),
     maxChromiumProcessCount: ratio(context.maxChromiumProcessCount, process.maxChromiumProcessCount),
+    maxRuntimeBrowserLaunchCount: ratio(context.maxRuntimeBrowserLaunchCount, process.maxRuntimeBrowserLaunchCount),
     peakTreeRssP50: ratio(context.peakTreeRssP50Bytes, process.peakTreeRssP50Bytes),
     wallTimeP50: ratio(context.wallTimeP50Ms, process.wallTimeP50Ms),
     wallTimeP95: ratio(context.wallTimeP95Ms, process.wallTimeP95Ms),
@@ -524,6 +561,7 @@ function buildAggregate({
 
   const allRecords = [...records, ...[diagnosticP1, diagnosticP2].filter(Boolean)];
   const conditions = commonConditions(allRecords);
+  const runnerHardware = runnerHardwareEvidence(records, workflowRuns);
   const summaries = summarizeRecords(records);
   const ratios = contextToProcessRatios(summaries);
   const pixelComparisons = summarizePixelComparisons(records);
@@ -534,16 +572,16 @@ function buildAggregate({
       summary => summary.captureFailureCount === 0 && summary.failedRunCount === 0,
     ),
     captureTimeP95RatioAtMostOnePointZeroFive: isRatioAtMost(ratios.captureTimeP95, 1.05),
-    contextEveryRunHasOneBrowserRoot: records.every(record =>
+    contextEveryRunHasOneRuntimeBrowserLaunch: records.every(record =>
       [...record.isolations.context.warmups, ...record.isolations.context.runs].every(
-        run => run.peakBrowserRootCount === 1,
+        run => run.runtimeBrowserLaunchCount === 1,
       ),
     ),
-    contextBrowserRootCountLessThanProcess:
-      summaries.context.maxBrowserRootCount < summaries.process.maxBrowserRootCount,
+    contextRuntimeBrowserLaunchCountLessThanProcess:
+      summaries.context.maxRuntimeBrowserLaunchCount < summaries.process.maxRuntimeBrowserLaunchCount,
     contextChromiumProcessCountLessThanProcess:
       summaries.context.maxChromiumProcessCount < summaries.process.maxChromiumProcessCount,
-    contextMaxBrowserRootCountIsOne: summaries.context.maxBrowserRootCount === 1,
+    contextMaxRuntimeBrowserLaunchCountIsOne: summaries.context.maxRuntimeBrowserLaunchCount === 1,
     measuredRunsPerIsolationIs40: summaryList.every(summary => summary.measuredRuns === 40),
     peakTreeRssP50RatioAtMostPointEight: isRatioAtMost(ratios.peakTreeRssP50, 0.8),
     pngMismatchCountIsZero: pixelComparisons.mismatchCount === 0,
@@ -566,6 +604,7 @@ function buildAggregate({
     sourceTree: tree,
     workflowRuns,
     conditions,
+    runnerHardware,
     isolations: summaries,
     contextToProcessRatios: ratios,
     pixelComparisons,

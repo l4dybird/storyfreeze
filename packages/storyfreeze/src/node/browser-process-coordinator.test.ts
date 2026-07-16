@@ -44,6 +44,25 @@ function createBackend(instances: BrowserInstance[]) {
 }
 
 describe(BrowserProcessCoordinator, () => {
+  it('reports coordinated browser launches when diagnostics are enabled', async () => {
+    vi.stubEnv('STORYFREEZE_CAPTURE_DIAGNOSTICS', '1');
+    const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    const browser = createInstance('/chromium/first');
+    const { backend } = createBackend([browser.instance]);
+    const coordinator = new BrowserProcessCoordinator(backend, {});
+
+    try {
+      await coordinator.openSession();
+
+      expect(write).toHaveBeenCalledWith(expect.stringContaining('"type":"browser-launch"'));
+      expect(write).toHaveBeenCalledWith(expect.stringContaining('"source":"coordinator"'));
+    } finally {
+      await coordinator.close();
+      write.mockRestore();
+      vi.unstubAllEnvs();
+    }
+  });
+
   it('opens many isolated sessions from one shared browser launch', async () => {
     const browser = createInstance('/chromium/first');
     const { backend, launch } = createBackend([browser.instance]);

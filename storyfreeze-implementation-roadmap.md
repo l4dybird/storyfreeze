@@ -8,7 +8,7 @@
 - npm パッケージ候補: `storyfreeze`
 - CLI: `storyfreeze`
 - 対象: Storybook 10 / Chromium / Playwright
-- ステータス: Phase 5F完了・Phase 5G実装中
+- ステータス: Phase 5G完了・1.0安定化準備中
 
 ## 1. 結論
 
@@ -1093,6 +1093,10 @@ PR-561ではstory-index用sessionを閉じた後もprocessを保持し、capture
 
 story affinityだけを導入するとvariant-heavy storyを1 workerへ直列化し、既存のparallel captureを悪化させる。navigationを省くbatchingはDOMだけでなくwindow/module global、timer、listener、Storybook lifecycle、variant固有の`waitFor`をfresh documentへ戻す現行契約を再現できない。このためPhase 5Gではどちらもdefault実装へ入れず、明示的に弱いisolationを選ぶ将来のopt-in検討へ送る。parallel 8/16も小fixtureではover-provisioning診断に限り、default worker数の変更には使わない。
 
+最終record `86ae115`は、同じtreeとrunner imageで開始順を均衡させた4 dispatch、各isolation 40 run・360 capture sampleを集約した。record 1/3/4のhost CPUはAMD EPYC 9V74、record 2はAMD EPYC 7763であり、GitHub-hosted runnerのハードウェアは完全同一ではない。各dispatch内ではprocess/contextを同じhost上でpairにし、開始順も均衡させた。旧record `d8ebef4`に対する観測値はwall p50が4,656msから4,352ms（6.5%低下）、wall p95が4,848msから4,475ms（7.7%低下）、capture p95が1,243msから1,172ms（5.7%低下）だった。旧recordとはrunner image、kernel、package versionも異なるため、差をコード変更だけに帰属させない。peak RSSは実質同等、capture failure、retry、timeout、crash、PNG mismatch、3秒tailはすべて0だった。
+
+process modeのparallel `1/2/4/8/16` wall p50はそれぞれ7,606 / 4,652 / 4,352 / 5,531 / 7,483msとなり、4を超える同一runner並列は棄却した。context modeはwall p50 4,013ms、peak RSS 1.68GBまで下げたが、capture p95がprocessより6.8%遅く1.05 gateを満たさないため、defaultはprocess/parallel 4を維持する。同一runnerのcold runで10倍はfresh-document契約を弱めずには達成できない。452 story規模のfull-suite短縮は既存`--shard`とimmutable static build/tarballを複数runnerへ配布する水平分割で扱い、未計測の10倍値は主張しない。
+
 ## 11. Render stability契約
 
 Playwright移行の成否はscreenshot APIより、撮影可能状態の判定に依存する。
@@ -1282,6 +1286,7 @@ nightly:
 | [ADR-010](docs/adr/010-capture-beyond-viewport-compatibility.md) | `captureBeyondViewport`互換方針                          |
 | [ADR-011](docs/adr/011-cpu-trace-parallelism.md)                 | CPU traceとparallelism                                   |
 | [ADR-012](docs/adr/012-browser-isolation.md)                     | process/context isolationのdefault                       |
+| [ADR-013](docs/adr/013-phase-5g-throughput.md)                   | Phase 5Gのthroughput最適化と計測判断                     |
 
 ## 17. IssueラベルとMilestone
 

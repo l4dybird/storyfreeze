@@ -51,6 +51,8 @@ Every correctness and topology gate passed. Context isolation reduced wall p50 f
 
 Capture-request p95 improved substantially from the initial record but remained 1,334 versus 1,243 ms (ratio 1.073). This exceeds the 1.05 threshold by 2.3 percentage points, so the aggregate acceptance result remains false. `process` remains the default and the conditional context-default change is not made. Context isolation remains available as an explicit Playwright-only optimization.
 
+Phase 5G supersedes these performance values with a new balanced record while preserving the same default decision. See [ADR-013](013-phase-5g-throughput.md).
+
 ## Consequences
 
 Users can evaluate context sharing explicitly without changing existing capture behavior. Puppeteer remains a process-only fallback. Trace output keeps its established Chromium CPU trace JSON format and parallelism, at the cost of forfeiting context-mode process consolidation for trace-enabled runs.
@@ -60,5 +62,6 @@ The existing managed Storybook E2E case exercises Playwright context isolation w
 ## References
 
 - [ADR-011: Chromium CPU trace and parallelism](011-cpu-trace-parallelism.md)
+- [ADR-013: Phase 5G throughput tuning](013-phase-5g-throughput.md)
 - [Browser isolation aggregate](../../benchmarks/browser-isolation-record.json)
 - [Playwright BrowserContext documentation](https://playwright.dev/docs/api/class-browsercontext)

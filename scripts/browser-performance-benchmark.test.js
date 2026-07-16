@@ -34,6 +34,7 @@ test('summarizes capture/runtime phases, queue utilization, and topology', () =>
           peakQueued: 9,
           type: 'queue-summary',
         },
+        { type: 'browser-launch' },
       ],
       cpuTimeMs: 500,
       peakBrowserRootCount: 1,
@@ -43,6 +44,7 @@ test('summarizes capture/runtime phases, queue utilization, and topology', () =>
       peakTreeRssBytes: 1000,
       pngCount: 1,
       retryCount: 0,
+      runtimeBrowserLaunchCount: 1,
       storyDurationsMs: [800],
       success: true,
       timeoutCount: 0,
@@ -69,5 +71,6 @@ test('summarizes capture/runtime phases, queue utilization, and topology', () =>
   });
   assert.equal(summary.maxPeakProcessCount, 10);
   assert.equal(summary.maxUniqueBrowserLaunchCount, 1);
+  assert.equal(summary.maxRuntimeBrowserLaunchCount, 1);
   assert.deepEqual(summary.maxChromiumProcessCountsByType, { browser: 1, renderer: 4 });
 });

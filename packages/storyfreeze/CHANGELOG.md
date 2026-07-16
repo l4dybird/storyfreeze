@@ -1,5 +1,11 @@
 # storyfreeze
 
+## 0.2.0-alpha.2
+
+### Patch Changes
+
+- 541c7b3: Resolve unspecified screenshot viewports from Storybook viewport globals without adding a filename suffix.
+
 ## 0.2.0-alpha.1
 
 ### Patch Changes

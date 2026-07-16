@@ -16,6 +16,7 @@
     "playwright-default",
     "protect-capture-paths",
     "reject-redirected-previews",
+    "resolve-viewport-globals",
     "safe-browser-sandbox",
     "stop-capture-queue",
     "stream-playwright-traces",

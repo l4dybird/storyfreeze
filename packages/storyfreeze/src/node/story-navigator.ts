@@ -8,6 +8,7 @@ import {
   PreviewRenderError,
   PreviewStateMismatchError,
   PreviewStateValidationError,
+  PreviewUrlRedirectError,
 } from './errors.js';
 import {
   STORYFREEZE_ADDON_VERSION,
@@ -41,6 +42,22 @@ export function createStoryPreviewUrl(baseUrl: URL, storyId: string, requestId: 
 }
 
 type NavigationPage = Pick<CapturePage, 'currentUrl' | 'evaluate' | 'goto'>;
+
+function assertPreviewUrl(page: NavigationPage, expectedUrl: URL, expected: ExpectedPreviewState) {
+  const actualUrl = page.currentUrl();
+  let actual: URL;
+  try {
+    actual = new URL(actualUrl);
+  } catch {
+    throw new PreviewUrlRedirectError(expectedUrl.href, actualUrl, expected.storyId, expected.requestId);
+  }
+  if (
+    actual.searchParams.get('id') !== expected.storyId ||
+    actual.searchParams.get(STORYFREEZE_REQUEST_ID_PARAM) !== expected.requestId
+  ) {
+    throw new PreviewUrlRedirectError(expectedUrl.href, actualUrl, expected.storyId, expected.requestId);
+  }
+}
 
 async function readPreviewState(page: NavigationPage): Promise<unknown> {
   return page.evaluate(
@@ -104,6 +121,7 @@ export async function detectPreviewMode(
   const requestId = 'mode-detection';
   const url = createStoryPreviewUrl(baseUrl, storyId, requestId);
   await page.goto(url.href, { timeout: 60000, waitUntil: 'domcontentloaded' });
+  assertPreviewUrl(page, url, { storyId, requestId });
   return (await waitForMarker(page, { storyId, requestId }, timeout, signal)) ? 'managed' : 'simple';
 }
 
@@ -122,6 +140,7 @@ export class StoryNavigator {
     this.current = { storyId, requestId };
     const url = createStoryPreviewUrl(this.baseUrl, storyId, requestId, retryCount);
     await this.page.goto(url.href, { timeout, waitUntil: 'domcontentloaded' });
+    assertPreviewUrl(this.page, url, this.current);
   }
 
   async waitForReady(timeout: number, signal?: AbortSignal): Promise<NormalizedScreenshotOptions> {

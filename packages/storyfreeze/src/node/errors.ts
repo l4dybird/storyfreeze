@@ -71,3 +71,17 @@ export class PreviewReadyTimeoutError extends Error {
     );
   }
 }
+
+export class PreviewUrlRedirectError extends Error {
+  name = 'PreviewUrlRedirectError';
+
+  constructor(expectedUrl: string, actualUrl: string, storyId: string, requestId: string) {
+    super(
+      `Storybook preview navigation lost its required query parameters after a redirect. Expected id=${JSON.stringify(
+        storyId,
+      )} and storyfreezeRequestId=${JSON.stringify(requestId)} at ${expectedUrl}, but the browser reached ${
+        actualUrl || '(an empty URL)'
+      }. The static server may be redirecting /iframe.html and discarding its query string. If you use serve, add {"cleanUrls": false} to serve.json.`,
+    );
+  }
+}

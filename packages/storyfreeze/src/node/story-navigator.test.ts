@@ -23,10 +23,13 @@ function state(
 }
 
 function pageWithState(getState: () => unknown) {
+  let currentUrl = 'about:blank';
   return {
-    goto: vi.fn(async () => null),
+    goto: vi.fn(async (url: string) => {
+      currentUrl = url;
+    }),
     evaluate: vi.fn(async () => getState()),
-    currentUrl: vi.fn(() => 'https://example.test/storybook/iframe.html'),
+    currentUrl: vi.fn(() => currentUrl),
   };
 }
 
@@ -74,6 +77,15 @@ describe(detectPreviewMode, () => {
     await expect(
       detectPreviewMode(page, new URL('https://example.test'), 'button--primary', 100, controller.signal),
     ).rejects.toThrow('interrupted by test');
+  });
+
+  it('rejects a redirect that discards the preview query before falling back to simple mode', async () => {
+    const page = pageWithState(() => undefined);
+    page.currentUrl.mockReturnValue('https://example.test/iframe');
+
+    await expect(detectPreviewMode(page, new URL('https://example.test'), 'button--primary', 0)).rejects.toThrow(
+      /lost its required query parameters after a redirect.*cleanUrls.*false/,
+    );
   });
 });
 
@@ -125,7 +137,17 @@ describe(StoryNavigator, () => {
     await navigator.navigate('button--primary');
 
     await expect(navigator.waitForReady(0)).rejects.toThrow(
-      /URL: .*iframe\.html; storyId: button--primary; requestId: 7-1; lastState:/,
+      /URL: .*iframe\.html\?.*; storyId: button--primary; requestId: 7-1; lastState:/,
+    );
+  });
+
+  it('rejects a redirect that changes the story or request query', async () => {
+    const page = pageWithState(() => undefined);
+    page.currentUrl.mockReturnValue('https://example.test/iframe.html?id=button--other&storyfreezeRequestId=7-1');
+    const navigator = new StoryNavigator(page, new URL('https://example.test'), 7);
+
+    await expect(navigator.navigate('button--primary')).rejects.toThrow(
+      /Expected id="button--primary" and storyfreezeRequestId="7-1"/,
     );
   });
 });

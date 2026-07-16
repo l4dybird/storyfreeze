@@ -19,6 +19,8 @@ on:
           - '1'
           - '2'
           - '4'
+          - '8'
+          - '16'
         default: '4'
       starting_isolation:
         description: Isolation mode measured first in the first pair
@@ -43,6 +45,7 @@ on:
       - 'packages/storyfreeze/src/shared/**'
       - 'scripts/aggregate-browser-isolation-benchmarks*.js'
       - 'scripts/browser-performance-benchmark.js'
+      - 'scripts/browser-performance-benchmark.test.js'
       - 'scripts/e2e-prestorybook.js'
 
 permissions:
@@ -68,7 +71,10 @@ jobs:
       - run: vp install --frozen-lockfile
       - run: pnpm build
       - name: Test isolation benchmark aggregation
-        run: node --test scripts/aggregate-browser-isolation-benchmarks.test.js
+        run: >-
+          node --test
+          scripts/aggregate-browser-isolation-benchmarks.test.js
+          scripts/browser-performance-benchmark.test.js
       - name: Install Playwright Chromium
         run: pnpm --filter storyfreeze exec playwright-core install --with-deps chromium
       - name: Record source tree
@@ -92,7 +98,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: browser-isolation-explicit-${{ github.run_attempt }}
+          name: browser-isolation-explicit-${{ github.event_name == 'workflow_dispatch' && inputs.profile || 'pr' }}-p${{ github.event_name == 'workflow_dispatch' && inputs.parallel || '4' }}-${{ github.run_attempt }}
           path: |
             ${{ runner.temp }}/browser-isolation-explicit.json
             ${{ runner.temp }}/browser-isolation-explicit-failures

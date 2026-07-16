@@ -86,6 +86,11 @@ describe(disposeRuntimeResources, () => {
 });
 
 describe(bootCaptureWorkers, () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
   function createWorker(boot: () => Promise<unknown>) {
     const worker = {
       boot: vi.fn(async () => {
@@ -137,6 +142,25 @@ describe(bootCaptureWorkers, () => {
 
     await expect(bootCaptureWorkers([worker], controller.signal)).rejects.toThrow('already interrupted');
     expect(worker.boot).not.toHaveBeenCalled();
+  });
+
+  it('records each concurrent worker boot independently', async () => {
+    vi.stubEnv('STORYFREEZE_CAPTURE_DIAGNOSTICS', '1');
+    const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    const workers = [createWorker(async () => {}), createWorker(async () => {})];
+
+    await expect(bootCaptureWorkers(workers)).resolves.toEqual(workers);
+
+    const completions = write.mock.calls
+      .map(([chunk]) => String(chunk))
+      .filter(line => line.startsWith(CAPTURE_DIAGNOSTIC_PREFIX))
+      .map(line => JSON.parse(line.slice(CAPTURE_DIAGNOSTIC_PREFIX.length)))
+      .filter(
+        event => event.type === 'runtime-phase' && event.phase === 'capture-worker-boot' && event.state === 'end',
+      );
+    expect(completions).toHaveLength(2);
+    expect(completions.map(event => event.workerId).sort()).toEqual([0, 1]);
+    expect(completions.every(event => typeof event.durationMs === 'number')).toBe(true);
   });
 });
 
@@ -645,7 +669,44 @@ describe(main, () => {
     shard: { shardNumber: 1, totalShards: 1 },
   } as unknown as MainOptions;
 
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
+  it('emits runtime phase diagnostics without changing a failed run', async () => {
+    vi.stubEnv('STORYFREEZE_CAPTURE_DIAGNOSTICS', '1');
+    const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    vi.spyOn(ManagedStorybookConnection.prototype, 'connect').mockImplementation(
+      async function (this: ManagedStorybookConnection) {
+        return this;
+      },
+    );
+    vi.spyOn(ManagedStorybookConnection.prototype, 'disconnect').mockResolvedValue(undefined);
+    vi.spyOn(BaseBrowser.prototype, 'boot').mockImplementation(async function (this: BaseBrowser) {
+      return this;
+    });
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('enumeration failed'));
+    vi.spyOn(BaseBrowser.prototype, 'close').mockResolvedValue(undefined);
+
+    await expect(main(options)).rejects.toThrow('enumeration failed');
+
+    const events = write.mock.calls
+      .map(([chunk]) => String(chunk))
+      .filter(line => line.startsWith(CAPTURE_DIAGNOSTIC_PREFIX))
+      .map(line => JSON.parse(line.slice(CAPTURE_DIAGNOSTIC_PREFIX.length)))
+      .filter(event => event.type === 'runtime-phase' && event.state === 'end');
+    expect(events.map(event => event.phase)).toEqual([
+      'storybook-connect',
+      'story-index-browser-boot',
+      'story-index-load',
+      'runtime-dispose',
+    ]);
+    expect(events.find(event => event.phase === 'story-index-load')).toMatchObject({
+      durationMs: expect.any(Number),
+      error: { message: 'enumeration failed', name: 'Error' },
+    });
+  });
 
   it('closes the enumeration browser and connection when story enumeration fails', async () => {
     vi.spyOn(ManagedStorybookConnection.prototype, 'connect').mockImplementation(

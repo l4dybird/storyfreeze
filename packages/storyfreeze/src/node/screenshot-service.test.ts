@@ -4,6 +4,7 @@ import type { Logger } from './logger.js';
 import { createScreenshotService } from './screenshot-service.js';
 import type { Story } from './story.js';
 import type { VariantKey } from '../shared/types.js';
+import { CAPTURE_DIAGNOSTIC_PREFIX } from './capture-diagnostics.js';
 
 const story: Story = {
   id: 'button--primary',
@@ -19,6 +20,8 @@ describe(createScreenshotService, () => {
   });
 
   it('queues a retry before adding all variants from the successful default capture', async () => {
+    vi.stubEnv('STORYFREEZE_CAPTURE_DIAGNOSTICS', '1');
+    const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
     const hovered: VariantKey = { isDefault: false, keys: ['hovered'] };
     const small: VariantKey = { isDefault: false, keys: ['SMALL'] };
     const screenshot = vi.fn(async (_rid: string, _story: Story, variantKey: VariantKey, count: number) => {
@@ -58,6 +61,18 @@ describe(createScreenshotService, () => {
       { variantKey: small, count: 0 },
     ]);
     expect(saveScreenshot.mock.calls.map(([, , suffix]) => suffix)).toEqual([['LARGE'], ['hovered'], ['SMALL']]);
+    const events = write.mock.calls
+      .map(([chunk]) => String(chunk))
+      .filter(line => line.startsWith(CAPTURE_DIAGNOSTIC_PREFIX))
+      .map(line => JSON.parse(line.slice(CAPTURE_DIAGNOSTIC_PREFIX.length)));
+    expect(events.filter(event => event.type === 'queue-task' && event.state === 'start')).toHaveLength(4);
+    expect(events.find(event => event.type === 'queue-summary')).toMatchObject({
+      busyWorkerUtilization: expect.any(Number),
+      peakInFlight: 1,
+      settled: 4,
+      totalEnqueued: 4,
+      workerCount: 1,
+    });
   });
 
   it('keeps retry and dynamically added variants alive across two workers', async () => {
@@ -131,7 +146,18 @@ describe(createScreenshotService, () => {
     });
 
     await expect(service.execute()).resolves.toBe(1);
-    const line = write.mock.calls.map(call => String(call[0])).find(value => value.includes('"type":"capture-output"'));
+    const lines = write.mock.calls.map(call => String(call[0]));
+    const queueLine = lines.find(value => value.includes('"type":"queue-task"') && value.includes('"state":"start"'));
+    expect(queueLine).toBeDefined();
+    expect(JSON.parse(queueLine!.slice(CAPTURE_DIAGNOSTIC_PREFIX.length))).toMatchObject({
+      type: 'queue-task',
+      state: 'start',
+      durationMs: expect.any(Number),
+      requestId: 'button--primary',
+      storyId: 'button--primary',
+      variantKey: [],
+    });
+    const line = lines.find(value => value.includes('"type":"capture-output"'));
     expect(line).toBeDefined();
     expect(JSON.parse(line!.slice(line!.indexOf('{')))).toMatchObject({
       type: 'capture-output',

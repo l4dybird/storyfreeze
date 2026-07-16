@@ -35,6 +35,37 @@ function coefficientOfVariation(values) {
   return Math.sqrt(variance) / mean;
 }
 
+function summarizeTimings(events) {
+  return {
+    maxMs: events.length ? Math.max(...events) : null,
+    p50Ms: percentile(events, 0.5),
+    p95Ms: percentile(events, 0.95),
+    samples: events.length,
+  };
+}
+
+function summarizePhaseTimings(events, type) {
+  const phases = [...new Set(events.filter(event => event.type === type).map(event => event.phase))];
+  return Object.fromEntries(
+    phases
+      .filter(phase => typeof phase === 'string')
+      .sort()
+      .map(phase => {
+        const values = events
+          .filter(
+            event =>
+              event.type === type &&
+              event.state === 'end' &&
+              event.phase === phase &&
+              typeof event.durationMs === 'number' &&
+              Number.isFinite(event.durationMs),
+          )
+          .map(event => event.durationMs);
+        return [phase, summarizeTimings(values)];
+      }),
+  );
+}
+
 function readJson(file) {
   return JSON.parse(fs.readFileSync(path.resolve(file), 'utf8'));
 }
@@ -259,9 +290,17 @@ function commonConditions(records) {
 
 function summarizeIsolation(runs, expectedCapturesPerRun) {
   const captureTimes = runs.flatMap(run => run.storyDurationsMs);
-  const captureOutputs = runs
-    .flatMap(run => run.captureDiagnostics ?? [])
-    .filter(event => event.type === 'capture-output');
+  const diagnosticEvents = runs.flatMap(run => run.captureDiagnostics ?? []);
+  const captureOutputs = diagnosticEvents.filter(event => event.type === 'capture-output');
+  const queueWaitTimes = diagnosticEvents
+    .filter(
+      event =>
+        event.type === 'queue-task' &&
+        event.state === 'start' &&
+        typeof event.durationMs === 'number' &&
+        Number.isFinite(event.durationMs),
+    )
+    .map(event => event.durationMs);
   const variantKeys = [
     ...new Set(captureOutputs.map(event => `${event.storyId}?keys=${(event.variantKey ?? []).join(',')}`)),
   ];
@@ -295,12 +334,15 @@ function summarizeIsolation(runs, expectedCapturesPerRun) {
     maxBrowserRootCount: Math.max(...runs.map(run => run.peakBrowserRootCount)),
     maxChromiumProcessCount: Math.max(...runs.map(run => run.peakChromiumProcessCount)),
     measuredRuns: runs.length,
+    phaseTimings: summarizePhaseTimings(diagnosticEvents, 'capture-phase'),
     peakTreeRssP50Bytes: percentile(
       runs.map(run => run.peakTreeRssBytes),
       0.5,
     ),
+    queueWait: summarizeTimings(queueWaitTimes),
     retryEventCount: runs.reduce((total, run) => total + run.retryCount, 0),
     runTimeoutEventCount,
+    runtimePhaseTimings: summarizePhaseTimings(diagnosticEvents, 'runtime-phase'),
     storyVariants: Object.fromEntries(
       variantKeys.sort().map(key => {
         const values = captureOutputs

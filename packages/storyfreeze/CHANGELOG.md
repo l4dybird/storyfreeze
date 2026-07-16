@@ -1,5 +1,12 @@
 # storyfreeze
 
+## 0.2.0-alpha.1
+
+### Patch Changes
+
+- 0765a04: Add explicit preview mode selection and reject Storybook No Preview, error, and never-ready pages before capturing in simple mode.
+- fd76b9d: Reject Storybook preview redirects that discard or change the story and StoryFreeze request query parameters.
+
 ## 0.2.0-alpha.0
 
 ### Minor Changes

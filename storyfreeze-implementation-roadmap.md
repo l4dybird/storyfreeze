@@ -1084,15 +1084,14 @@ Stacked PRは次の順で進める。
 
 1. PR-560: runtime/capture phase、queue待ち、parallel `1/2/4/8/16`の可観測化
 2. PR-561: browser起動、初期viewport、重複安定待機などの固定費削減
-3. PR-562: 同一storyのrequestを同じworkerへ割り当てるstory affinity
-4. PR-563: fresh-navigation互換のfallbackを持つvariant batching
-5. PR-564: context modeの高並列化とadaptive default評価
-6. PR-565: 既存shardとimmutable build artifactを使うCI throughput改善
-7. PR-566: 40-run record、ADR、default判断、到達倍率の公開
+3. PR-562: compile-on-installの撤去、独立E2E captureの並行実行、stale PR runのcancel
+4. PR-563: 40-run record、ADR、default判断、到達倍率の公開
 
 各最適化PRは既存Storybook 10 static E2Eとpackage smokeを再利用し、新しいfixtureやsmoke suiteを追加しない。失敗、retry、timeout、crash、PNG path/dimension/pixel mismatchを0に保ち、原則としてwall p50を5%以上、またはpeak RSSを15%以上改善し、wall/capture p95を3%以上悪化させない変更だけを残す。計測基盤と後続最適化を可能にする内部境界は、単独の性能差がなくても例外として明記する。
 
 PR-561ではstory-index用sessionを閉じた後もprocessを保持し、capture worker 0がfresh contextを開いて再利用する。他workerとのprocess/context共有は行わない。またCLIのbase viewportをsession作成時に適用して最初のcaptureで同一viewportを再設定する固定費を除去し、resource quiet windowは最後のrequest activityからの経過時間を引き継いで重複待機しない。
+
+story affinityだけを導入するとvariant-heavy storyを1 workerへ直列化し、既存のparallel captureを悪化させる。navigationを省くbatchingはDOMだけでなくwindow/module global、timer、listener、Storybook lifecycle、variant固有の`waitFor`をfresh documentへ戻す現行契約を再現できない。このためPhase 5Gではどちらもdefault実装へ入れず、明示的に弱いisolationを選ぶ将来のopt-in検討へ送る。parallel 8/16も小fixtureではover-provisioning診断に限り、default worker数の変更には使わない。
 
 ## 11. Render stability契約
 
@@ -1250,11 +1249,8 @@ nightly:
 | 540 | Puppeteer removal                   | dependencies/API  |
 | 560 | performance observability           | benchmark/runtime |
 | 561 | capture fixed-cost reduction        | runtime/browser   |
-| 562 | story-affine scheduling             | runtime/queue     |
-| 563 | variant batching                    | preview/runtime   |
-| 564 | context parallel scaling            | performance       |
-| 565 | CI throughput                       | CI/sharding       |
-| 566 | performance record and default      | benchmark/ADR     |
+| 562 | CI throughput                       | CI/package/E2E    |
+| 563 | performance record and default      | benchmark/ADR     |
 
 ## 15. 同じPRへ入れてはいけない変更
 

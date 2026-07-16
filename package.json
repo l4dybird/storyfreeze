@@ -6,7 +6,7 @@
   },
   "packageManager": "pnpm@11.11.0",
   "scripts": {
-    "changeset:version": "node scripts/prepare-changeset-prerelease.js && changeset version",
+    "changeset:version": "node scripts/prepare-changeset-prerelease.js && changeset version && pnpm --filter storyfreeze build && pnpm doc",
     "clean": "pnpm --filter \"./packages/**\" -r run clean",
     "doc:clihelp": "node scripts/cli-help.js",
     "doc:toc": "node scripts/add-toc.js",

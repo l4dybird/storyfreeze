@@ -112,11 +112,7 @@ jobs:
           fi
       - name: Publish inspected tarball
         if: steps.release.outputs.should_release == 'true' && steps.registry.outputs.already_published != 'true'
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_AUTH_TOKEN }}
-        run: |
-          npm whoami --registry https://registry.npmjs.org/
-          pnpm publish "${{ steps.pack.outputs.tarball }}" --tag next --access public --provenance --registry https://registry.npmjs.org/
+        run: pnpm publish "${{ steps.pack.outputs.tarball }}" --tag next --access public --provenance --registry https://registry.npmjs.org/
       - name: Verify npm metadata
         if: steps.release.outputs.should_release == 'true'
         shell: bash

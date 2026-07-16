@@ -58,7 +58,6 @@
     "storybook-addon",
     "storybook",
     "addon",
-    "puppeteer",
     "playwright",
     "chrome",
     "screenshot",
@@ -70,7 +69,6 @@
   "devDependencies": {
     "@types/node": "^22.0.0",
     "@types/wait-on": "^5.0.0",
-    "puppeteer": "23.11.1",
     "rimraf": "^6.0.0",
     "typedoc": "0.27.6",
     "typescript": "5.7.3"
@@ -80,7 +78,6 @@
     "gunshi": "^0.36.0",
     "nanomatch": "^1.2.13",
     "playwright-core": "1.61.1",
-    "puppeteer-core": "^9.0.0",
     "sanitize-filename": "^1.6.3",
     "wait-on": "^7.0.0"
   },

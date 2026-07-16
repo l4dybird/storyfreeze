@@ -111,6 +111,9 @@ try {
   if (installedMetadata.dependencies?.['playwright-core'] !== '1.61.1') {
     throw new Error('The installed package did not declare the pinned Playwright runtime.');
   }
+  if (installedMetadata.dependencies?.['puppeteer-core'] || installedMetadata.devDependencies?.puppeteer) {
+    throw new Error('The installed package still declares a Puppeteer runtime.');
+  }
   if (
     installedMetadata.dependencies?.storycrawler ||
     fs.existsSync(path.join(consumerDir, 'node_modules', 'storycrawler'))

@@ -608,7 +608,6 @@ describe(CapturingBrowser, () => {
 describe(shouldRecoverPlaywrightWorker, () => {
   const recoverable = {
     aborted: false,
-    backendName: 'playwright' as const,
     healthy: false,
     maxRetryCount: 3,
     retryCount: 2,
@@ -616,7 +615,6 @@ describe(shouldRecoverPlaywrightWorker, () => {
 
   it('only recovers an unhealthy Playwright worker below the retry limit', () => {
     expect(shouldRecoverPlaywrightWorker(recoverable)).toBe(true);
-    expect(shouldRecoverPlaywrightWorker({ ...recoverable, backendName: 'puppeteer' })).toBe(false);
     expect(shouldRecoverPlaywrightWorker({ ...recoverable, healthy: true })).toBe(false);
     expect(shouldRecoverPlaywrightWorker({ ...recoverable, aborted: true })).toBe(false);
     expect(shouldRecoverPlaywrightWorker({ ...recoverable, retryCount: 3 })).toBe(false);

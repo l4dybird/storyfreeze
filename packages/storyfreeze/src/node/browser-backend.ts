@@ -1,9 +1,7 @@
 import type { Viewport } from '../shared/types.js';
 import type { VisualCommitOptions, VisualCommitResult } from '../shared/visual-commit.js';
 
-export type ChromeChannel = 'puppeteer' | 'canary' | 'stable' | '*';
-export const browserBackendNames = ['puppeteer', 'playwright'] as const;
-export type BrowserBackendName = (typeof browserBackendNames)[number];
+export type ChromeChannel = 'canary' | 'stable' | '*';
 
 export class ChromiumNotFoundError extends Error {
   name = 'ChromiumNotFoundError';
@@ -111,6 +109,6 @@ export interface BrowserInstance {
 }
 
 export interface BrowserBackend {
-  readonly name: BrowserBackendName;
+  readonly name: 'playwright';
   launch(options: BrowserRuntimeOptions): Promise<BrowserInstance>;
 }

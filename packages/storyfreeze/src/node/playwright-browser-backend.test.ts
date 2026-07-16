@@ -425,7 +425,7 @@ describe(PlaywrightBrowserBackend, () => {
     expect(launch).toHaveBeenCalledTimes(1);
   });
 
-  it('falls back to system Canary and stable Chrome without using a Puppeteer-managed browser', async () => {
+  it('falls back to system Canary and stable Chrome', async () => {
     const launch = vi.fn(async () => ({ close: vi.fn() }) as unknown as Browser);
     const findChrome = vi.fn(async ({ channel }: { channel?: string }) =>
       channel === 'stable'

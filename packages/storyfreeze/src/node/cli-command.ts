@@ -10,7 +10,6 @@ import {
 } from 'gunshi';
 import { renderHeader } from 'gunshi/renderer';
 import { time } from './async-utils.js';
-import { puppeteerBrowserBackend } from './browser.js';
 import { browserDeviceDescriptors } from './browser-device-registry.js';
 import {
   browserBackendNames,
@@ -182,7 +181,7 @@ const defaultDependencies: CliDependencies = {
     if (name === 'playwright') {
       return (await import('./playwright-browser-backend.js')).playwrightBrowserBackend;
     }
-    return puppeteerBrowserBackend;
+    return (await import('./puppeteer-browser-backend.js')).puppeteerBrowserBackend;
   },
   signalHost: process,
   env: process.env,

@@ -3,12 +3,8 @@ import { describe, expect, it, vi } from 'vite-plus/test';
 import type { BrowserMetrics, BrowserSession, CapturePage } from './browser-backend.js';
 import { BaseBrowser, ChromiumNotFoundError, MetricsWatcher, getDeviceDescriptors } from './browser.js';
 import type { BrowserSessionSource } from './browser-process-coordinator.js';
-import {
-  PuppeteerBrowserBackend,
-  findChrome,
-  type FindChromeOptions,
-  type FindChromeResult,
-} from './puppeteer-browser-backend.js';
+import { PuppeteerBrowserBackend } from './puppeteer-browser-backend.js';
+import { findChrome, type FindChromeOptions, type FindChromeResult } from './chromium-resolver.js';
 
 class TestBackend extends PuppeteerBrowserBackend {
   findResult: FindChromeResult = { executablePath: '/test/chrome', type: 'user' };

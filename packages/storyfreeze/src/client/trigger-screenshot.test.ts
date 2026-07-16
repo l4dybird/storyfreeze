@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vite-plus/test';
 import { STORYFREEZE_PREVIEW_STATE_GLOBAL } from '../shared/preview-protocol.js';
+import { createBaseScreenshotOptions } from '../shared/screenshot-options-helper.js';
 import { finalizeScreenshot, triggerScreenshot } from './trigger-screenshot.js';
 
 describe(finalizeScreenshot, () => {
@@ -78,6 +79,64 @@ describe(finalizeScreenshot, () => {
     expect((win as Record<string, any>)[STORYFREEZE_PREVIEW_STATE_GLOBAL]).toMatchObject({
       status: 'ready',
       options: { fullPage: true, variants: { nested: {} } },
+    });
+  });
+
+  it('publishes a viewport from Storybook globals without adding a variant suffix', async () => {
+    const win = installWindow({
+      getBaseScreenshotOptions: vi.fn(async () =>
+        createBaseScreenshotOptions({ delay: 0, disableWaitAssets: false, viewports: ['800x600'] }),
+      ),
+    });
+
+    triggerScreenshot(
+      {},
+      {
+        id: 'button--primary',
+        globals: { viewport: { value: 'desktop' } },
+        parameters: {
+          viewport: {
+            options: { desktop: { styles: { width: '1280px', height: '720px' } } },
+          },
+        },
+      },
+    );
+    await finalizeScreenshot({ id: 'button--primary', abortSignal: new AbortController().signal });
+
+    expect((win as Record<string, any>)[STORYFREEZE_PREVIEW_STATE_GLOBAL]).toMatchObject({
+      status: 'ready',
+      options: {
+        viewport: { width: 1280, height: 720 },
+        variants: {},
+        defaultVariantSuffix: '',
+      },
+    });
+  });
+
+  it('keeps the CLI viewport when Storybook globals cannot be resolved', async () => {
+    const win = installWindow({
+      getBaseScreenshotOptions: vi.fn(async () =>
+        createBaseScreenshotOptions({ delay: 0, disableWaitAssets: false, viewports: ['800x600'] }),
+      ),
+    });
+
+    triggerScreenshot(
+      {},
+      {
+        id: 'button--primary',
+        globals: { viewport: { value: 'unknown' } },
+        parameters: {
+          viewport: {
+            options: { desktop: { styles: { width: '1280px', height: '720px' } } },
+          },
+        },
+      },
+    );
+    await finalizeScreenshot({ id: 'button--primary', abortSignal: new AbortController().signal });
+
+    expect((win as Record<string, any>)[STORYFREEZE_PREVIEW_STATE_GLOBAL]).toMatchObject({
+      status: 'ready',
+      options: { viewport: '800x600', variants: {}, defaultVariantSuffix: '' },
     });
   });
 

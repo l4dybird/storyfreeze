@@ -13,6 +13,7 @@ import {
   type StoryFreezePreviewStateV1,
 } from '../shared/preview-protocol.js';
 import { waitForVisualCommitInPage } from '../shared/visual-commit.js';
+import { applyViewportFromGlobals, type StoryContextLike } from './resolve-viewport-globals.js';
 
 type Args<T> = T extends (...args: infer A) => any ? A : never;
 type Return<T> = T extends (...args: any) => infer R ? R : never;
@@ -90,12 +91,15 @@ function normalizeOptions(options: ScreenshotOptions): NormalizedScreenshotOptio
 }
 
 /** Store screenshot parameters during Storybook's render phase. */
-export function triggerScreenshot(screenshotOptions: ScreenshotOptions = {}, context: { id?: string }) {
+export function triggerScreenshot(
+  screenshotOptions: ScreenshotOptions = {},
+  context: StoryContextLike & { id?: string },
+) {
   const win = getWindow();
   const identity = getCaptureIdentity();
   if (!win || !identity || !context.id) return;
   setState(win, { ...createPreviewStateBase(identity.storyId, identity.requestId), status: 'booting' });
-  pushOptions(win, context.id, screenshotOptions);
+  pushOptions(win, context.id, applyViewportFromGlobals(screenshotOptions, context));
 }
 
 /** Publish ready only from Storybook's project afterEach hook, after render and play complete. */

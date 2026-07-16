@@ -300,6 +300,8 @@ type Viewport =
 
 > [!NOTE]
 > Use a device name printed by `storyfreeze --list-devices` when setting a string. StoryFreeze keeps the same fixed registry for both browser backends.
+>
+> When a story sets neither `viewport` nor `viewports`, StoryFreeze resolves a viewport from Storybook's viewport addon globals instead, using `globals.viewport` (or `storyGlobals.viewport`) together with the matching entry in `parameters.viewport.options`. The resolution order is: explicit `parameters.screenshot.viewport` (or `viewports`) > Storybook viewport globals > the CLI's `--viewport` default. Only a single viewport is injected this way, so it never adds a filename suffix.
 
 `Viewport` values are available in `viewports` field such as:
 

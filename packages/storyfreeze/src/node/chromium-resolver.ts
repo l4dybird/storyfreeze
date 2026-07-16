@@ -6,12 +6,10 @@
 
 import { execFileSync, execSync } from 'node:child_process';
 import fs from 'node:fs';
-import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import type { ChromeChannel } from './browser-backend.js';
 
-const require = createRequire(import.meta.url);
 const newLineRegex = /\r?\n/;
 
 export type FindChromeOptions = {
@@ -20,7 +18,7 @@ export type FindChromeOptions = {
 };
 
 export type FindChromeResult =
-  | { executablePath: string; type: 'user' | 'puppeteer' | 'canary' | 'stable' }
+  | { executablePath: string; type: 'user' | 'canary' | 'stable' }
   | { executablePath: null; type: null };
 
 function canAccess(file: string | undefined): file is string {
@@ -69,17 +67,6 @@ function sortInstallations(installations: string[], priorities: Array<{ regex: R
     })
     .sort((a, b) => b.weight - a.weight)
     .map(pair => pair.path);
-}
-
-function localPuppeteer() {
-  try {
-    require.resolve('puppeteer');
-    const puppeteer = require('puppeteer') as { executablePath(): string };
-    const executablePath = puppeteer.executablePath();
-    return canAccess(executablePath) ? executablePath : undefined;
-  } catch {
-    return undefined;
-  }
 }
 
 function findDarwinChrome(canary = false) {
@@ -170,10 +157,6 @@ export async function findChrome(options: FindChromeOptions): Promise<FindChrome
   if (options.executablePath) return { executablePath: options.executablePath, type: 'user' };
 
   const channels = new Set<ChromeChannel>(options.channel ? [options.channel] : ['*']);
-  if (channels.has('puppeteer') || channels.has('*')) {
-    const executablePath = localPuppeteer();
-    if (executablePath) return { executablePath, type: 'puppeteer' };
-  }
   if (channels.has('canary') || channels.has('*')) {
     const executablePath = findInstalledChrome(true);
     if (executablePath) return { executablePath, type: 'canary' };

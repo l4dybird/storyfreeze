@@ -22,37 +22,23 @@ const benchmarkProfile = process.env.STORYFREEZE_BENCHMARK_PROFILE || 'pr';
 if (!Object.hasOwn(benchmarkProfiles, benchmarkProfile)) {
   throw new Error(`Unknown browser benchmark profile: ${benchmarkProfile}`);
 }
-const benchmarkComparison = process.env.STORYFREEZE_BENCHMARK_COMPARISON || 'backend';
-if (!['backend', 'isolation'].includes(benchmarkComparison)) {
-  throw new Error(`Unsupported browser benchmark comparison: ${benchmarkComparison}`);
+const benchmarkComparison = process.env.STORYFREEZE_BENCHMARK_COMPARISON || 'isolation';
+if (benchmarkComparison !== 'isolation') {
+  throw new Error(`This benchmark supports only isolation comparison, received: ${benchmarkComparison}`);
 }
 const { measuredRuns, warmupRuns } = benchmarkProfiles[benchmarkProfile];
 const parallel = Number(process.env.STORYFREEZE_BENCHMARK_PARALLEL || 4);
 if (![1, 2, 4].includes(parallel)) throw new Error(`Unsupported benchmark parallel value: ${parallel}`);
-const startingBackend = process.env.STORYFREEZE_BENCHMARK_START_BACKEND || 'puppeteer';
-if (benchmarkComparison === 'backend' && !['puppeteer', 'playwright'].includes(startingBackend)) {
-  throw new Error(`Unsupported starting backend: ${startingBackend}`);
-}
 const startingIsolation = process.env.STORYFREEZE_BENCHMARK_START_ISOLATION || 'process';
-if (benchmarkComparison === 'isolation' && !['process', 'context'].includes(startingIsolation)) {
+if (!['process', 'context'].includes(startingIsolation)) {
   throw new Error(`Unsupported starting isolation: ${startingIsolation}`);
 }
-if (benchmarkComparison === 'isolation' && process.env.STORYFREEZE_BENCHMARK_TRACE === 'true') {
+if (process.env.STORYFREEZE_BENCHMARK_TRACE === 'true') {
   throw new Error('Browser isolation comparison does not support trace capture.');
 }
-const includeTrace =
-  benchmarkComparison === 'backend' &&
-  (process.env.STORYFREEZE_BENCHMARK_TRACE
-    ? process.env.STORYFREEZE_BENCHMARK_TRACE === 'true'
-    : benchmarkProfile === 'pr');
 const expectedStoryCount = 2;
 const expectedPngCount = 9;
 const benchmarkExclude = 'Compatibility/Fixture/Retry';
-const traceStoryCount = 1;
-const tracePngCount = 2;
-const traceInclude = 'Compatibility/Fixture/Console Error';
-const traceCaptureTimeoutMs = 30_000;
-const backends = ['puppeteer', 'playwright'];
 const isolations = ['process', 'context'];
 const captureDiagnosticPrefix = 'STORYFREEZE_CAPTURE_DIAGNOSTIC=';
 const launchOptions = {
@@ -227,7 +213,6 @@ function measureCapture({
   iteration,
   isolation,
   label,
-  pairStartingBackend,
   pairStartingIsolation,
   positionInPair,
   sequenceIndex,
@@ -357,7 +342,6 @@ function measureCapture({
         ...(isolation ? { isolation } : {}),
         label,
         outputDir,
-        pairStartingBackend,
         ...(pairStartingIsolation ? { pairStartingIsolation } : {}),
         peakBrowserRootCount,
         peakChromiumProcessCount,
@@ -925,245 +909,7 @@ async function main() {
   const server = startVitePreview();
   try {
     await waitForServer(server);
-    if (benchmarkComparison === 'isolation') {
-      await runIsolationComparison(browser);
-      return;
-    }
-    const warmups = { playwright: [], puppeteer: [] };
-    const warmupExecutionOrder = [];
-    let warmupSequenceIndex = 0;
-    for (let iteration = 1; iteration <= warmupRuns; iteration += 1) {
-      const puppeteerFirst = startingBackend === 'puppeteer' ? iteration % 2 === 1 : iteration % 2 === 0;
-      const order = puppeteerFirst ? backends : [...backends].reverse();
-      for (const [positionInPair, backend] of order.entries()) {
-        const run = await measureCapture({
-          backend,
-          browser,
-          exclude: benchmarkExclude,
-          expectedPngs: expectedPngCount,
-          expectedStories: expectedStoryCount,
-          iteration,
-          label: `benchmark-${backend}-warmup-${iteration}`,
-          pairStartingBackend: order[0],
-          positionInPair,
-          sequenceIndex: ++warmupSequenceIndex,
-        });
-        warmups[backend].push(run);
-        warmupExecutionOrder.push(run);
-      }
-    }
-
-    const runs = { playwright: [], puppeteer: [] };
-    const measuredExecutionOrder = [];
-    let measuredSequenceIndex = 0;
-    for (let iteration = 1; iteration <= measuredRuns; iteration += 1) {
-      const puppeteerFirst = startingBackend === 'puppeteer' ? iteration % 2 === 1 : iteration % 2 === 0;
-      const order = puppeteerFirst ? backends : [...backends].reverse();
-      for (const [positionInPair, backend] of order.entries()) {
-        const run = await measureCapture({
-          backend,
-          browser,
-          exclude: benchmarkExclude,
-          expectedPngs: expectedPngCount,
-          expectedStories: expectedStoryCount,
-          iteration,
-          label: `benchmark-${backend}-${iteration}`,
-          pairStartingBackend: order[0],
-          positionInPair,
-          sequenceIndex: ++measuredSequenceIndex,
-        });
-        runs[backend].push(run);
-        measuredExecutionOrder.push(run);
-        console.log(
-          `${backend} ${iteration}/${measuredRuns}: ${run.wallTimeMs} ms, ${Math.round(run.peakTreeRssBytes / 1024 / 1024)} MiB peak RSS.`,
-        );
-      }
-    }
-
-    const traceControls = {};
-    const traceRuns = {};
-    if (includeTrace) {
-      for (const backend of backends) {
-        traceControls[backend] = await measureCapture({
-          backend,
-          browser,
-          captureTimeoutMs: traceCaptureTimeoutMs,
-          expectedPngs: tracePngCount,
-          expectedStories: traceStoryCount,
-          include: traceInclude,
-          iteration: 1,
-          label: `benchmark-${backend}-trace-control`,
-          trace: false,
-        });
-        traceRuns[backend] = await measureCapture({
-          backend,
-          browser,
-          captureTimeoutMs: traceCaptureTimeoutMs,
-          expectedPngs: tracePngCount,
-          expectedStories: traceStoryCount,
-          include: traceInclude,
-          iteration: 1,
-          label: `benchmark-${backend}-trace`,
-          trace: true,
-        });
-      }
-    }
-
-    const pixelComparisons = [];
-    for (let index = 0; index < measuredRuns; index += 1) {
-      pixelComparisons.push(
-        compareDirectories(
-          `driver-run-${index + 1}`,
-          runs.puppeteer[index].outputDir,
-          runs.playwright[index].outputDir,
-        ),
-      );
-    }
-    for (const backend of backends) {
-      for (let index = 1; index < measuredRuns; index += 1) {
-        pixelComparisons.push(
-          compareDirectories(
-            `${backend}-stability-${index + 1}`,
-            runs[backend][0].outputDir,
-            runs[backend][index].outputDir,
-          ),
-        );
-      }
-    }
-    if (includeTrace) {
-      pixelComparisons.push(
-        compareDirectories('driver-trace', traceRuns.puppeteer.outputDir, traceRuns.playwright.outputDir),
-      );
-    }
-
-    const summaries = {
-      playwright: summarizeRuns(runs.playwright),
-      puppeteer: summarizeRuns(runs.puppeteer),
-    };
-    const traces = includeTrace
-      ? {
-          playwright: analyzeTraceDirectory(traceRuns.playwright),
-          puppeteer: analyzeTraceDirectory(traceRuns.puppeteer),
-        }
-      : {};
-    const gateErrors = [];
-    for (const backend of backends) {
-      for (const run of warmups[backend]) run.errors.forEach(error => gateErrors.push(`${run.label}: ${error}`));
-      for (const run of runs[backend]) run.errors.forEach(error => gateErrors.push(`${run.label}: ${error}`));
-      if (includeTrace) {
-        traceControls[backend].errors.forEach(error => gateErrors.push(`${traceControls[backend].label}: ${error}`));
-        traceRuns[backend].errors.forEach(error => gateErrors.push(`${traceRuns[backend].label}: ${error}`));
-        traces[backend].errors.forEach(error => gateErrors.push(`${backend} trace: ${error}`));
-      }
-    }
-    if (includeTrace) {
-      const tracePathSets = backends.map(backend => traceRuns[backend].tracePaths.join('\n'));
-      if (tracePathSets[0] !== tracePathSets[1]) gateErrors.push('Trace output paths differ between browser backends.');
-    }
-    for (const comparison of pixelComparisons) {
-      if (comparison.mismatchCount !== 0)
-        gateErrors.push(`${comparison.label}: ${comparison.mismatchCount} PNG mismatch(es).`);
-    }
-
-    const storyfreezePackage = JSON.parse(
-      fs.readFileSync(path.join(fixtureDir, 'node_modules', 'storyfreeze', 'package.json'), 'utf8'),
-    );
-    const fixturePackage = JSON.parse(fs.readFileSync(path.join(fixtureDir, 'package.json'), 'utf8'));
-    const result = {
-      schemaVersion: 3,
-      recordedAt: new Date().toISOString(),
-      storyfreezeCommit: process.env.STORYFREEZE_BENCHMARK_COMMIT || 'unknown',
-      storyfreezeVersion: storyfreezePackage.version,
-      provisioning: process.env.STORYFREEZE_BROWSER_PROVISIONING || 'explicit-install',
-      scenario: {
-        fixture: fixturePackage.name,
-        exclude: benchmarkExclude,
-        launchOptions,
-        benchmarkProfile,
-        includeTrace,
-        measuredRuns,
-        mode: 'managed-static',
-        parallel,
-        pngs: expectedPngCount,
-        sampleIntervalMs,
-        stories: expectedStoryCount,
-        startingBackend,
-        storybook: fixturePackage.devDependencies.storybook,
-        trace: includeTrace
-          ? {
-              captureTimeoutMs: traceCaptureTimeoutMs,
-              include: traceInclude,
-              pngs: tracePngCount,
-              runs: 1,
-              stories: traceStoryCount,
-            }
-          : null,
-        warmupRuns,
-        warmupExecutionOrder: warmupExecutionOrder.map(run => run.label),
-        measuredExecutionOrder: measuredExecutionOrder.map(run => run.label),
-      },
-      environment: {
-        arch: process.arch,
-        browser,
-        cpuCount: os.cpus().length,
-        cpuModel: os.cpus()[0]?.model,
-        node: process.version,
-        platform: process.platform,
-        release: os.release(),
-        runnerImage: process.env.ImageOS || 'unknown',
-        runnerImageVersion: process.env.ImageVersion || 'unknown',
-        totalMemoryBytes: os.totalmem(),
-      },
-      backends: {
-        playwright: {
-          warmups: warmups.playwright.map(publicRun),
-          runs: runs.playwright.map(publicRun),
-          summary: summaries.playwright,
-          traceControl: includeTrace ? publicRun(traceControls.playwright) : null,
-          traceRun: includeTrace ? publicRun(traceRuns.playwright) : null,
-          traceSummary: includeTrace ? traces.playwright : null,
-          traceOverhead: includeTrace
-            ? {
-                cpuTime: ratio(traceRuns.playwright.cpuTimeMs, traceControls.playwright.cpuTimeMs),
-                peakTreeRss: ratio(traceRuns.playwright.peakTreeRssBytes, traceControls.playwright.peakTreeRssBytes),
-                wallTime: ratio(traceRuns.playwright.wallTimeMs, traceControls.playwright.wallTimeMs),
-              }
-            : null,
-        },
-        puppeteer: {
-          warmups: warmups.puppeteer.map(publicRun),
-          runs: runs.puppeteer.map(publicRun),
-          summary: summaries.puppeteer,
-          traceControl: includeTrace ? publicRun(traceControls.puppeteer) : null,
-          traceRun: includeTrace ? publicRun(traceRuns.puppeteer) : null,
-          traceSummary: includeTrace ? traces.puppeteer : null,
-          traceOverhead: includeTrace
-            ? {
-                cpuTime: ratio(traceRuns.puppeteer.cpuTimeMs, traceControls.puppeteer.cpuTimeMs),
-                peakTreeRss: ratio(traceRuns.puppeteer.peakTreeRssBytes, traceControls.puppeteer.peakTreeRssBytes),
-                wallTime: ratio(traceRuns.puppeteer.wallTimeMs, traceControls.puppeteer.wallTimeMs),
-              }
-            : null,
-        },
-      },
-      differential: {
-        pixelComparisons,
-        ratios: {
-          cpuTime: ratio(summaries.playwright.medianCpuTimeMs, summaries.puppeteer.medianCpuTimeMs),
-          peakTreeRss: ratio(summaries.playwright.medianPeakTreeRssBytes, summaries.puppeteer.medianPeakTreeRssBytes),
-          wallTime: ratio(summaries.playwright.medianWallTimeMs, summaries.puppeteer.medianWallTimeMs),
-        },
-      },
-      gate: { errors: gateErrors, passed: gateErrors.length === 0 },
-    };
-
-    const json = `${JSON.stringify(result, null, 2)}\n`;
-    if (outputFile) {
-      fs.mkdirSync(path.dirname(outputFile), { recursive: true });
-      fs.writeFileSync(outputFile, json);
-    }
-    console.log(`STORYFREEZE_BROWSER_BENCHMARK_RESULT=${JSON.stringify(result)}`);
-    if (gateErrors.length) throw new Error(`Browser differential gate failed:\n- ${gateErrors.join('\n- ')}`);
+    await runIsolationComparison(browser);
   } finally {
     await stopServer(server);
   }

@@ -53,17 +53,11 @@ export function shouldWaitForVisualCommit(mode: RunMode, viewportChanged: boolea
 
 export function shouldRecoverPlaywrightWorker(options: {
   aborted: boolean;
-  backendName: BrowserBackend['name'];
   healthy: boolean;
   maxRetryCount: number;
   retryCount: number;
 }) {
-  return (
-    options.backendName === 'playwright' &&
-    !options.aborted &&
-    !options.healthy &&
-    options.retryCount < options.maxRetryCount
-  );
+  return !options.aborted && !options.healthy && options.retryCount < options.maxRetryCount;
 }
 
 /**
@@ -260,12 +254,11 @@ export class CapturingBrowser extends BaseBrowser {
     // So we compare the current viewport with the next viewport and wait for `opt.viewportDelay` time if they are different.
     if (!this.viewport || JSON.stringify(this.viewport) !== JSON.stringify(nextViewport)) {
       this.debug('Change viewport', JSON.stringify(nextViewport));
-      // Setting isMobile or hasTouch properties will reload the page.
-      // See also https://github.com/puppeteer/puppeteer/blob/main/docs/api/puppeteer.viewport.md
+      // Changing mobile or touch emulation requires a fresh Storybook navigation.
       const willBeReloaded =
         nextViewport.isMobile !== this.viewport?.isMobile || nextViewport.hasTouch !== this.viewport?.hasTouch;
       if (willBeReloaded) {
-        // Avoid racing Puppeteer's implicit reload against Storybook's preview lifecycle.
+        // Avoid racing emulation changes against Storybook's preview lifecycle.
         await this.page.goto('about:blank', {
           timeout: deadline.navigationTimeout(),
           waitUntil: 'domcontentloaded',
@@ -497,7 +490,6 @@ export class CapturingBrowser extends BaseBrowser {
       }
       const shouldRecover = shouldRecoverPlaywrightWorker({
         aborted: this.opt.signal?.aborted ?? false,
-        backendName: this.backend.name,
         healthy: this.isSessionHealthy(),
         maxRetryCount: this.opt.captureMaxRetryCount,
         retryCount: this.currentStoryRetryCount,

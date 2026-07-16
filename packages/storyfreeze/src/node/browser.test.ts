@@ -1,34 +1,48 @@
-import type { Browser, BrowserLaunchArgumentOptions, LaunchOptions, Page } from 'puppeteer-core';
 import { describe, expect, it, vi } from 'vite-plus/test';
-import type { BrowserMetrics, BrowserSession, CapturePage } from './browser-backend.js';
+import type {
+  BrowserBackend,
+  BrowserInstance,
+  BrowserLaunchOptions,
+  BrowserMetrics,
+  BrowserRuntimeOptions,
+  BrowserSession,
+  CapturePage,
+} from './browser-backend.js';
 import { BaseBrowser, ChromiumNotFoundError, MetricsWatcher, getDeviceDescriptors } from './browser.js';
 import type { BrowserSessionSource } from './browser-process-coordinator.js';
-import { PuppeteerBrowserBackend } from './puppeteer-browser-backend.js';
 import { findChrome, type FindChromeOptions, type FindChromeResult } from './chromium-resolver.js';
 
-class TestBackend extends PuppeteerBrowserBackend {
+class TestBackend implements BrowserBackend {
+  readonly name = 'playwright';
   findResult: FindChromeResult = { executablePath: '/test/chrome', type: 'user' };
   locatedWith?: FindChromeOptions;
-  launchedWith?: LaunchOptions & BrowserLaunchArgumentOptions;
+  launchedWith?: BrowserLaunchOptions;
   readonly closePage = vi.fn(async () => {});
   readonly closeBrowser = vi.fn(async () => {});
   readonly exposeFunction = vi.fn(async () => {});
   newPageError?: Error;
 
-  protected async locateChrome(options: FindChromeOptions) {
-    this.locatedWith = options;
-    return this.findResult;
-  }
-
-  protected async launchBrowser(options: LaunchOptions & BrowserLaunchArgumentOptions) {
-    this.launchedWith = options;
+  async launch(options: BrowserRuntimeOptions): Promise<BrowserInstance> {
+    this.locatedWith = { executablePath: options.chromiumPath, channel: options.chromiumChannel };
+    if (!this.findResult.executablePath) throw new ChromiumNotFoundError();
+    this.launchedWith = {
+      ...options.launchOptions,
+      executablePath: this.findResult.executablePath,
+      headless: options.launchOptions?.headless ?? true,
+    };
     return {
-      newPage: async () => {
-        if (this.newPageError) throw this.newPageError;
-        return { close: this.closePage, exposeFunction: this.exposeFunction } as unknown as Page;
-      },
+      executablePath: this.findResult.executablePath,
       close: this.closeBrowser,
-    } as unknown as Browser;
+      isHealthy: () => true,
+      newSession: async () => {
+        if (this.newPageError) throw this.newPageError;
+        return {
+          close: this.closePage,
+          isHealthy: () => true,
+          page: { exposeFunction: this.exposeFunction } as unknown as CapturePage,
+        };
+      },
+    };
   }
 }
 

@@ -11,6 +11,13 @@ export type RunMode = 'simple' | 'managed';
 
 /**
  *
+ * Represents the requested StoryFreeze mode.
+ *
+ **/
+export type PreviewMode = 'auto' | RunMode;
+
+/**
+ *
  * Controls whether capture workers use separate browser processes or browser contexts.
  *
  **/
@@ -51,6 +58,7 @@ export interface MainOptions extends BrowserRuntimeOptions {
   trace: boolean;
   forwardConsoleLogs: boolean;
   parallel: number;
+  mode: PreviewMode;
   browserIsolation: BrowserIsolationMode;
   shard: ShardOptions;
   metricsWatchRetryCount: number;

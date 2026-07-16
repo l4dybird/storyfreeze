@@ -58,15 +58,33 @@ describe(detectPreviewMode, () => {
 
     await expect(
       detectPreviewMode(page, new URL('https://example.test/storybook'), 'button--primary', 100),
-    ).resolves.toBe('managed');
+    ).resolves.toEqual({ mode: 'managed', reason: 'the StoryFreeze preview marker was detected' });
   });
 
   it('uses simple mode when the owned marker is absent', async () => {
     const page = pageWithState(() => undefined);
 
-    await expect(detectPreviewMode(page, new URL('https://example.test'), 'button--primary', 0)).resolves.toBe(
-      'simple',
-    );
+    await expect(detectPreviewMode(page, new URL('https://example.test'), 'button--primary', 0)).resolves.toEqual({
+      mode: 'simple',
+      reason: 'the StoryFreeze preview marker was not detected',
+    });
+  });
+
+  it('uses an explicitly requested simple mode without waiting for a marker', async () => {
+    const page = pageWithState(() => state('booting', 'button--primary', 'mode-detection'));
+
+    await expect(
+      detectPreviewMode(page, new URL('https://example.test'), 'button--primary', 100, 'simple'),
+    ).resolves.toEqual({ mode: 'simple', reason: 'forced by --mode simple' });
+    expect(page.evaluate).not.toHaveBeenCalled();
+  });
+
+  it('rejects a missing marker when managed mode is required', async () => {
+    const page = pageWithState(() => undefined);
+
+    await expect(
+      detectPreviewMode(page, new URL('https://example.test'), 'button--primary', 0, 'managed'),
+    ).rejects.toThrow(/required by --mode managed.*preview marker was not found/);
   });
 
   it('stops mode detection when aborted', async () => {
@@ -75,7 +93,7 @@ describe(detectPreviewMode, () => {
     controller.abort(new Error('interrupted by test'));
 
     await expect(
-      detectPreviewMode(page, new URL('https://example.test'), 'button--primary', 100, controller.signal),
+      detectPreviewMode(page, new URL('https://example.test'), 'button--primary', 100, 'auto', controller.signal),
     ).rejects.toThrow('interrupted by test');
   });
 
@@ -148,6 +166,44 @@ describe(StoryNavigator, () => {
 
     await expect(navigator.navigate('button--primary')).rejects.toThrow(
       /Expected id="button--primary" and storyfreezeRequestId="7-1"/,
+    );
+  });
+
+  it('accepts a rendered Storybook preview in simple mode', async () => {
+    const page = pageWithState(() => ({ status: 'ready', bodyClassName: 'sb-show-main sb-main-padded' }));
+    const navigator = new StoryNavigator(page, new URL('https://example.test'), 7);
+    await navigator.navigate('button--primary');
+
+    await expect(navigator.waitForSimpleReady(100)).resolves.toBeUndefined();
+  });
+
+  it.each([
+    ['No Preview', { status: 'no-preview', bodyClassName: 'sb-show-nopreview' }, 'No Preview is visible'],
+    [
+      'error display',
+      {
+        status: 'error',
+        bodyClassName: 'sb-show-errordisplay',
+        message: 'Failed to render',
+        stack: 'RenderError: fixture failed',
+      },
+      'Failed to render',
+    ],
+  ])('rejects the Storybook %s page in simple mode', async (_label, previewState, message) => {
+    const page = pageWithState(() => previewState);
+    const navigator = new StoryNavigator(page, new URL('https://example.test'), 7);
+    await navigator.navigate('button--primary');
+
+    await expect(navigator.waitForSimpleReady(100)).rejects.toThrow(message);
+  });
+
+  it('times out while Storybook is still preparing a simple preview', async () => {
+    const page = pageWithState(() => ({ status: 'pending', bodyClassName: 'sb-show-preparing-story' }));
+    const navigator = new StoryNavigator(page, new URL('https://example.test'), 7);
+    await navigator.navigate('button--primary');
+
+    await expect(navigator.waitForSimpleReady(0)).rejects.toThrow(
+      /did not show a rendered preview.*body classes: "sb-show-preparing-story"/,
     );
   });
 });

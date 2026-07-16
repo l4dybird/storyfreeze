@@ -14,7 +14,7 @@ import type {
   Viewport,
   PreviewCaptureDiagnostic,
 } from '../shared/types.js';
-import { InvalidCurrentStoryStateError, PreviewReadyTimeoutError } from './errors.js';
+import { InvalidCurrentStoryStateError, PreviewReadyTimeoutError, SimplePreviewReadyTimeoutError } from './errors.js';
 import {
   createBaseScreenshotOptions,
   mergeScreenshotOptions,
@@ -213,6 +213,9 @@ export class CapturingBrowser extends BaseBrowser {
         this.navigator!.waitForReady(deadline.remaining(), deadline.signal),
       );
     }
+    await this.measurePhase('preview-ready', () =>
+      this.navigator!.waitForSimpleReady(deadline.remaining(), deadline.signal),
+    );
     return undefined;
   }
 
@@ -459,7 +462,8 @@ export class CapturingBrowser extends BaseBrowser {
       return await Promise.race([attempt, deadline.interruption]);
     } catch (error) {
       const captureError = error instanceof Error ? error : new Error(String(error));
-      const previewTimedOut = error instanceof PreviewReadyTimeoutError;
+      const previewTimedOut =
+        error instanceof PreviewReadyTimeoutError || error instanceof SimplePreviewReadyTimeoutError;
       if (deadline.signal.aborted || previewTimedOut) {
         const interruptedByRun = this.opt.signal?.aborted ?? false;
         const interruptionError = interruptedByRun

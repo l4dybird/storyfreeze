@@ -85,3 +85,33 @@ export class PreviewUrlRedirectError extends Error {
     );
   }
 }
+
+export class PreviewModeRequiredError extends Error {
+  name = 'PreviewModeRequiredError';
+
+  constructor(timeout: number, url: string) {
+    super(
+      `Managed preview mode was required by --mode managed, but the StoryFreeze preview marker was not found within ${timeout} msec at ${url}. Add storyfreeze to the Storybook addons and ensure the addon version matches the CLI.`,
+    );
+  }
+}
+
+export class SimplePreviewRenderError extends Error {
+  name = 'SimplePreviewRenderError';
+
+  constructor(storyId: string, url: string, detail: string) {
+    super(`Storybook did not render story ${JSON.stringify(storyId)} at ${url}: ${detail}`);
+  }
+}
+
+export class SimplePreviewReadyTimeoutError extends Error {
+  name = 'SimplePreviewReadyTimeoutError';
+
+  constructor(timeout: number, storyId: string, url: string, bodyClassName: string) {
+    super(
+      `Storybook did not show a rendered preview for story ${JSON.stringify(
+        storyId,
+      )} within ${timeout} msec. URL: ${url}; body classes: ${JSON.stringify(bodyClassName)}.`,
+    );
+  }
+}

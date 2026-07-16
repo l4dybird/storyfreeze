@@ -34,6 +34,7 @@ describe(runCli, () => {
       },
       outDir: '__screenshots__',
       parallel: 4,
+      mode: 'auto',
       browserIsolation: 'process',
       flat: false,
       include: [],
@@ -60,6 +61,14 @@ describe(runCli, () => {
 
     expect(main.mock.calls[0][0]).toMatchObject({ browserIsolation: 'context', parallel: 4 });
     expect(log.mock.calls.flat().join(' ')).toContain('Browser isolation: context');
+  });
+
+  it('maps an explicitly required preview mode', async () => {
+    const main = vi.fn(async (_options: MainOptions) => 0);
+
+    await expect(runCli(['--silent', '--mode', 'managed'], { main })).resolves.toBe(0);
+
+    expect(main.mock.calls[0][0]).toMatchObject({ mode: 'managed' });
   });
 
   it('keeps parallelism and forces process isolation for Chromium traces', async () => {
@@ -186,6 +195,7 @@ describe(runCli, () => {
     ['invalid number', ['--parallel', 'many']],
     ['invalid enum', ['--chromium-channel', 'nightly']],
     ['invalid browser isolation', ['--browser-isolation', 'page']],
+    ['invalid preview mode', ['--mode', 'fallback']],
   ])('rejects %s before execution', async (_label, args) => {
     const main = vi.fn(async (_options: MainOptions) => 0);
     await expect(runCli(args, { main })).resolves.toBe(1);

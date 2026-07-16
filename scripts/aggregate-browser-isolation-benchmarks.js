@@ -288,6 +288,41 @@ function commonConditions(records) {
   };
 }
 
+function runnerHardwareEvidence(records, workflowRuns) {
+  const dispatches = records.map((record, index) => {
+    const cpuModel = record.environment?.cpuModel;
+    const cpuCount = record.environment?.cpuCount;
+    const totalMemoryBytes = record.environment?.totalMemoryBytes;
+    if (typeof cpuModel !== 'string' || cpuModel.length === 0) {
+      fail(`Workflow run ${index + 1} is missing its runner CPU model.`);
+    }
+    if (!Number.isInteger(cpuCount) || cpuCount < 1) {
+      fail(`Workflow run ${index + 1} has an invalid runner CPU count.`);
+    }
+    if (!Number.isFinite(totalMemoryBytes) || totalMemoryBytes <= 0) {
+      fail(`Workflow run ${index + 1} has invalid runner memory evidence.`);
+    }
+    return {
+      workflowRun: workflowRuns[index],
+      cpuModel,
+      cpuCount,
+      totalMemoryBytes,
+    };
+  });
+  const cpuModels = [...new Set(dispatches.map(dispatch => dispatch.cpuModel))];
+  const cpuCounts = [...new Set(dispatches.map(dispatch => dispatch.cpuCount))];
+  const memoryValues = dispatches.map(dispatch => dispatch.totalMemoryBytes);
+  return {
+    cpuModelMatched: cpuModels.length === 1,
+    cpuModels,
+    cpuCountMatched: cpuCounts.length === 1,
+    cpuCounts,
+    totalMemoryBytesMin: Math.min(...memoryValues),
+    totalMemoryBytesMax: Math.max(...memoryValues),
+    dispatches,
+  };
+}
+
 function summarizeIsolation(runs, expectedCapturesPerRun) {
   const captureTimes = runs.flatMap(run => run.storyDurationsMs);
   const diagnosticEvents = runs.flatMap(run => run.captureDiagnostics ?? []);
@@ -526,6 +561,7 @@ function buildAggregate({
 
   const allRecords = [...records, ...[diagnosticP1, diagnosticP2].filter(Boolean)];
   const conditions = commonConditions(allRecords);
+  const runnerHardware = runnerHardwareEvidence(records, workflowRuns);
   const summaries = summarizeRecords(records);
   const ratios = contextToProcessRatios(summaries);
   const pixelComparisons = summarizePixelComparisons(records);
@@ -568,6 +604,7 @@ function buildAggregate({
     sourceTree: tree,
     workflowRuns,
     conditions,
+    runnerHardware,
     isolations: summaries,
     contextToProcessRatios: ratios,
     pixelComparisons,

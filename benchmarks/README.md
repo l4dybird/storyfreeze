@@ -60,22 +60,24 @@ PR-531 only adds this evidence pipeline: `process` remains the default regardles
 
 ## Current browser isolation differential
 
-The [aggregated browser isolation record](./browser-isolation-record.json) contains four successful `parallel=4` record dispatches from `d8ebef4`, two per starting isolation, for 40 measured runs and 360 capture-request samples per isolation. All four dispatches used Node.js 22.18.0, Storybook 10.5.0, Playwright 1.61.1, and Chromium 149.0.7827.55 on the same runner image and source tree. The optional `parallel=1` and `parallel=2` diagnostics were not repeated because they do not contribute to the default gate.
+The [aggregated browser isolation record](./browser-isolation-record.json) contains four successful `parallel=4` record dispatches from `86ae115`, two per starting isolation, for 40 measured runs and 360 capture-request samples per isolation. All four dispatches used Node.js 22.18.0, Storybook 10.5.0, Playwright 1.61.1, and Chromium 149.0.7827.55 on the same runner image and source tree. GitHub assigned an AMD EPYC 9V74 host to records 1, 3, and 4 and an AMD EPYC 7763 host to record 2; every dispatch exposed four logical CPUs and about 16.77 GB of memory. The aggregate records this variance instead of claiming identical hosted-runner hardware. Process and context remain paired within each dispatch and their starting order is balanced, but pooled absolute timings still include host variance. Separate `parallel=1` and `parallel=2` diagnostics are attached to the aggregate; `parallel=8` and `parallel=16` remain independent exploratory artifacts.
 
 The raw `parallel=4` result is:
 
 | Metric                    |             Process |             Context | Context/process | Gate |
 | ------------------------- | ------------------: | ------------------: | --------------: | :--- |
-| wall p50                  |            4,656 ms |            4,288 ms |           0.921 | pass |
-| wall p95                  |            4,848 ms |            4,450 ms |           0.918 | pass |
-| capture-request p50       |              792 ms |              876 ms |           1.106 | info |
-| capture-request p95       |            1,243 ms |            1,334 ms |           1.073 | fail |
-| peak process-tree RSS p50 | 3,652,808,704 bytes | 1,680,891,904 bytes |           0.460 | pass |
-| sampled CPU time p50      |            9,060 ms |            7,840 ms |           0.865 | info |
+| wall p50                  |            4,352 ms |            4,013 ms |           0.922 | pass |
+| wall p95                  |            4,475 ms |            4,196 ms |           0.938 | pass |
+| capture-request p50       |              716 ms |              771 ms |           1.077 | info |
+| capture-request p95       |            1,172 ms |            1,252 ms |           1.068 | fail |
+| peak process-tree RSS p50 | 3,654,516,736 bytes | 1,677,615,104 bytes |           0.459 | pass |
+| sampled CPU time p50      |            9,020 ms |            7,820 ms |           0.867 | info |
 | max Chromium processes    |                  32 |                  14 |           0.438 | pass |
-| max browser roots         |                   4 |                   1 |           0.250 | pass |
+| runtime browser launches  |                   4 |                   1 |           0.250 | pass |
 
-Both modes completed with zero capture failures, retries, timeouts, browser crashes, PNG differences, and three-second capture tails. Every context warm-up and measured run used exactly one browser root. Context mode reduced wall p50 by 7.9%, wall p95 by 8.2%, median peak RSS by 54.0%, and sampled CPU time by 13.5%. Its capture-request p95 remained 7.3% slower, exceeding the 1.05 threshold by 2.3 percentage points. The aggregate acceptance result is therefore false, so `process` remains the default and `context` remains explicit opt-in.
+Both modes completed with zero capture failures, retries, timeouts, browser crashes, PNG differences, and three-second capture tails. Every context warm-up and measured run made exactly one backend browser launch. Context mode reduced wall p50 by 7.8%, wall p95 by 6.2%, median peak RSS by 54.1%, and sampled CPU time by 13.3%. Its capture-request p95 remained 6.8% slower, exceeding the 1.05 threshold by 1.8 percentage points. The aggregate acceptance result is therefore false, so `process` remains the default and `context` remains explicit opt-in.
+
+Relative to the previous balanced record at `d8ebef4`, the Phase 5G record observed process-mode wall p50 6.5% lower, wall p95 7.7% lower, capture-request p50 9.6% lower, and capture-request p95 5.7% lower. Peak RSS was effectively unchanged and sampled CPU was 0.4% lower. The earlier record used runner image `20260705.232.1`, kernel `6.17.0-1018-azure`, and StoryFreeze `0.1.0`, whereas Phase 5G used image `20260714.240.1`, kernel `6.17.0-1020-azure`, and StoryFreeze `0.2.0-alpha.1`; these cross-image observations are directional and cannot be attributed to the code change alone. The `parallel=1/2/4/8/16` process-mode wall p50 values were 7,606 / 4,652 / 4,352 / 5,531 / 7,483 ms. Four workers remain the measured default: eight and sixteen workers increased contention, capture-request p95, and memory rather than throughput on the unchanged fixture. Three-second capture tails remained zero.
 
 ## Historical browser differential
 

@@ -141,9 +141,12 @@ function makeRecord({
       },
       node: 'v22.18.0',
       platform: 'linux',
+      cpuModel: 'AMD EPYC test processor',
+      cpuCount: 4,
       release: '6.11.0',
       runnerImage: 'ubuntu24',
       runnerImageVersion: '20260701.1',
+      totalMemoryBytes: 16_000_000_000,
     },
     isolations: {
       process: {
@@ -208,6 +211,24 @@ test('pools raw runs and captures and evaluates the isolation acceptance gate', 
   assert.equal(output.isolations.process.queueWait.p95Ms, 10);
   assert.equal(output.isolations.process.runtimePhaseTimings['capture-worker-boot'].samples, 40);
   assert.equal(output.contextToProcessRatios.cpuTimeP50, 419 / 519);
+  assert.equal(output.runnerHardware.cpuModelMatched, true);
+  assert.equal(output.runnerHardware.dispatches.length, 4);
+  assert.equal(output.acceptance.passed, true);
+});
+
+test('records hosted-runner hardware variance without invalidating paired evidence', () => {
+  const records = Array.from({ length: 4 }, (_, dispatch) =>
+    makeRecord({ dispatch, startingIsolation: dispatch < 2 ? 'process' : 'context' }),
+  );
+  records[1].environment.cpuModel = 'AMD EPYC alternate processor';
+  records[1].environment.totalMemoryBytes += 4096;
+
+  const output = buildAggregate(aggregateOptions(records));
+
+  assert.equal(output.runnerHardware.cpuModelMatched, false);
+  assert.deepEqual(output.runnerHardware.cpuModels, ['AMD EPYC test processor', 'AMD EPYC alternate processor']);
+  assert.equal(output.runnerHardware.totalMemoryBytesMin, 16_000_000_000);
+  assert.equal(output.runnerHardware.totalMemoryBytesMax, 16_000_004_096);
   assert.equal(output.acceptance.passed, true);
 });
 

@@ -175,16 +175,19 @@ describe(CapturingBrowser, () => {
       0,
     );
     const unsubscribe = vi.fn();
+    let currentUrl = 'about:blank';
     const page = {
       addStyleFile: vi.fn(async () => {}),
-      currentUrl: vi.fn(() => 'https://example.test/iframe.html'),
+      currentUrl: vi.fn(() => currentUrl),
       evaluate: vi.fn(
         () =>
           new Promise<never>((_resolve, reject) => {
             rejectReady = reject;
           }),
       ),
-      goto: vi.fn(async () => {}),
+      goto: vi.fn(async (url: string) => {
+        currentUrl = url;
+      }),
       subscribeConsole: vi.fn(() => unsubscribe),
     };
     vi.spyOn(BaseBrowser.prototype, 'page', 'get').mockReturnValue(page as never);

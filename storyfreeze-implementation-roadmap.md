@@ -1092,6 +1092,8 @@ Stacked PRは次の順で進める。
 
 各最適化PRは既存Storybook 10 static E2Eとpackage smokeを再利用し、新しいfixtureやsmoke suiteを追加しない。失敗、retry、timeout、crash、PNG path/dimension/pixel mismatchを0に保ち、原則としてwall p50を5%以上、またはpeak RSSを15%以上改善し、wall/capture p95を3%以上悪化させない変更だけを残す。計測基盤と後続最適化を可能にする内部境界は、単独の性能差がなくても例外として明記する。
 
+PR-561ではstory-index用sessionを閉じた後もprocessを保持し、capture worker 0がfresh contextを開いて再利用する。他workerとのprocess/context共有は行わない。またCLIのbase viewportをsession作成時に適用して最初のcaptureで同一viewportを再設定する固定費を除去し、resource quiet windowは最後のrequest activityからの経過時間を引き継いで重複待機しない。
+
 ## 11. Render stability契約
 
 Playwright移行の成否はscreenshot APIより、撮影可能状態の判定に依存する。

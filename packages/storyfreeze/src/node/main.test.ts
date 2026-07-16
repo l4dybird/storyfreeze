@@ -1,10 +1,21 @@
 import { afterEach, describe, expect, it, vi } from 'vite-plus/test';
 import { BaseBrowser } from './browser.js';
-import { CapturingBrowser, shouldRecoverPlaywrightWorker, shouldWaitForVisualCommit } from './capturing-browser.js';
+import {
+  CapturingBrowser,
+  resolveViewport,
+  shouldRecoverPlaywrightWorker,
+  shouldWaitForVisualCommit,
+} from './capturing-browser.js';
 import { Logger } from './logger.js';
 import { ManagedStorybookConnection } from './managed-storybook-connection.js';
 import type { MainOptions } from './types.js';
-import { bootCaptureWorkers, disposeRuntimeResources, filterStories, main } from './main.js';
+import {
+  bootCaptureWorkers,
+  disposeRuntimeResources,
+  filterStories,
+  main,
+  selectCaptureWorkerSessionSource,
+} from './main.js';
 import type { StoryDescriptor } from './story-index-provider.js';
 import { CAPTURE_DIAGNOSTIC_PREFIX } from './capture-diagnostics.js';
 import { CaptureAttemptTimeoutError, PreviewReadyTimeoutError } from './errors.js';
@@ -32,6 +43,36 @@ describe(filterStories, () => {
 
   it('applies include before exclude using the title/story name', () => {
     expect(filterStories(stories, ['Button/**'], ['**/Secondary']).map(item => item.id)).toEqual(['button--primary']);
+  });
+});
+
+describe(selectCaptureWorkerSessionSource, () => {
+  const source = {} as never;
+
+  it('reuses the enumeration process only for worker zero in process isolation', () => {
+    expect(selectCaptureWorkerSessionSource('process', 0, source)).toBe(source);
+    expect(selectCaptureWorkerSessionSource('process', 1, source)).toBeUndefined();
+  });
+
+  it('uses the shared process coordinator for every context-isolated worker', () => {
+    expect(selectCaptureWorkerSessionSource('context', 0, source)).toBe(source);
+    expect(selectCaptureWorkerSessionSource('context', 3, source)).toBe(source);
+  });
+});
+
+describe(resolveViewport, () => {
+  const devices = [{ name: 'Phone', viewport: { height: 800, width: 400, hasTouch: true, isMobile: true } }];
+
+  it('resolves numeric, dimension, and registered device values', () => {
+    expect(resolveViewport('1024', devices)).toEqual({ height: 600, width: 1024 });
+    expect(resolveViewport('1024x768', devices)).toEqual({ height: 768, width: 1024 });
+    expect(resolveViewport('Phone', devices)).toEqual({ height: 800, width: 400, hasTouch: true, isMobile: true });
+  });
+
+  it('preserves object values and rejects unknown devices', () => {
+    const viewport = { height: 720, width: 1280 };
+    expect(resolveViewport(viewport, devices)).toBe(viewport);
+    expect(resolveViewport('Unknown', devices)).toBeUndefined();
   });
 });
 
@@ -243,6 +284,36 @@ describe(CapturingBrowser, () => {
       );
     return { boot, capture, close, navigate, order, unsubscribe, waitForReady };
   }
+
+  it('creates its session with the CLI base viewport already applied', async () => {
+    const options = {
+      delay: 0,
+      disableWaitAssets: false,
+      logger: new Logger('silent'),
+      viewports: ['1024x768'],
+    } as MainOptions;
+    const browser = new CapturingBrowser(
+      { url: 'https://example.test' } as ManagedStorybookConnection,
+      options,
+      'managed',
+      0,
+    );
+    const unsubscribe = vi.fn();
+    vi.spyOn(BaseBrowser.prototype, 'page', 'get').mockReturnValue({
+      exposeFunction: vi.fn(async () => {}),
+      subscribeRequests: vi.fn(() => unsubscribe),
+    } as never);
+    const baseBoot = vi.spyOn(BaseBrowser.prototype, 'boot').mockResolvedValue(browser);
+
+    await expect(browser.boot()).resolves.toBe(browser);
+
+    expect(baseBoot).toHaveBeenCalledWith({ viewport: { height: 768, width: 1024 } });
+    expect(browser as unknown as { viewport: unknown }).toMatchObject({
+      viewport: { height: 768, width: 1024 },
+    });
+    await browser.close();
+    expect(unsubscribe).toHaveBeenCalledTimes(1);
+  });
 
   it('keeps a captured PNG successful when best-effort input reset fails', async () => {
     const browser = new CapturingBrowser(

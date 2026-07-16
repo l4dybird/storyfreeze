@@ -879,9 +879,9 @@ async function runIsolationComparison(browser) {
         `${run.label}: expected ${parallel} simultaneous browser roots, observed ${run.peakBrowserRootCount}.`,
       );
     }
-    if (run.uniqueBrowserLaunchCount !== parallel + 1) {
+    if (run.uniqueBrowserLaunchCount !== parallel) {
       gateErrors.push(
-        `${run.label}: expected ${parallel + 1} unique browser launches, observed ${run.uniqueBrowserLaunchCount}.`,
+        `${run.label}: expected ${parallel} unique browser launches, observed ${run.uniqueBrowserLaunchCount}.`,
       );
     }
   }

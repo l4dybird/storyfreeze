@@ -101,6 +101,21 @@ describe(ResourceWatcher, () => {
     expect(completed).toBe(true);
   });
 
+  it('does not restart a quiet window that elapsed before the wait began', async () => {
+    vi.useFakeTimers();
+    watcher.clear();
+    const completed = request('https://example.test/already-complete.png');
+    page.start(completed);
+    page.finish(completed);
+    await vi.advanceTimersByTimeAsync(100);
+
+    await expect(watcher.waitForRequestsComplete({ quietMs: 100, timeoutMs: 1000 })).resolves.toMatchObject({
+      didTimeout: false,
+      elapsedMs: 0,
+      pending: [],
+    });
+  });
+
   it('does not wait when activity already advanced the expected generation', async () => {
     page.start(request('https://example.test/late.png'));
 

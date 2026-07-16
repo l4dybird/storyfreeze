@@ -318,13 +318,6 @@ async function main() {
       extraFragments: ['Browser backend: playwright', 'Browser isolation: context', 'Found 3 stories.'],
     });
     assertCapture({
-      script: 'storyfreeze:managed-static-puppeteer',
-      mode: 'managed',
-      directoryName: '__screenshots__/managed-static-puppeteer',
-      expectedPaths: managedScreenshotPaths,
-      extraFragments: ['Browser backend: puppeteer', 'Browser isolation: process', 'Found 3 stories.'],
-    });
-    assertCapture({
       script: 'storyfreeze:filter-static',
       mode: 'managed',
       directoryName: '__screenshots__/filter-static',

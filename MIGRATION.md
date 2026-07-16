@@ -3,7 +3,7 @@
 <!-- toc -->
 
 - [From Storycapture 9 to StoryFreeze](#from-storycapture-9-to-storyfreeze)
-- [Playwright is now the default browser backend](#playwright-is-now-the-default-browser-backend)
+- [Migrating to the Playwright-only browser runtime](#migrating-to-the-playwright-only-browser-runtime)
 - [Migrating the CLI to Gunshi](#migrating-the-cli-to-gunshi)
 - [From storybook-chrome-screenshot 1.x to storyfreeze](#from-storybook-chrome-screenshot-1x-to-storyfreeze)
   - [Replace dependency](#replace-dependency)
@@ -61,22 +61,20 @@ The `STORYCAP_SHOW` environment variable is now `STORYFREEZE_SHOW`. The
 available for direct integrations but must not be registered alongside the
 addon. Screenshot output paths and filenames are also unchanged.
 
-## Playwright is now the default browser backend
+## Migrating to the Playwright-only browser runtime
 
-StoryFreeze now uses Playwright by default. Browser installation remains explicit, so install the Chromium revision matched to StoryFreeze after installing or updating the package:
+StoryFreeze uses Playwright exclusively. Browser installation remains explicit, so install the Chromium revision matched to StoryFreeze after installing or updating the package:
 
 ```sh
 $ npx playwright-core@1.61.1 install chromium
 $ npx storyfreeze http://localhost:9001
 ```
 
-An existing Puppeteer-managed browser is not reused automatically by the Playwright backend. Environments that previously installed only `puppeteer` must either install Playwright Chromium, provide `--chromium-path` or `--chromium-channel puppeteer`, or temporarily select the Puppeteer fallback:
+An existing Puppeteer-managed browser is not reused automatically. Environments that previously installed only `puppeteer` must install Playwright Chromium or provide `--chromium-path` or a supported `--chromium-channel`.
 
-```sh
-$ npx storyfreeze --browser-backend puppeteer http://localhost:9001
-```
+Remove `--browser-backend puppeteer`; StoryFreeze no longer exposes a backend selector. Replace the deprecated `--puppeteer-launch-config` alias with `--browser-launch-options` while preserving the same JSON object.
 
-The fallback preserves the existing Puppeteer process model and options. No screenshot paths, CLI option names, parallelism, or PNG behavior change with the new default.
+Screenshot paths, parallelism, capture options, and PNG behavior remain unchanged.
 
 ## Migrating the CLI to Gunshi
 

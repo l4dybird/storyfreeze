@@ -373,11 +373,12 @@ describe(CapturingBrowser, () => {
     expect(unsubscribe).toHaveBeenCalledTimes(1);
   });
 
-  it('removes the console listener without stopping a trace that failed to start', async () => {
+  it('removes the console listener and retries when a Playwright trace fails to start', async () => {
     const options = {
       captureMaxRetryCount: 1,
       delay: 0,
       disableWaitAssets: false,
+      logger: new Logger('silent'),
       metricsWatchRetryCount: 3,
       viewports: ['800x600'],
     } as unknown as MainOptions;
@@ -390,6 +391,8 @@ describe(CapturingBrowser, () => {
       subscribeConsole: vi.fn(() => unsubscribe),
     };
     vi.spyOn(BaseBrowser.prototype, 'page', 'get').mockReturnValue(page as never);
+    const boot = vi.spyOn(browser, 'boot').mockResolvedValue(browser);
+    vi.spyOn(browser, 'close').mockResolvedValue(undefined);
     Object.assign(browser, { resourceWatcher: { clear: vi.fn() } });
 
     await expect(
@@ -405,10 +408,11 @@ describe(CapturingBrowser, () => {
           createTraceFile: vi.fn(async () => ({ write: vi.fn(), commit: vi.fn(), discard })),
         } as never,
       ),
-    ).rejects.toThrow('trace start failed');
+    ).resolves.toMatchObject({ buffer: null, succeeded: false });
     expect(unsubscribe).toHaveBeenCalledTimes(1);
     expect(page.stopTrace).not.toHaveBeenCalled();
     expect(discard).toHaveBeenCalledTimes(1);
+    expect(boot).toHaveBeenCalledTimes(1);
   });
 
   it('returns a retry after an unhealthy Playwright capture closes and reboots the worker', async () => {

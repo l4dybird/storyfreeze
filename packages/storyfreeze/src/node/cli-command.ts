@@ -10,14 +10,9 @@ import {
 } from 'gunshi';
 import { renderHeader } from 'gunshi/renderer';
 import { time } from './async-utils.js';
+import { lazyPlaywrightBrowserBackend } from './browser.js';
 import { browserDeviceDescriptors } from './browser-device-registry.js';
-import {
-  browserBackendNames,
-  type BrowserBackend,
-  type BrowserBackendName,
-  type BrowserLaunchOptions,
-  type ChromeChannel,
-} from './browser-backend.js';
+import type { BrowserBackend, BrowserLaunchOptions, ChromeChannel } from './browser-backend.js';
 import { Logger } from './logger.js';
 import { main } from './main.js';
 import { parseShardOptions } from './shard-utilities.js';
@@ -28,7 +23,7 @@ const packageVersion = (
 ).version;
 
 const defaultBrowserLaunchOptions = '{}';
-const chromiumChannels = ['puppeteer', 'canary', 'stable', '*'] as const;
+const chromiumChannels = ['canary', 'stable', '*'] as const;
 const browserIsolationModes = ['process', 'context'] as const;
 
 const storyfreezeCommandArgs = {
@@ -107,12 +102,6 @@ const storyfreezeCommandArgs = {
     description: 'Channel to search local Chromium.',
   },
   chromiumPath: { type: 'string', default: '', description: 'Executable Chromium path.' },
-  browserBackend: {
-    type: 'enum',
-    choices: browserBackendNames,
-    default: 'playwright',
-    description: 'Browser automation backend.',
-  },
   browserIsolation: {
     type: 'enum',
     choices: browserIsolationModes,
@@ -122,10 +111,6 @@ const storyfreezeCommandArgs = {
   browserLaunchOptions: {
     type: 'string',
     description: `JSON string of browser launch options. (default: ${defaultBrowserLaunchOptions})`,
-  },
-  puppeteerLaunchConfig: {
-    type: 'string',
-    description: 'Deprecated alias for --browser-launch-options.',
   },
 } as const;
 
@@ -156,10 +141,8 @@ export interface StoryfreezeCliValues {
   listDevices: boolean;
   chromiumChannel: ChromeChannel;
   chromiumPath: string;
-  browserBackend: BrowserBackendName;
   browserIsolation: BrowserIsolationMode;
   browserLaunchOptions?: string;
-  puppeteerLaunchConfig?: string;
 }
 
 export interface SignalHost {
@@ -169,7 +152,7 @@ export interface SignalHost {
 
 export interface CliDependencies {
   main: typeof main;
-  resolveBrowserBackend(name: BrowserBackendName): Promise<BrowserBackend>;
+  browserBackend: BrowserBackend;
   signalHost: SignalHost;
   env: NodeJS.ProcessEnv;
   writeError(message: string): void;
@@ -177,12 +160,7 @@ export interface CliDependencies {
 
 const defaultDependencies: CliDependencies = {
   main,
-  resolveBrowserBackend: async name => {
-    if (name === 'playwright') {
-      return (await import('./playwright-browser-backend.js')).playwrightBrowserBackend;
-    }
-    return (await import('./puppeteer-browser-backend.js')).puppeteerBrowserBackend;
-  },
+  browserBackend: lazyPlaywrightBrowserBackend,
   signalHost: process,
   env: process.env,
   writeError: message => process.stderr.write(message),
@@ -244,11 +222,8 @@ function toMainOptions(
   env: NodeJS.ProcessEnv = process.env,
 ): MainOptions {
   validateNumericOptions(values);
-  if (values.browserLaunchOptions !== undefined && values.puppeteerLaunchConfig !== undefined) {
-    throw new Error('--browser-launch-options and --puppeteer-launch-config cannot be used together.');
-  }
   const parsedLaunchOptions = JSON.parse(
-    values.browserLaunchOptions ?? values.puppeteerLaunchConfig ?? defaultBrowserLaunchOptions,
+    values.browserLaunchOptions ?? defaultBrowserLaunchOptions,
   ) as BrowserLaunchOptions;
   let browserIsolation = values.browserIsolation;
   if (values.trace && browserIsolation === 'context') {
@@ -315,20 +290,7 @@ async function execute(values: StoryfreezeCliValues, dependencies: CliDependenci
     return 1;
   }
 
-  let browserBackend: BrowserBackend;
-  try {
-    browserBackend = await dependencies.resolveBrowserBackend(values.browserBackend);
-  } catch (error) {
-    logError(logger, error);
-    return 1;
-  }
-  if (browserBackend.name === 'puppeteer' && values.browserIsolation === 'context') {
-    logger.error('--browser-isolation context is only supported by the Playwright backend.');
-    return 1;
-  }
-  if (values.puppeteerLaunchConfig !== undefined) {
-    logger.warn('--puppeteer-launch-config is deprecated. Use --browser-launch-options instead.');
-  }
+  const browserBackend = dependencies.browserBackend;
 
   const { logger: _, ...rest } = opt;
   const shutdownController = new AbortController();

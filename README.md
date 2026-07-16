@@ -11,7 +11,6 @@ while it is being migrated to Storybook 10. The package and CLI use the
 `storyfreeze` name.
 
 [storybook]: https://github.com/storybooks/storybook
-[puppeteer]: https://github.com/GoogleChrome/puppeteer
 [playwright]: https://playwright.dev/
 
 The base package was created to support v9 of storybook with [storycap](https://github.com/reg-viz/storycap).
@@ -62,7 +61,6 @@ It is primarily responsible for image generation necessary for Visual Testing su
 ## Features
 
 - :camera: Take screenshots of each story via [Playwright][playwright].
-- :performing_arts: Keep [Puppeteer][puppeteer] available as a temporary fallback backend.
 - :zap: Extremely fast.
 - :package: Zero configuration.
 - :rocket: Provide flexible screenshot shooting options.
@@ -79,14 +77,7 @@ $ npm install storyfreeze
 $ npx playwright-core@1.61.1 install chromium
 ```
 
-Browser installation is explicit; installing StoryFreeze does not automatically download Playwright Chromium. Existing Puppeteer users can temporarily select the fallback backend:
-
-```sh
-$ npm install storyfreeze puppeteer
-$ npx storyfreeze --browser-backend puppeteer http://localhost:9001
-```
-
-Installing the `puppeteer` package is optional. See [Chromium version](#chromium-version) for browser discovery details.
+Browser installation is explicit; installing StoryFreeze does not automatically download Playwright Chromium. See [Chromium version](#chromium-version) for browser discovery details.
 
 ## Getting Started
 
@@ -364,12 +355,10 @@ OPTIONS:
   --reload-after-change-viewport                                   Whether to reload after viewport changed. (default: false)
   --state-change-delay <state-change-delay>                        Delay time [msec] after changing element's state. (default: 0)
   --list-devices                                                   List available device descriptors. (default: false)
-  -C, --chromium-channel [chromium-channel]                        Channel to search local Chromium. (default: *, choices: puppeteer | canary | stable | *)
+  -C, --chromium-channel [chromium-channel]                        Channel to search local Chromium. (default: *, choices: canary | stable | *)
   --chromium-path <chromium-path>                                  Executable Chromium path. (default: )
-  --browser-backend [browser-backend]                              Browser automation backend. (default: playwright, choices: puppeteer | playwright)
   --browser-isolation [browser-isolation]                          Browser isolation mode for capture workers. (default: process, choices: process | context)
   --browser-launch-options <browser-launch-options>                JSON string of browser launch options. (default: {})
-  --puppeteer-launch-config <puppeteer-launch-config>              Deprecated alias for --browser-launch-options.
 
 EXAMPLES:
   storyfreeze http://localhost:9009
@@ -572,7 +561,7 @@ export const parameters = {
 
 ## Chromium version
 
-Playwright is the default browser backend. Install the Chromium revision matched to StoryFreeze's `playwright-core` dependency:
+StoryFreeze uses Playwright. Install the Chromium revision matched to StoryFreeze's `playwright-core` dependency:
 
 ```sh
 $ npx playwright-core@1.61.1 install chromium
@@ -581,21 +570,15 @@ $ npx storyfreeze http://localhost:9009
 
 Browser installation is explicit; installing StoryFreeze does not automatically download Playwright Chromium.
 
-Puppeteer remains available as a temporary fallback for existing environments:
+StoryFreeze resolves an explicit `--chromium-path` or `--chromium-channel` first. Without either override, it searches Chromium in the following order:
 
-```sh
-$ npx storyfreeze --browser-backend puppeteer http://localhost:9009
-```
-
-StoryFreeze resolves an explicit `--chromium-path` or `--chromium-channel` first. Without either override, each backend searches Chromium in the following order:
-
-1. Its managed browser: an explicitly installed Playwright Chromium revision for the default backend, or an installed Puppeteer package for the Puppeteer fallback
+1. The explicitly installed Playwright Chromium revision
 1. Canary Chrome installed locally
 1. Stable Chrome installed locally
 
 You can change search channel with `--chromium-channel` option or set executable Chromium file path with `--chromium-path` option.
 
-Use `--browser-launch-options '<json>'` for browser launch arguments shared by both backends. `args`, `headless`, and `executablePath` are supported by the Playwright backend; the Puppeteer backend continues to pass additional fields through. The previous `--puppeteer-launch-config` name remains available as a deprecated alias and emits a warning. Do not specify both names together. An explicit `--chromium-path` takes precedence over `executablePath` in the JSON.
+Use `--browser-launch-options '<json>'` for browser launch arguments. `args`, `headless`, and `executablePath` are supported. An explicit `--chromium-path` takes precedence over `executablePath` in the JSON.
 
 Chromium's sandbox is enabled by default, including when capturing a hosted Storybook. If a restricted container cannot start Chromium with its sandbox enabled, opt out explicitly for that trusted environment:
 
@@ -603,7 +586,7 @@ Chromium's sandbox is enabled by default, including when capturing a hosted Stor
 $ npx storyfreeze --browser-launch-options '{"args":["--no-sandbox","--disable-setuid-sandbox","--disable-dev-shm-usage"]}' http://localhost:9009
 ```
 
-Capture workers use separate browser processes by default. Playwright users can opt into one isolated browser context per worker with `--browser-isolation context`; this can reduce the number of Chromium processes while keeping cookies, storage, cache, and service workers isolated between workers. Puppeteer supports only the default `process` mode. The current balanced [browser isolation record](https://github.com/l4dybird/storyfreeze/blob/master/benchmarks/browser-isolation-record.json) reduced wall p50 by 7.9%, wall p95 by 8.2%, peak RSS by 54.0%, and the Chromium process peak from 32 to 14. Its capture-request p95 was still 7.3% slower, above the 5% default gate, so process isolation remains the default.
+Capture workers use separate browser processes by default. You can opt into one isolated browser context per worker with `--browser-isolation context`; this can reduce the number of Chromium processes while keeping cookies, storage, cache, and service workers isolated between workers. The current balanced [browser isolation record](https://github.com/l4dybird/storyfreeze/blob/master/benchmarks/browser-isolation-record.json) reduced wall p50 by 7.9%, wall p95 by 8.2%, peak RSS by 54.0%, and the Chromium process peak from 32 to 14. Its capture-request p95 was still 7.3% slower, above the 5% default gate, so process isolation remains the default.
 
 `--trace` writes the existing Chromium CPU trace JSON format. Because Chromium CPU tracing is browser-process scoped, combining `--trace` with `--browser-isolation context` emits a warning and automatically uses process isolation for that run. The configured parallelism is preserved.
 
@@ -626,7 +609,7 @@ StoryFreeze (with both simple and managed mode) is agnostic for specific UI fram
 
 ## How it works
 
-StoryFreeze accesses the launched page using [Playwright][playwright] by default. [Puppeteer][puppeteer] remains available with `--browser-backend puppeteer` as a temporary fallback. Playwright supports both process and context worker isolation; Puppeteer supports process isolation only.
+StoryFreeze accesses the launched page using [Playwright][playwright]. It supports both process and context worker isolation.
 
 ## Contributing
 

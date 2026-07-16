@@ -241,8 +241,6 @@ function measureCapture({
   const args = [
     cli,
     '--verbose',
-    '--browser-backend',
-    backend,
     '--chromium-path',
     browser.executablePath,
     '--browser-launch-options',

@@ -1,5 +1,5 @@
 import nanomatch from 'nanomatch';
-import { BaseBrowser, ChromiumNotFoundError, lazyPuppeteerBrowserBackend } from './browser.js';
+import { BaseBrowser, ChromiumNotFoundError, lazyPlaywrightBrowserBackend } from './browser.js';
 import type { BrowserBackend } from './browser-backend.js';
 import { BrowserProcessCoordinator, type BrowserSessionSource } from './browser-process-coordinator.js';
 import type { Story } from './story.js';
@@ -139,7 +139,7 @@ export interface MainDependencies {
 }
 
 const defaultMainDependencies: MainDependencies = {
-  browserBackend: lazyPuppeteerBrowserBackend,
+  browserBackend: lazyPlaywrightBrowserBackend,
 };
 
 /**
@@ -167,9 +167,6 @@ export async function main(mainOptions: MainOptions, overrides: Partial<MainDepe
     await abortable(connection.connect(), mainOptions.signal);
     logger.debug('Created to connection.');
 
-    if (browserIsolation === 'context' && browserBackend.name !== 'playwright') {
-      throw new Error('Context browser isolation is supported only by the Playwright backend.');
-    }
     if (browserIsolation === 'context') {
       browserProcess = new BrowserProcessCoordinator(browserBackend, browserOptions);
     }
@@ -238,13 +235,8 @@ export async function main(mainOptions: MainOptions, overrides: Partial<MainDepe
     return captured;
   } catch (error) {
     if (error instanceof ChromiumNotFoundError) {
-      if (browserBackend.name === 'playwright') {
-        throw new Error(
-          'Chromium is not installed. Execute "npx playwright-core@1.61.1 install chromium" or set "--chromium-path" or "--chromium-channel".',
-        );
-      }
       throw new Error(
-        `Chromium is not installed. Execute "npm i puppeteer" or install manually and set "--chromium-path" option.`,
+        'Chromium is not installed. Execute "npx playwright-core@1.61.1 install chromium" or set "--chromium-path" or "--chromium-channel".',
       );
     }
     throw error;

@@ -16,11 +16,11 @@ export { ChromiumNotFoundError } from './browser-backend.js';
 export type { ChromeChannel } from './browser-backend.js';
 export type BaseBrowserOptions = BrowserRuntimeOptions;
 
-export const lazyPuppeteerBrowserBackend: BrowserBackend = {
-  name: 'puppeteer',
+export const lazyPlaywrightBrowserBackend: BrowserBackend = {
+  name: 'playwright',
   async launch(options) {
-    const { puppeteerBrowserBackend } = await import('./puppeteer-browser-backend.js');
-    return puppeteerBrowserBackend.launch(options);
+    const { playwrightBrowserBackend } = await import('./playwright-browser-backend.js');
+    return playwrightBrowserBackend.launch(options);
   },
 };
 
@@ -34,7 +34,7 @@ export class BaseBrowser {
 
   constructor(
     protected opt: BaseBrowserOptions,
-    protected readonly backend: BrowserBackend = lazyPuppeteerBrowserBackend,
+    protected readonly backend: BrowserBackend = lazyPlaywrightBrowserBackend,
     private readonly closeDiagnosticContext: { role?: 'capture-worker' | 'story-index'; workerId?: number } = {},
     private readonly sessionSource?: BrowserSessionSource,
   ) {}

@@ -1,6 +1,5 @@
 import { EventEmitter } from 'node:events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vite-plus/test';
-import type { BrowserBackend } from './browser-backend.js';
 import type { MainOptions } from './types.js';
 import { runCli, type SignalHost } from './cli-command.js';
 
@@ -54,21 +53,6 @@ describe(runCli, () => {
     );
   });
 
-  it('selects the Puppeteer fallback without changing the default parallelism', async () => {
-    const backend = { name: 'puppeteer' } as unknown as BrowserBackend;
-    const resolveBrowserBackend = vi.fn(async () => backend);
-    const main = vi.fn(async (_options: MainOptions) => 0);
-
-    await expect(runCli(['--silent', '--browser-backend', 'puppeteer'], { main, resolveBrowserBackend })).resolves.toBe(
-      0,
-    );
-
-    expect(resolveBrowserBackend).toHaveBeenCalledWith('puppeteer');
-    expect(main.mock.calls[0][0].parallel).toBe(4);
-    expect(main.mock.calls[0][0].browserIsolation).toBe('process');
-    expect(main).toHaveBeenCalledWith(expect.anything(), { browserBackend: backend });
-  });
-
   it('maps context isolation and logs the effective mode', async () => {
     const main = vi.fn(async (_options: MainOptions) => 0);
 
@@ -90,21 +74,6 @@ describe(runCli, () => {
       '--trace requires process browser isolation. Using --browser-isolation process with --parallel 4.',
     );
     expect(log.mock.calls.flat().join(' ')).toContain('Browser isolation: process');
-  });
-
-  it('rejects context isolation with the Puppeteer fallback', async () => {
-    const backend = { name: 'puppeteer' } as unknown as BrowserBackend;
-    const resolveBrowserBackend = vi.fn(async () => backend);
-    const main = vi.fn(async (_options: MainOptions) => 0);
-
-    await expect(
-      runCli(['--browser-backend', 'puppeteer', '--browser-isolation', 'context'], { main, resolveBrowserBackend }),
-    ).resolves.toBe(1);
-
-    expect(main).not.toHaveBeenCalled();
-    expect(error.mock.calls.flat().join(' ')).toContain(
-      '--browser-isolation context is only supported by the Playwright backend.',
-    );
   });
 
   it('supports all existing short options and repeated values', async () => {
@@ -211,23 +180,11 @@ describe(runCli, () => {
     expect(received?.disableCssAnimation).toBe(false);
   });
 
-  it('accepts the deprecated Puppeteer launch alias and warns once', async () => {
-    const main = vi.fn(async (_options: MainOptions) => 0);
-
-    await expect(runCli(['--puppeteer-launch-config', '{"args":["--legacy"]}'], { main })).resolves.toBe(0);
-
-    expect(main.mock.calls[0][0].launchOptions).toEqual({ args: ['--legacy'], headless: true });
-    expect(error.mock.calls.flat().join(' ')).toContain(
-      '--puppeteer-launch-config is deprecated. Use --browser-launch-options instead.',
-    );
-  });
-
   it.each([
     ['legacy camelCase option', ['--serverCmd', 'storybook dev']],
     ['unknown option', ['--unknown-option']],
     ['invalid number', ['--parallel', 'many']],
     ['invalid enum', ['--chromium-channel', 'nightly']],
-    ['invalid browser backend', ['--browser-backend', 'webkit']],
     ['invalid browser isolation', ['--browser-isolation', 'page']],
   ])('rejects %s before execution', async (_label, args) => {
     const main = vi.fn(async (_options: MainOptions) => 0);
@@ -262,9 +219,7 @@ describe(runCli, () => {
 
   it.each([
     ['invalid shard', ['--silent', '--shard', '2/1']],
-    ['invalid launch JSON', ['--silent', '--puppeteer-launch-config', '{']],
     ['invalid browser launch JSON', ['--silent', '--browser-launch-options', '{']],
-    ['conflicting launch options', ['--silent', '--browser-launch-options', '{}', '--puppeteer-launch-config', '{}']],
     ['extra positional', ['--silent', 'https://one.test', 'https://two.test']],
   ])('returns 1 for %s', async (_label, args) => {
     const main = vi.fn(async (_options: MainOptions) => 0);
@@ -276,14 +231,10 @@ describe(runCli, () => {
 
   it('lists devices without calling main', async () => {
     const main = vi.fn(async (_options: MainOptions) => 0);
-    const resolveBrowserBackend = vi.fn(async () => ({ name: 'playwright' }) as unknown as BrowserBackend);
 
-    await expect(
-      runCli(['--list-devices', '--browser-backend', 'playwright'], { main, resolveBrowserBackend }),
-    ).resolves.toBe(0);
+    await expect(runCli(['--list-devices'], { main })).resolves.toBe(0);
 
     expect(main).not.toHaveBeenCalled();
-    expect(resolveBrowserBackend).not.toHaveBeenCalled();
     expect(log.mock.calls.flat().join(' ')).toContain('iPad');
   });
 
@@ -327,14 +278,12 @@ describe(runCli, () => {
     ['zero metrics samples', ['--metrics-watch-retry-count=0'], '--metrics-watch-retry-count'],
     ['fractional viewport delay', ['--viewport-delay=1.5'], '--viewport-delay'],
     ['negative state delay', ['--state-change-delay=-1'], '--state-change-delay'],
-  ])('rejects %s before resolving a browser backend', async (_label, args, option) => {
+  ])('rejects %s before starting the browser', async (_label, args, option) => {
     const main = vi.fn(async (_options: MainOptions) => 0);
-    const resolveBrowserBackend = vi.fn(async () => ({ name: 'playwright' }) as unknown as BrowserBackend);
 
-    await expect(runCli(args, { main, resolveBrowserBackend })).resolves.toBe(1);
+    await expect(runCli(args, { main })).resolves.toBe(1);
 
     expect(main).not.toHaveBeenCalled();
-    expect(resolveBrowserBackend).not.toHaveBeenCalled();
     expect(error.mock.calls.flat().join(' ')).toContain(option);
   });
 });

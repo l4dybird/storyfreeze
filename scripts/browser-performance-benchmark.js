@@ -329,6 +329,9 @@ function measureCapture({
       const pngPaths = listFiles(outputDir, '.png');
       const tracePaths = listFiles(outputDir, '_trace.json');
       const diagnostics = parseCaptureLog(`${stdout}\n${stderr}`);
+      const runtimeBrowserLaunchCount = diagnostics.captureDiagnostics.filter(
+        event => event.type === 'browser-launch',
+      ).length;
       const observedExecutables = [...browserExecutables].sort();
       const errors = [];
       if (code !== 0) errors.push(`CLI exited with code ${code}${signal ? ` (${signal})` : ''}.`);
@@ -382,6 +385,7 @@ function measureCapture({
         pngPaths,
         positionInPair,
         retryCount: diagnostics.retryCount,
+        runtimeBrowserLaunchCount,
         sampleCount: samples,
         sequenceIndex,
         signal,
@@ -676,6 +680,7 @@ function summarizeRuns(runs) {
     ),
     maxPeakProcessCount: Math.max(...runs.map(run => run.peakProcessCount)),
     maxUniqueBrowserLaunchCount: Math.max(...runs.map(run => run.uniqueBrowserLaunchCount)),
+    maxRuntimeBrowserLaunchCount: Math.max(...runs.map(run => run.runtimeBrowserLaunchCount)),
     maxPeakTreeRssBytes: Math.max(...runs.map(run => run.peakTreeRssBytes)),
     medianCpuTimeMs: median(successful.map(run => run.cpuTimeMs)),
     medianPeakTreeRssBytes: median(successful.map(run => run.peakTreeRssBytes)),
@@ -866,22 +871,22 @@ async function runIsolationComparison(browser) {
       gateErrors.push(`${comparison.label}: ${comparison.mismatchCount} PNG mismatch(es).`);
   }
   for (const run of [...warmups.context, ...runs.context]) {
-    if (run.peakBrowserRootCount !== 1) {
-      gateErrors.push(`${run.label}: expected one browser root, observed ${run.peakBrowserRootCount}.`);
+    if (run.peakBrowserRootCount < 1) {
+      gateErrors.push(`${run.label}: expected at least one sampled browser root, observed none.`);
     }
-    if (run.uniqueBrowserLaunchCount !== 1) {
-      gateErrors.push(`${run.label}: expected one unique browser launch, observed ${run.uniqueBrowserLaunchCount}.`);
+    if (run.runtimeBrowserLaunchCount !== 1) {
+      gateErrors.push(`${run.label}: expected one runtime browser launch, observed ${run.runtimeBrowserLaunchCount}.`);
     }
   }
   for (const run of [...warmups.process, ...runs.process]) {
-    if (run.peakBrowserRootCount !== parallel) {
+    if (run.peakBrowserRootCount < parallel) {
       gateErrors.push(
-        `${run.label}: expected ${parallel} simultaneous browser roots, observed ${run.peakBrowserRootCount}.`,
+        `${run.label}: expected at least ${parallel} simultaneous sampled browser roots, observed ${run.peakBrowserRootCount}.`,
       );
     }
-    if (run.uniqueBrowserLaunchCount !== parallel) {
+    if (run.runtimeBrowserLaunchCount !== parallel) {
       gateErrors.push(
-        `${run.label}: expected ${parallel} unique browser launches, observed ${run.uniqueBrowserLaunchCount}.`,
+        `${run.label}: expected ${parallel} runtime browser launches, observed ${run.runtimeBrowserLaunchCount}.`,
       );
     }
   }

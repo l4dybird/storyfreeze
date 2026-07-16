@@ -69,6 +69,13 @@ export class BaseBrowser {
     } else {
       this.instance = await this.backend.launch(this.opt);
       this._executablePath = this.instance.executablePath;
+      emitCaptureDiagnostic({
+        type: 'browser-launch',
+        backend: this.backend.name,
+        executablePath: this.instance.executablePath,
+        source: 'direct',
+        ...this.closeDiagnosticContext,
+      });
     }
     try {
       if (!this.session) this.session = await this.instance!.newSession(sessionOptions);

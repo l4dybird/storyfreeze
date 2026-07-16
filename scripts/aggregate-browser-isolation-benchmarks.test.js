@@ -19,6 +19,7 @@ function makeRun({
   label,
   pairStartingIsolation,
   positionInPair,
+  runtimeBrowserLaunchCount,
   sequenceIndex,
 }) {
   const storyDurationsMs = Array.from(
@@ -51,6 +52,7 @@ function makeRun({
     pngCount: 9,
     positionInPair,
     retryCount: 0,
+    runtimeBrowserLaunchCount,
     sequenceIndex,
     storyDurationsMs,
     success: true,
@@ -84,6 +86,7 @@ function makeRecord({
           label,
           pairStartingIsolation: order[0],
           positionInPair,
+          runtimeBrowserLaunchCount: isolation === 'process' ? parallel : 1,
           sequenceIndex: executionOrder.length + 1,
         });
         collection[isolation].push(run);
@@ -217,15 +220,15 @@ test('rejects records whose benchmark conditions differ', () => {
   assert.throws(() => buildAggregate(aggregateOptions(records)), /do not match/);
 });
 
-test('checks every raw context run for the one-root acceptance requirement', () => {
+test('checks every raw context run for the one-launch acceptance requirement', () => {
   const records = Array.from({ length: 4 }, (_, dispatch) =>
     makeRecord({ dispatch, startingIsolation: dispatch < 2 ? 'process' : 'context' }),
   );
-  records[0].isolations.context.runs[0].peakBrowserRootCount = 0;
+  records[0].isolations.context.runs[0].runtimeBrowserLaunchCount = 2;
 
   const output = buildAggregate(aggregateOptions(records));
-  assert.equal(output.acceptance.contextMaxBrowserRootCountIsOne, true);
-  assert.equal(output.acceptance.contextEveryRunHasOneBrowserRoot, false);
+  assert.equal(output.acceptance.contextMaxRuntimeBrowserLaunchCountIsOne, false);
+  assert.equal(output.acceptance.contextEveryRunHasOneRuntimeBrowserLaunch, false);
   assert.equal(output.acceptance.passed, false);
 });
 

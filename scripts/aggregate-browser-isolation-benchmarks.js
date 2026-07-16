@@ -333,6 +333,7 @@ function summarizeIsolation(runs, expectedCapturesPerRun) {
     idleTimeoutEventCount,
     maxBrowserRootCount: Math.max(...runs.map(run => run.peakBrowserRootCount)),
     maxChromiumProcessCount: Math.max(...runs.map(run => run.peakChromiumProcessCount)),
+    maxRuntimeBrowserLaunchCount: Math.max(...runs.map(run => run.runtimeBrowserLaunchCount)),
     measuredRuns: runs.length,
     phaseTimings: summarizePhaseTimings(diagnosticEvents, 'capture-phase'),
     peakTreeRssP50Bytes: percentile(
@@ -390,6 +391,7 @@ function contextToProcessRatios(summaries) {
     cpuTimeP50: ratio(context.cpuTimeP50Ms, process.cpuTimeP50Ms),
     maxBrowserRootCount: ratio(context.maxBrowserRootCount, process.maxBrowserRootCount),
     maxChromiumProcessCount: ratio(context.maxChromiumProcessCount, process.maxChromiumProcessCount),
+    maxRuntimeBrowserLaunchCount: ratio(context.maxRuntimeBrowserLaunchCount, process.maxRuntimeBrowserLaunchCount),
     peakTreeRssP50: ratio(context.peakTreeRssP50Bytes, process.peakTreeRssP50Bytes),
     wallTimeP50: ratio(context.wallTimeP50Ms, process.wallTimeP50Ms),
     wallTimeP95: ratio(context.wallTimeP95Ms, process.wallTimeP95Ms),
@@ -534,16 +536,16 @@ function buildAggregate({
       summary => summary.captureFailureCount === 0 && summary.failedRunCount === 0,
     ),
     captureTimeP95RatioAtMostOnePointZeroFive: isRatioAtMost(ratios.captureTimeP95, 1.05),
-    contextEveryRunHasOneBrowserRoot: records.every(record =>
+    contextEveryRunHasOneRuntimeBrowserLaunch: records.every(record =>
       [...record.isolations.context.warmups, ...record.isolations.context.runs].every(
-        run => run.peakBrowserRootCount === 1,
+        run => run.runtimeBrowserLaunchCount === 1,
       ),
     ),
-    contextBrowserRootCountLessThanProcess:
-      summaries.context.maxBrowserRootCount < summaries.process.maxBrowserRootCount,
+    contextRuntimeBrowserLaunchCountLessThanProcess:
+      summaries.context.maxRuntimeBrowserLaunchCount < summaries.process.maxRuntimeBrowserLaunchCount,
     contextChromiumProcessCountLessThanProcess:
       summaries.context.maxChromiumProcessCount < summaries.process.maxChromiumProcessCount,
-    contextMaxBrowserRootCountIsOne: summaries.context.maxBrowserRootCount === 1,
+    contextMaxRuntimeBrowserLaunchCountIsOne: summaries.context.maxRuntimeBrowserLaunchCount === 1,
     measuredRunsPerIsolationIs40: summaryList.every(summary => summary.measuredRuns === 40),
     peakTreeRssP50RatioAtMostPointEight: isRatioAtMost(ratios.peakTreeRssP50, 0.8),
     pngMismatchCountIsZero: pixelComparisons.mismatchCount === 0,

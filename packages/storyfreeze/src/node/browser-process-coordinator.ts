@@ -6,6 +6,7 @@ import type {
   BrowserSessionOptions,
 } from './browser-backend.js';
 import { sleep } from './async-utils.js';
+import { emitCaptureDiagnostic } from './capture-diagnostics.js';
 
 export interface BrowserSessionLease {
   readonly executablePath: string;
@@ -151,6 +152,13 @@ export class BrowserProcessCoordinator implements BrowserSessionSource {
       await this.closeInstance(instance).catch(() => {});
       throw new Error('The browser backend launched an unhealthy browser instance.');
     }
+
+    emitCaptureDiagnostic({
+      type: 'browser-launch',
+      backend: this.backend.name,
+      executablePath: instance.executablePath,
+      source: 'coordinator',
+    });
 
     this.pinnedExecutablePath ??= instance.executablePath;
     this.current = { generation: ++this.generation, instance };

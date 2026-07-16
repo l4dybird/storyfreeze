@@ -1,14 +1,17 @@
 import { sleep } from './async-utils.js';
 import type { CapturePage } from './browser-backend.js';
-import type { RunMode } from './types.js';
+import type { PreviewMode, RunMode } from './types.js';
 import {
   PreviewAddonVersionMismatchError,
+  PreviewModeRequiredError,
   PreviewProtocolVersionError,
   PreviewReadyTimeoutError,
   PreviewRenderError,
   PreviewStateMismatchError,
   PreviewStateValidationError,
   PreviewUrlRedirectError,
+  SimplePreviewReadyTimeoutError,
+  SimplePreviewRenderError,
 } from './errors.js';
 import {
   STORYFREEZE_ADDON_VERSION,
@@ -43,6 +46,17 @@ export function createStoryPreviewUrl(baseUrl: URL, storyId: string, requestId: 
 
 type NavigationPage = Pick<CapturePage, 'currentUrl' | 'evaluate' | 'goto'>;
 
+export type PreviewModeDetection = {
+  mode: RunMode;
+  reason: string;
+};
+
+type SimplePreviewState =
+  | { status: 'ready'; bodyClassName: string }
+  | { status: 'pending'; bodyClassName: string }
+  | { status: 'no-preview'; bodyClassName: string }
+  | { status: 'error'; bodyClassName: string; message: string; stack: string };
+
 function assertPreviewUrl(page: NavigationPage, expectedUrl: URL, expected: ExpectedPreviewState) {
   const actualUrl = page.currentUrl();
   let actual: URL;
@@ -64,6 +78,28 @@ async function readPreviewState(page: NavigationPage): Promise<unknown> {
     globalName => (window as unknown as Record<string, unknown>)[globalName],
     STORYFREEZE_PREVIEW_STATE_GLOBAL,
   );
+}
+
+async function readSimplePreviewState(page: NavigationPage): Promise<SimplePreviewState> {
+  return page.evaluate(() => {
+    const bodyClassName = document.body?.className ?? '';
+    const bodyClasses = document.body?.classList;
+    if (bodyClasses?.contains('sb-show-nopreview')) {
+      return { status: 'no-preview' as const, bodyClassName };
+    }
+    if (bodyClasses?.contains('sb-show-errordisplay')) {
+      return {
+        status: 'error' as const,
+        bodyClassName,
+        message: document.querySelector('#error-message')?.textContent?.trim() ?? '',
+        stack: document.querySelector('#error-stack')?.textContent?.trim() ?? '',
+      };
+    }
+    if (bodyClasses?.contains('sb-show-main')) {
+      return { status: 'ready' as const, bodyClassName };
+    }
+    return { status: 'pending' as const, bodyClassName };
+  });
 }
 
 function validatePreviewState(raw: unknown, expected: ExpectedPreviewState): StoryFreezePreviewStateV1 {
@@ -116,13 +152,23 @@ export async function detectPreviewMode(
   baseUrl: URL,
   storyId: string,
   timeout: number,
+  requestedMode: PreviewMode = 'auto',
   signal?: AbortSignal,
-): Promise<RunMode> {
+): Promise<PreviewModeDetection> {
   const requestId = 'mode-detection';
   const url = createStoryPreviewUrl(baseUrl, storyId, requestId);
   await page.goto(url.href, { timeout: 60000, waitUntil: 'domcontentloaded' });
   assertPreviewUrl(page, url, { storyId, requestId });
-  return (await waitForMarker(page, { storyId, requestId }, timeout, signal)) ? 'managed' : 'simple';
+  if (requestedMode === 'simple') {
+    return { mode: 'simple', reason: 'forced by --mode simple' };
+  }
+  if (await waitForMarker(page, { storyId, requestId }, timeout, signal)) {
+    return { mode: 'managed', reason: 'the StoryFreeze preview marker was detected' };
+  }
+  if (requestedMode === 'managed') {
+    throw new PreviewModeRequiredError(timeout, page.currentUrl());
+  }
+  return { mode: 'simple', reason: 'the StoryFreeze preview marker was not detected' };
 }
 
 export class StoryNavigator {
@@ -162,5 +208,36 @@ export class StoryNavigator {
     } while (Date.now() < deadline);
 
     throw new PreviewReadyTimeoutError(timeout, this.page.currentUrl(), this.current, lastState);
+  }
+
+  async waitForSimpleReady(timeout: number, signal?: AbortSignal): Promise<void> {
+    if (!this.current) throw new Error('Story preview navigation has not started.');
+    const deadline = Date.now() + timeout;
+    let lastState: SimplePreviewState = { status: 'pending', bodyClassName: '' };
+
+    do {
+      if (signal?.aborted) {
+        throw signal.reason instanceof Error ? signal.reason : new Error('StoryFreeze was interrupted.');
+      }
+      lastState = await readSimplePreviewState(this.page);
+      if (lastState.status === 'ready') return;
+      if (lastState.status === 'no-preview') {
+        throw new SimplePreviewRenderError(this.current.storyId, this.page.currentUrl(), 'No Preview is visible.');
+      }
+      if (lastState.status === 'error') {
+        const detail = [lastState.message || 'Storybook error display is visible.', lastState.stack]
+          .filter(Boolean)
+          .join('\n');
+        throw new SimplePreviewRenderError(this.current.storyId, this.page.currentUrl(), detail);
+      }
+      await sleep(25);
+    } while (Date.now() < deadline);
+
+    throw new SimplePreviewReadyTimeoutError(
+      timeout,
+      this.current.storyId,
+      this.page.currentUrl(),
+      lastState.bodyClassName,
+    );
   }
 }

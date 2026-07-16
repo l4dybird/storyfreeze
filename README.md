@@ -82,6 +82,10 @@ Browser installation is explicit; installing StoryFreeze does not automatically 
 ## Getting Started
 
 StoryFreeze runs with 2 modes. One is "simple" and another is "managed".
+The default `--mode auto` detects the StoryFreeze preview marker. Use
+`--mode managed` in CI when the addon is required, so a missing or incompatible
+addon fails the run instead of falling back to simple mode. `--mode simple`
+explicitly disables addon detection.
 
 With the simple mode, you don't need to configure your Storybook. All you need is give Storybook's URL, such as:
 
@@ -101,6 +105,18 @@ Of course, you can use pre-built Storybook:
 $ build-storybook -o dist-storybook
 $ storyfreeze --server-cmd "npx http-server dist-storybook -p 9001" http://localhost:9001
 ```
+
+The static server must preserve the query string on `iframe.html`. If you use
+`serve`, disable its clean URL redirects:
+
+```json
+{
+  "cleanUrls": false
+}
+```
+
+StoryFreeze stops before capturing when a redirect removes the story or request
+query parameters.
 
 Also, StoryFreeze can crawls built and hosted Storybook pages:
 
@@ -333,6 +349,7 @@ OPTIONS:
   -v, --version                                                    Display this version
   -o, --out-dir [out-dir]                                          Output directory. (default: __screenshots__)
   -p, --parallel [parallel]                                        Number of browsers to screenshot. (default: 4)
+  --mode [mode]                                                    Preview mode. Use managed in CI to require the StoryFreeze addon. (default: auto, choices: auto | managed | simple)
   -f, --flat                                                       Flatten output filename. (default: false)
   -i, --include <include>                                          Including stories name rule.
   -e, --exclude <exclude>                                          Excluding stories name rule.

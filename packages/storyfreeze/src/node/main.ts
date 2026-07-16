@@ -33,15 +33,16 @@ function throwIfAborted(signal?: AbortSignal) {
 
 async function detectRunMode(storiesBrowser: BaseBrowser, opt: MainOptions) {
   const storyId = 'storyfreeze-probe--preview';
-  const mode = await detectPreviewMode(
+  const detection = await detectPreviewMode(
     storiesBrowser.page,
     new URL(opt.serverOptions.storybookUrl),
     storyId,
     5000,
+    opt.mode,
     opt.signal,
   );
-  opt.logger.log(`StoryFreeze runs with ${mode} mode`);
-  return mode;
+  opt.logger.log(`StoryFreeze runs with ${detection.mode} mode (${detection.reason}).`);
+  return detection.mode;
 }
 
 type BootableCaptureWorker<T> = {

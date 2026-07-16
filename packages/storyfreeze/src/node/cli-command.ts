@@ -16,7 +16,7 @@ import type { BrowserBackend, BrowserLaunchOptions, ChromeChannel } from './brow
 import { Logger } from './logger.js';
 import { main } from './main.js';
 import { parseShardOptions } from './shard-utilities.js';
-import type { BrowserIsolationMode, MainOptions } from './types.js';
+import type { BrowserIsolationMode, MainOptions, PreviewMode } from './types.js';
 
 const packageVersion = (
   JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as { version: string }
@@ -25,6 +25,7 @@ const packageVersion = (
 const defaultBrowserLaunchOptions = '{}';
 const chromiumChannels = ['canary', 'stable', '*'] as const;
 const browserIsolationModes = ['process', 'context'] as const;
+const previewModes = ['auto', 'managed', 'simple'] as const;
 
 const storyfreezeCommandArgs = {
   'storybook-url': {
@@ -35,6 +36,12 @@ const storyfreezeCommandArgs = {
   },
   outDir: { type: 'string', short: 'o', default: '__screenshots__', description: 'Output directory.' },
   parallel: { type: 'number', short: 'p', default: 4, description: 'Number of browsers to screenshot.' },
+  mode: {
+    type: 'enum',
+    choices: previewModes,
+    default: 'auto',
+    description: 'Preview mode. Use managed in CI to require the StoryFreeze addon.',
+  },
   flat: { type: 'boolean', short: 'f', default: false, description: 'Flatten output filename.' },
   include: { type: 'string', short: 'i', multiple: true, description: 'Including stories name rule.' },
   exclude: { type: 'string', short: 'e', multiple: true, description: 'Excluding stories name rule.' },
@@ -118,6 +125,7 @@ export interface StoryfreezeCliValues {
   storybookUrl: string;
   outDir: string;
   parallel: number;
+  mode: PreviewMode;
   flat: boolean;
   include?: string[];
   exclude?: string[];
@@ -245,6 +253,7 @@ function toMainOptions(
     delay: values.delay,
     viewports: values.viewport ?? ['800x600'],
     parallel: values.parallel,
+    mode: values.mode,
     browserIsolation,
     shard: parseShardOptions(values.shard),
     captureTimeout: values.captureTimeout,

@@ -88,7 +88,8 @@ $ pnpm e2e
 ```
 
 This runs the existing Storybook 10 fixture against the packed StoryFreeze
-tarball.
+tarball. Run `pnpm build` first when invoking a packing command directly;
+dependency installation and `npm pack` intentionally do not compile the package.
 
 ### Single fixture
 

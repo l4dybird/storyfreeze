@@ -62,6 +62,61 @@ function runPnpm(script) {
   };
 }
 
+function runPnpmAsync(script) {
+  const inheritedPnpmCli = pnpmCli && /pnpm(?:\.cjs)?$/i.test(path.basename(pnpmCli)) ? pnpmCli : undefined;
+  const command = inheritedPnpmCli ? process.execPath : process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm';
+  const args = inheritedPnpmCli ? [inheritedPnpmCli, 'run', script] : ['--dir', fixtureDir, 'run', script];
+
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd: inheritedPnpmCli ? fixtureDir : repoDir,
+      shell: process.platform === 'win32' && !inheritedPnpmCli,
+      env: {
+        ...process.env,
+        CI: 'true',
+        FORCE_COLOR: '0',
+        STORYBOOK_DISABLE_TELEMETRY: '1',
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+    let timeout;
+    const finish = action => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      action();
+    };
+    const append = (target, chunk) => {
+      const next = target + chunk;
+      if (Buffer.byteLength(next) > 20 * 1024 * 1024) {
+        child.kill('SIGKILL');
+        finish(() => reject(new Error(`${script} exceeded the 20 MiB output limit.`)));
+      }
+      return next;
+    };
+    child.stdout.on('data', chunk => (stdout = append(stdout, chunk)));
+    child.stderr.on('data', chunk => (stderr = append(stderr, chunk)));
+    child.once('error', error => finish(() => reject(error)));
+    child.once('close', status =>
+      finish(() => {
+        const output = `${stdout}${stderr}`;
+        process.stdout.write(output);
+        resolve({
+          status,
+          output: output.replace(/\u001b\[[0-9;]*m/g, '').replace(/\\/g, '/'),
+        });
+      }),
+    );
+    timeout = setTimeout(() => {
+      child.kill('SIGKILL');
+      finish(() => reject(new Error(`${script} exceeded the 180000 msec timeout.`)));
+    }, 180000);
+  });
+}
+
 function assertStaticBuild(directoryName) {
   const buildDir = path.join(fixtureDir, directoryName);
   const index = JSON.parse(fs.readFileSync(path.join(buildDir, 'index.json'), 'utf8'));
@@ -145,15 +200,10 @@ function assertScreenshots(directoryName, expectedPaths) {
   }
 }
 
-function assertCapture({
-  script,
-  mode,
-  directoryName,
-  expectedPaths,
-  extraFragments = [],
-  expectServerShutdown = false,
-}) {
-  const capture = runPnpm(script);
+function validateCapture(
+  { script, mode, directoryName, expectedPaths, extraFragments = [], expectServerShutdown = false },
+  capture,
+) {
   if (capture.status !== 0) {
     throw new Error(`${script} must complete successfully.`);
   }
@@ -178,6 +228,18 @@ function assertCapture({
   }
 
   assertScreenshots(directoryName, expectedPaths);
+}
+
+function assertCapture(options) {
+  validateCapture(options, runPnpm(options.script));
+}
+
+async function assertCapturesConcurrently(options) {
+  const results = await Promise.allSettled(
+    options.map(async captureOptions => validateCapture(captureOptions, await runPnpmAsync(captureOptions.script))),
+  );
+  const failures = results.filter(result => result.status === 'rejected').map(result => result.reason);
+  if (failures.length > 0) throw new AggregateError(failures, 'One or more concurrent StoryFreeze captures failed.');
 }
 
 function requireSuccess(script, message) {
@@ -317,27 +379,29 @@ async function main() {
       expectedPaths: managedScreenshotPaths,
       extraFragments: ['Browser backend: playwright', 'Browser isolation: context', 'Found 3 stories.'],
     });
-    assertCapture({
-      script: 'storyfreeze:filter-static',
-      mode: 'managed',
-      directoryName: '__screenshots__/filter-static',
-      expectedPaths: interactionScreenshotPaths,
-      extraFragments: ['Found 1 stories.'],
-    });
-    assertCapture({
-      script: 'storyfreeze:shard-static',
-      mode: 'managed',
-      directoryName: '__screenshots__/shard-static',
-      expectedPaths: interactionScreenshotPaths,
-      extraFragments: ['Found 3 stories. 1 are being processed by this shard (number 2 of 2).'],
-    });
-    assertCapture({
-      script: 'storyfreeze:retry-static',
-      mode: 'managed',
-      directoryName: '__screenshots__/retry-static',
-      expectedPaths: retryScreenshotPaths,
-      extraFragments: ['Found 1 stories.', 'Retry to screenshot this story after this sequence.'],
-    });
+    await assertCapturesConcurrently([
+      {
+        script: 'storyfreeze:filter-static',
+        mode: 'managed',
+        directoryName: '__screenshots__/filter-static',
+        expectedPaths: interactionScreenshotPaths,
+        extraFragments: ['Found 1 stories.'],
+      },
+      {
+        script: 'storyfreeze:shard-static',
+        mode: 'managed',
+        directoryName: '__screenshots__/shard-static',
+        expectedPaths: interactionScreenshotPaths,
+        extraFragments: ['Found 3 stories. 1 are being processed by this shard (number 2 of 2).'],
+      },
+      {
+        script: 'storyfreeze:retry-static',
+        mode: 'managed',
+        directoryName: '__screenshots__/retry-static',
+        expectedPaths: retryScreenshotPaths,
+        extraFragments: ['Found 1 stories.', 'Retry to screenshot this story after this sequence.'],
+      },
+    ]);
   } finally {
     await stopServer(managedPreview);
   }

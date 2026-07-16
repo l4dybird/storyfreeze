@@ -26,8 +26,7 @@
   },
   "scripts": {
     "clean": "rimraf -g dist lib lib-esm \"*.tsbuildinfo\"",
-    "build": "tsc --p tsconfig.build.json",
-    "prepare": "npm run clean && npm run build",
+    "build": "pnpm run clean && tsc --p tsconfig.build.json",
     "test": "vp test run --root ../..",
     "typedoc": "typedoc --out \"../../dist-pages/typedoc/storyfreeze\" --ignoreCompilerErrors --tsconfig tsconfig.build.json src"
   },

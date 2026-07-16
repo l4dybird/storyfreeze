@@ -330,7 +330,7 @@ Returns whether current process runs in StoryFreeze browser. It's useful to chan
 <!-- inject:clihelp -->
 
 ```txt
-storyfreeze (storyfreeze v0.1.0-alpha.0)
+storyfreeze (storyfreeze v0.2.0-alpha.0)
 USAGE:
   storyfreeze <OPTIONS> [<storybook-url>]
 

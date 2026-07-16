@@ -5,5 +5,18 @@
     "storyfreeze": "0.1.0",
     "storyfreeze-react-vite-fixture": "0.0.0"
   },
-  "changesets": []
+  "changesets": [
+    "best-effort-capture-reset",
+    "browser-context-isolation",
+    "calm-ravens-freeze",
+    "capture-attempt-deadline",
+    "harden-browser-path-handling",
+    "isolate-browser-runtimes",
+    "playwright-default",
+    "protect-capture-paths",
+    "safe-browser-sandbox",
+    "stop-capture-queue",
+    "stream-playwright-traces",
+    "validate-cli-numbers"
+  ]
 }

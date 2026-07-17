@@ -229,8 +229,8 @@ interface ScreenshotOptions {
   focus?: string;                           // default ""
   click?: string;                           // default ""
   skip?: boolean;                           // default false
-  viewport?: Viewport;
-  viewports?: string[] | { [variantName]: Viewport };
+  viewport?: Viewport | string;
+  viewports?: string[] | { [variantName]: Viewport | string };
   variants?: Variants;
   waitImages?: boolean;                     // default true
   omitBackground?: boolean;                 // default false
@@ -251,7 +251,7 @@ interface ScreenshotOptions {
 - `variants`: See type `Variants` section below.
 - `waitImages`: Deprecated. Use `waitAssets`. If set true, StoryFreeze waits until `<img>` in the story are loaded.
 - `omitBackground`: If set true, StoryFreeze omits the background of the page allowing for transparent screenshots. Note the storybook theme will need to be transparent as well.
-- `captureBeyondViewport`: If set true, StoryFreeze captures beyond the viewport through the Chromium screenshot protocol. The default is true for both browser backends.
+- `captureBeyondViewport`: If set true, StoryFreeze captures beyond the viewport through the Chromium screenshot protocol. The default is true for the Playwright Chromium runtime.
 - `clip`: If set, StoryFreeze captures only the portion of the screen bounded by x/y/width/height.
 
 ### type `Variants`
@@ -270,7 +270,7 @@ type Variants = {
     focus?: string;
     click?: string;
     skip?: boolean;
-    viewport?: Viewport;
+    viewport?: Viewport | string;
     waitImages?: boolean;
     omitBackground?: boolean;
     captureBeyondViewport?: boolean;
@@ -286,20 +286,18 @@ type Variants = {
 `Viewport` is StoryFreeze's browser-neutral Chromium viewport interface.
 
 ```ts
-type Viewport =
-  | string
-  | {
-      width: number; // default: 800
-      height: number; // default: 600
-      deviceScaleFactor: ?number; // default: 1,
-      isMobile?: boolean; // default: false,
-      hasTouch?: boolean; // default: false,
-      isLandscape?: boolean; // default: false,
-    };
+type Viewport = {
+  width: number; // default: 800
+  height: number; // default: 600
+  deviceScaleFactor?: number; // default: 1
+  isMobile?: boolean; // default: false
+  hasTouch?: boolean; // default: false
+  isLandscape?: boolean; // default: false
+};
 ```
 
 > [!NOTE]
-> Use a device name printed by `storyfreeze --list-devices` when setting a string. StoryFreeze keeps the same fixed registry for both browser backends.
+> The `viewport` and `viewports` fields also accept a device-name string printed by `storyfreeze --list-devices`. StoryFreeze keeps the same fixed registry across browser isolation modes.
 >
 > When a story sets neither `viewport` nor `viewports`, StoryFreeze resolves a viewport from Storybook's viewport addon globals instead, using `globals.viewport` (or `storyGlobals.viewport`) together with the matching entry in `parameters.viewport.options`. The resolution order is: explicit `parameters.screenshot.viewport` (or `viewports`) > Storybook viewport globals > the CLI's `--viewport` default. Only a single viewport is injected this way, so it never adds a filename suffix.
 
@@ -478,8 +476,8 @@ Use [regviz/node-xcb](https://cloud.docker.com/u/regviz/repository/docker/regviz
 
 Or create your Docker base image such as:
 
-```Dockerfile
-FROM node:18
+```text
+FROM node:22
 
 RUN apt-get update -y \
     && apt-get install -yq \

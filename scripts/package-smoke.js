@@ -127,6 +127,50 @@ try {
     }
   }
 
+  fs.writeFileSync(
+    path.join(consumerDir, 'contract.ts'),
+    `import { isScreenshot, withScreenshot } from 'storyfreeze';
+import type {
+  ScreenshotOptionFragments,
+  ScreenshotOptionFragmentsForVariant,
+  ScreenshotOptions,
+  Variants,
+  Viewport,
+} from 'storyfreeze';
+
+const viewport: Viewport = { width: 800, height: 600, deviceScaleFactor: 2 };
+const fragments: ScreenshotOptionFragments = { viewport };
+const variant: ScreenshotOptionFragmentsForVariant = { extends: 'base', focus: '#target' };
+const variants: Variants = { focused: variant };
+const options: ScreenshotOptions = { ...fragments, variants };
+
+void isScreenshot;
+void withScreenshot;
+void options;
+`,
+  );
+  fs.writeFileSync(
+    path.join(consumerDir, 'tsconfig.json'),
+    `${JSON.stringify(
+      {
+        compilerOptions: {
+          lib: ['ES2022', 'DOM'],
+          module: 'NodeNext',
+          moduleResolution: 'NodeNext',
+          noEmit: true,
+          strict: true,
+          target: 'ES2022',
+        },
+        files: ['contract.ts'],
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  const typescriptPackagePath = require.resolve('typescript/package.json', { paths: [packageDir] });
+  const tscCliPath = path.join(path.dirname(typescriptPackagePath), 'bin', 'tsc');
+  run(process.execPath, [tscCliPath, '--project', 'tsconfig.json'], { cwd: consumerDir });
+
   const imported = run(
     process.execPath,
     [

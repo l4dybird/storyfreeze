@@ -12,13 +12,27 @@ export type CaptureDiagnosticEvent = {
   [key: string]: unknown;
 };
 
+const captureDiagnosticListeners = new Set<(event: CaptureDiagnosticEvent) => void>();
+
 export function captureDiagnosticsEnabled() {
   return process.env.STORYFREEZE_CAPTURE_DIAGNOSTICS === '1';
 }
 
 export function emitCaptureDiagnostic(event: CaptureDiagnosticEvent) {
   if (!captureDiagnosticsEnabled()) return;
+  for (const listener of captureDiagnosticListeners) {
+    try {
+      listener(event);
+    } catch {
+      // Diagnostics must never change capture behavior.
+    }
+  }
   process.stdout.write(`${CAPTURE_DIAGNOSTIC_PREFIX}${JSON.stringify(event)}\n`);
+}
+
+export function subscribeCaptureDiagnostics(listener: (event: CaptureDiagnosticEvent) => void) {
+  captureDiagnosticListeners.add(listener);
+  return () => captureDiagnosticListeners.delete(listener);
 }
 
 export async function measureCaptureDiagnostic<T>(event: CaptureDiagnosticEvent, action: () => Promise<T>): Promise<T> {

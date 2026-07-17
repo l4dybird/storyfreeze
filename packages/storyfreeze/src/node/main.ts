@@ -1,6 +1,7 @@
 import nanomatch from 'nanomatch';
+import { availableParallelism, freemem } from 'node:os';
 import { BaseBrowser, ChromiumNotFoundError, lazyPlaywrightBrowserBackend } from './browser.js';
-import type { BrowserBackend } from './browser-backend.js';
+import type { BrowserBackend, BrowserSessionOptions } from './browser-backend.js';
 import { BrowserProcessCoordinator, type BrowserSessionSource } from './browser-process-coordinator.js';
 import type { Story } from './story.js';
 import { CapturingBrowser } from './capturing-browser.js';
@@ -12,6 +13,12 @@ import { ManagedStorybookConnection } from './managed-storybook-connection.js';
 import { StorybookStoryIndexProvider, type StoryDescriptor } from './story-index-provider.js';
 import { detectPreviewMode } from './story-navigator.js';
 import { captureDiagnosticsEnabled, emitCaptureDiagnostic, measureCaptureDiagnostic } from './capture-diagnostics.js';
+import { createBaseScreenshotOptions } from '../shared/screenshot-options-helper.js';
+import { browserDeviceDescriptors } from './browser-device-registry.js';
+import { generateCaptureManifest } from './capture-manifest.js';
+import { assignCapturePlan, createCapturePlan } from './capture-plan.js';
+import { toViewport } from './emulation-profile.js';
+import { BrowserRuntimeOrchestrator, selectTopology } from './browser-topology.js';
 
 async function abortable<T>(operation: Promise<T>, signal?: AbortSignal): Promise<T> {
   if (!signal) return operation;
@@ -51,18 +58,21 @@ async function detectRunMode(storiesBrowser: BaseBrowser, opt: MainOptions) {
 }
 
 type BootableCaptureWorker<T> = {
-  boot(): Promise<T>;
+  boot(options?: BrowserSessionOptions): Promise<T>;
   close(): Promise<void>;
 };
 
 export async function bootCaptureWorkers<T extends BootableCaptureWorker<T>>(
   workers: T[],
   signal?: AbortSignal,
+  sessionOptions: Array<BrowserSessionOptions | undefined> = [],
 ): Promise<T[]> {
   throwIfAborted(signal);
   const results = await Promise.allSettled(
     workers.map((worker, workerId) =>
-      measureCaptureDiagnostic({ type: 'runtime-phase', phase: 'capture-worker-boot', workerId }, () => worker.boot()),
+      measureCaptureDiagnostic({ type: 'runtime-phase', phase: 'capture-worker-boot', workerId }, () =>
+        worker.boot(sessionOptions[workerId]),
+      ),
     ),
   );
   const failure = results.find((result): result is PromiseRejectedResult => result.status === 'rejected');
@@ -86,12 +96,19 @@ async function bootCapturingBrowserAsWorkers(
   mode: RunMode,
   backend: BrowserBackend,
   sessionSourceForWorker?: (workerId: number) => BrowserSessionSource | undefined,
+  initialSessionOptions: Array<BrowserSessionOptions | undefined> = [],
+  workerCount = Math.max(opt.parallel, 1),
+  initialWorkerCount = workerCount,
 ) {
-  const browsers = [...new Array(Math.max(opt.parallel, 1)).keys()].map(
+  const browsers = [...new Array(workerCount).keys()].map(
     i => new CapturingBrowser(connection, opt, mode, i, backend, sessionSourceForWorker?.(i)),
   );
-  await bootCaptureWorkers(browsers, opt.signal);
-  opt.logger.debug(`Started ${browsers.length} capture browsers`);
+  await bootCaptureWorkers(
+    browsers.slice(0, initialWorkerCount),
+    opt.signal,
+    initialSessionOptions.slice(0, initialWorkerCount),
+  );
+  opt.logger.debug(`Started ${initialWorkerCount} of ${browsers.length} capture browsers`);
   return browsers;
 }
 
@@ -126,6 +143,7 @@ type RuntimeResources = {
   workers: Array<Pick<CapturingBrowser, 'close'>>;
   storiesBrowser?: Pick<BaseBrowser, 'close'>;
   browserProcess?: Pick<BrowserProcessCoordinator, 'close'>;
+  browserRuntime?: Pick<BrowserRuntimeOrchestrator, 'close'>;
   connection?: Pick<ManagedStorybookConnection, 'disconnect'>;
 };
 
@@ -144,7 +162,9 @@ export async function disposeRuntimeResources(resources: RuntimeResources, logge
   if (resources.storiesBrowser) {
     await closeSafely('stories browser', () => resources.storiesBrowser!.close());
   }
-  if (resources.browserProcess) {
+  if (resources.browserRuntime) {
+    await closeSafely('browser runtime', () => resources.browserRuntime!.close());
+  } else if (resources.browserProcess) {
     await closeSafely('shared browser process', () => resources.browserProcess!.close());
   }
   if (resources.connection) {
@@ -178,28 +198,37 @@ export async function main(mainOptions: MainOptions, overrides: Partial<MainDepe
   let connection: ManagedStorybookConnection | undefined;
   let storiesBrowser: BaseBrowser | undefined;
   let browserProcess: BrowserProcessCoordinator | undefined;
+  let browserRuntime: BrowserRuntimeOrchestrator | undefined;
   let workers: CapturingBrowser[] = [];
 
   try {
-    // Wait for connection to Storybook server.
+    // Start the browser while the managed server is becoming ready; index loading follows readiness.
     connection = new ManagedStorybookConnection(mainOptions.serverOptions, logger);
-    await measureRuntimePhase('storybook-connect', () => abortable(connection!.connect(), mainOptions.signal));
-    logger.debug('Created to connection.');
-
     browserProcess = new BrowserProcessCoordinator(browserBackend, browserOptions);
-
-    // Launch a browser process and fetch names of all stories.
     storiesBrowser = new BaseBrowser(browserOptions, browserBackend, { role: 'story-index' }, browserProcess);
-    await measureRuntimePhase('story-index-browser-boot', () => storiesBrowser!.boot());
-    throwIfAborted(mainOptions.signal);
-    logger.log('Executable Chromium path:', logger.color.magenta(storiesBrowser.executablePath));
     const storyIndexProvider = new StorybookStoryIndexProvider();
-    const allStories = await measureRuntimePhase('story-index-load', () =>
-      abortable(
-        storyIndexProvider.load(new URL(mainOptions.serverOptions.storybookUrl), mainOptions.signal),
-        mainOptions.signal,
-      ),
+    const connectionPromise = measureRuntimePhase('storybook-connect', () =>
+      abortable(connection!.connect(), mainOptions.signal),
     );
+    const [connectionResult, browserBootResult, storyIndexResult] = await Promise.allSettled([
+      connectionPromise,
+      measureRuntimePhase('story-index-browser-boot', () => storiesBrowser!.boot()),
+      connectionPromise.then(() =>
+        measureRuntimePhase('story-index-load', () =>
+          abortable(
+            storyIndexProvider.load(new URL(mainOptions.serverOptions.storybookUrl), mainOptions.signal),
+            mainOptions.signal,
+          ),
+        ),
+      ),
+    ]);
+    if (connectionResult.status === 'rejected') throw connectionResult.reason;
+    if (browserBootResult.status === 'rejected') throw browserBootResult.reason;
+    if (storyIndexResult.status === 'rejected') throw storyIndexResult.reason;
+    throwIfAborted(mainOptions.signal);
+    logger.debug('Created to connection.');
+    logger.log('Executable Chromium path:', logger.color.magenta(storiesBrowser.executablePath));
+    const allStories = storyIndexResult.value;
     logger.debug('Ended to fetch stories metadata.');
 
     const stories = filterStories(allStories, mainOptions.include, mainOptions.exclude);
@@ -209,10 +238,16 @@ export async function main(mainOptions: MainOptions, overrides: Partial<MainDepe
       return 0;
     }
 
-    // Detect managed mode from StoryFreeze's owned preview protocol on the story iframe.
-    const mode = await measureRuntimePhase('preview-mode-detection', () =>
-      abortable(detectRunMode(storiesBrowser!, browserOptions), mainOptions.signal),
-    );
+    // Auto mode probes the addon. Explicit modes validate their contract on the first real story.
+    const mode =
+      browserOptions.mode === 'auto'
+        ? await measureRuntimePhase('preview-mode-detection', () =>
+            abortable(detectRunMode(storiesBrowser!, browserOptions), mainOptions.signal),
+          )
+        : browserOptions.mode;
+    if (browserOptions.mode !== 'auto') {
+      logger.log(`StoryFreeze runs with ${mode} mode (forced by --mode ${mode}; validated on first capture).`);
+    }
     await measureRuntimePhase('story-index-browser-close', () => storiesBrowser!.close());
     storiesBrowser = undefined;
 
@@ -239,10 +274,57 @@ export async function main(mainOptions: MainOptions, overrides: Partial<MainDepe
       );
     }
 
+    const baseScreenshotOptions = createBaseScreenshotOptions(browserOptions);
+    const shardedStoryIds = new Set(shardedStories.map(story => story.id));
+    const manifest = generateCaptureManifest({
+      stories: stories.filter(story => shardedStoryIds.has(story.id)),
+      baseOptions: baseScreenshotOptions,
+      deviceDescriptors: browserDeviceDescriptors,
+      mode,
+      freshContext: false,
+    });
+    const capturePlan = createCapturePlan(manifest);
+    const topologySelection = selectTopology(
+      capturePlan,
+      { cpuCount: availableParallelism(), availableMemoryBytes: freemem() },
+      Math.max(browserOptions.parallel, 1),
+      browserIsolation,
+    );
+    const workerPlans = assignCapturePlan(capturePlan, topologySelection.topology.workerCount);
+    browserRuntime = new BrowserRuntimeOrchestrator(
+      browserBackend,
+      browserOptions,
+      topologySelection.topology,
+      workerPlans,
+      browserProcess,
+    );
+    browserProcess = undefined;
+    emitCaptureDiagnostic({
+      type: 'browser-topology',
+      ...topologySelection.topology,
+      initialWorkerCount: topologySelection.initialWorkerCount,
+      maximumParallel: browserOptions.parallel,
+      reason: topologySelection.reason,
+      requestedMode: browserIsolation,
+      workerProcessIds: browserRuntime.workerProcessIds,
+    });
+    logger.debug('Browser topology:', topologySelection.topology, topologySelection.reason);
+    const initialSessionOptions = workerPlans.map(worker => {
+      const profile = worker.captures[0]?.profile;
+      return profile ? { viewport: toViewport(profile) } : undefined;
+    });
+
     // Launch browser processes to capture each story.
     workers = await measureRuntimePhase('capture-workers-boot', () =>
-      bootCapturingBrowserAsWorkers(connection!, browserOptions, mode, browserBackend, workerId =>
-        selectCaptureWorkerSessionSource(browserIsolation, workerId, browserProcess!),
+      bootCapturingBrowserAsWorkers(
+        connection!,
+        browserOptions,
+        mode,
+        browserBackend,
+        workerId => browserRuntime!.sessionSourceForWorker(workerId),
+        initialSessionOptions,
+        topologySelection.topology.workerCount,
+        topologySelection.initialWorkerCount,
       ),
     );
     if (startupStartedAt !== undefined) {
@@ -264,6 +346,12 @@ export async function main(mainOptions: MainOptions, overrides: Partial<MainDepe
         logger,
         forwardConsoleLogs: mainOptions.forwardConsoleLogs,
         trace: mainOptions.trace,
+        capturePlan,
+        captureProtocol: mainOptions.captureProtocol ?? 'strict',
+        initialWorkerCount: topologySelection.initialWorkerCount,
+        bootWorker: async workerId => {
+          await workers[workerId].boot(initialSessionOptions[workerId]);
+        },
       }).execute(),
     );
     logger.debug('Ended ScreenshotService execution.');
@@ -278,7 +366,7 @@ export async function main(mainOptions: MainOptions, overrides: Partial<MainDepe
   } finally {
     // Shutdown workers and dispose connection.
     await measureRuntimePhase('runtime-dispose', () =>
-      disposeRuntimeResources({ workers, storiesBrowser, browserProcess, connection }, logger),
+      disposeRuntimeResources({ workers, storiesBrowser, browserProcess, browserRuntime, connection }, logger),
     );
     logger.debug('Ended to dispose workers.');
     logger.debug('Ended to dispose connection.');

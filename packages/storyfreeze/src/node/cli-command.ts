@@ -17,6 +17,7 @@ import { Logger } from './logger.js';
 import { main } from './main.js';
 import { parseShardOptions } from './shard-utilities.js';
 import type { BrowserIsolationMode, MainOptions, PreviewMode } from './types.js';
+import type { CaptureProtocolMode } from './story-session.js';
 
 const packageVersion = (
   JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as { version: string }
@@ -24,8 +25,9 @@ const packageVersion = (
 
 const defaultBrowserLaunchOptions = '{}';
 const chromiumChannels = ['canary', 'stable', '*'] as const;
-const browserIsolationModes = ['process', 'context'] as const;
+const browserIsolationModes = ['process', 'context', 'hybrid', 'auto'] as const;
 const previewModes = ['auto', 'managed', 'simple'] as const;
+const captureProtocolModes = ['strict', 'story-session', 'auto'] as const;
 
 const storyfreezeCommandArgs = {
   'storybook-url': {
@@ -35,7 +37,7 @@ const storyfreezeCommandArgs = {
     description: 'Storybook URL.',
   },
   outDir: { type: 'string', short: 'o', default: '__screenshots__', description: 'Output directory.' },
-  parallel: { type: 'number', short: 'p', default: 4, description: 'Number of browsers to screenshot.' },
+  parallel: { type: 'number', short: 'p', default: 4, description: 'Maximum number of capture workers.' },
   mode: {
     type: 'enum',
     choices: previewModes,
@@ -100,6 +102,16 @@ const storyfreezeCommandArgs = {
     default: 0,
     description: "Delay time [msec] after changing element's state.",
   },
+  maxCapturesPerContext: {
+    type: 'number',
+    default: 0,
+    description: 'Recycle a browser context after this many captures. Zero disables count-based recycling.',
+  },
+  maxContextAge: {
+    type: 'number',
+    default: 0,
+    description: 'Recycle a browser context after this many milliseconds. Zero disables age-based recycling.',
+  },
   listDevices: { type: 'boolean', default: false, description: 'List available device descriptors.' },
   chromiumChannel: {
     type: 'enum',
@@ -113,7 +125,13 @@ const storyfreezeCommandArgs = {
     type: 'enum',
     choices: browserIsolationModes,
     default: 'process',
-    description: 'Browser isolation mode for capture workers.',
+    description: 'Browser topology preset for capture workers.',
+  },
+  captureProtocol: {
+    type: 'enum',
+    choices: captureProtocolModes,
+    default: 'strict',
+    description: 'Variant capture protocol. strict preserves fresh navigation for every capture.',
   },
   browserLaunchOptions: {
     type: 'string',
@@ -146,10 +164,13 @@ export interface StoryfreezeCliValues {
   viewportDelay: number;
   reloadAfterChangeViewport: boolean;
   stateChangeDelay: number;
+  maxCapturesPerContext: number;
+  maxContextAge: number;
   listDevices: boolean;
   chromiumChannel: ChromeChannel;
   chromiumPath: string;
   browserIsolation: BrowserIsolationMode;
+  captureProtocol: CaptureProtocolMode;
   browserLaunchOptions?: string;
 }
 
@@ -222,6 +243,8 @@ function validateNumericOptions(values: StoryfreezeCliValues) {
   assertSafeInteger('metrics-watch-retry-count', values.metricsWatchRetryCount, 1);
   assertSafeInteger('viewport-delay', values.viewportDelay, 0);
   assertSafeInteger('state-change-delay', values.stateChangeDelay, 0);
+  assertSafeInteger('max-captures-per-context', values.maxCapturesPerContext, 0);
+  assertSafeInteger('max-context-age', values.maxContextAge, 0);
 }
 
 function toMainOptions(
@@ -234,7 +257,7 @@ function toMainOptions(
     values.browserLaunchOptions ?? defaultBrowserLaunchOptions,
   ) as BrowserLaunchOptions;
   let browserIsolation = values.browserIsolation;
-  if (values.trace && browserIsolation === 'context') {
+  if (values.trace && browserIsolation !== 'process') {
     logger.warn(
       `--trace requires process browser isolation. Using --browser-isolation process with --parallel ${values.parallel}.`,
     );
@@ -255,6 +278,7 @@ function toMainOptions(
     parallel: values.parallel,
     mode: values.mode,
     browserIsolation,
+    captureProtocol: values.captureProtocol,
     shard: parseShardOptions(values.shard),
     captureTimeout: values.captureTimeout,
     captureMaxRetryCount: values.captureMaxRetryCount,
@@ -262,6 +286,15 @@ function toMainOptions(
     viewportDelay: values.viewportDelay,
     reloadAfterChangeViewport: values.reloadAfterChangeViewport,
     stateChangeDelay: values.stateChangeDelay,
+    ...(values.maxCapturesPerContext > 0 || values.maxContextAge > 0
+      ? {
+          recyclingPolicy: {
+            ...(values.maxCapturesPerContext > 0 ? { maxCapturesPerContext: values.maxCapturesPerContext } : {}),
+            ...(values.maxContextAge > 0 ? { maxContextAgeMs: values.maxContextAge } : {}),
+            recycleAfterRecovery: true,
+          },
+        }
+      : {}),
     disableCssAnimation: values.disableCssAnimation,
     disableWaitAssets: values.disableWaitAssets,
     trace: values.trace,
@@ -319,6 +352,7 @@ async function execute(values: StoryfreezeCliValues, dependencies: CliDependenci
   logger.debug('Option:', rest);
   logger.debug('Browser backend:', browserBackend.name);
   logger.debug('Browser isolation:', opt.browserIsolation);
+  logger.debug('Capture protocol:', opt.captureProtocol);
 
   try {
     const [numberOfCaptured, duration] = await time(

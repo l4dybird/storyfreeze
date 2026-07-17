@@ -79,6 +79,23 @@ describe(finalizeScreenshot, () => {
     expect((win as Record<string, any>)[STORYFREEZE_PREVIEW_STATE_GLOBAL]).toMatchObject({
       status: 'ready',
       options: { fullPage: true, variants: { nested: {} } },
+      runtime: {
+        hasCustomReset: false,
+        hasRuntimeWaitFor: false,
+        runtimeWaitForVariants: ['nested'],
+      },
+    });
+  });
+
+  it('marks named runtime wait hooks as unsafe for same-document capture', async () => {
+    const win = installWindow();
+
+    triggerScreenshot({ waitFor: 'fontLoading' }, { id: 'button--primary' });
+    await finalizeScreenshot({ id: 'button--primary', abortSignal: new AbortController().signal });
+
+    expect((win as Record<string, any>)[STORYFREEZE_PREVIEW_STATE_GLOBAL]).toMatchObject({
+      status: 'ready',
+      runtime: { hasRuntimeWaitFor: true },
     });
   });
 

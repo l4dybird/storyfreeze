@@ -3,6 +3,7 @@ import { BaseBrowser } from './browser.js';
 import {
   CapturingBrowser,
   resolveViewport,
+  shouldRecycleContext,
   shouldRecoverPlaywrightWorker,
   shouldWaitForVisualCommit,
 } from './capturing-browser.js';
@@ -73,6 +74,23 @@ describe(resolveViewport, () => {
     const viewport = { height: 720, width: 1280 };
     expect(resolveViewport(viewport, devices)).toBe(viewport);
     expect(resolveViewport('Unknown', devices)).toBeUndefined();
+  });
+});
+
+describe(shouldRecycleContext, () => {
+  it('recycles only when an enabled count or age boundary is reached', () => {
+    expect(shouldRecycleContext(undefined, 100, 100_000)).toBe(false);
+    expect(
+      shouldRecycleContext(
+        { maxCapturesPerContext: 10, maxContextAgeMs: 60_000, recycleAfterRecovery: true },
+        9,
+        59_999,
+      ),
+    ).toBe(false);
+    expect(
+      shouldRecycleContext({ maxCapturesPerContext: 10, maxContextAgeMs: 60_000, recycleAfterRecovery: true }, 10, 1),
+    ).toBe(true);
+    expect(shouldRecycleContext({ maxCapturesPerContext: 0, recycleAfterRecovery: true }, 100, 0)).toBe(false);
   });
 });
 
@@ -767,12 +785,12 @@ describe(main, () => {
       .filter(line => line.startsWith(CAPTURE_DIAGNOSTIC_PREFIX))
       .map(line => JSON.parse(line.slice(CAPTURE_DIAGNOSTIC_PREFIX.length)))
       .filter(event => event.type === 'runtime-phase' && event.state === 'end');
-    expect(events.map(event => event.phase)).toEqual([
-      'storybook-connect',
-      'story-index-browser-boot',
-      'story-index-load',
-      'runtime-dispose',
-    ]);
+    const phases = events.map(event => event.phase);
+    expect(new Set(phases)).toEqual(
+      new Set(['storybook-connect', 'story-index-browser-boot', 'story-index-load', 'runtime-dispose']),
+    );
+    expect(phases.indexOf('story-index-load')).toBeGreaterThan(phases.indexOf('storybook-connect'));
+    expect(phases.at(-1)).toBe('runtime-dispose');
     expect(events.find(event => event.phase === 'story-index-load')).toMatchObject({
       durationMs: expect.any(Number),
       error: { message: 'enumeration failed', name: 'Error' },

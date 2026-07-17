@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vite-plus/test';
-import { CAPTURE_DIAGNOSTIC_PREFIX, emitCaptureDiagnostic, measureCaptureDiagnostic } from './capture-diagnostics.js';
+import {
+  CAPTURE_DIAGNOSTIC_PREFIX,
+  emitCaptureDiagnostic,
+  measureCaptureDiagnostic,
+  subscribeCaptureDiagnostics,
+} from './capture-diagnostics.js';
 
 describe('capture diagnostics', () => {
   const originalValue = process.env.STORYFREEZE_CAPTURE_DIAGNOSTICS;
@@ -45,5 +50,22 @@ describe('capture diagnostics', () => {
       durationMs: expect.any(Number),
       state: 'end',
     });
+  });
+
+  it('notifies temporary diagnostic subscribers without allowing them to affect capture', () => {
+    process.env.STORYFREEZE_CAPTURE_DIAGNOSTICS = '1';
+    vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    const events: string[] = [];
+    const unsubscribe = subscribeCaptureDiagnostics(event => events.push(event.type));
+    const unsubscribeThrowing = subscribeCaptureDiagnostics(() => {
+      throw new Error('diagnostic observer failed');
+    });
+
+    emitCaptureDiagnostic({ type: 'first' });
+    unsubscribeThrowing();
+    unsubscribe();
+    emitCaptureDiagnostic({ type: 'second' });
+
+    expect(events).toEqual(['first']);
   });
 });

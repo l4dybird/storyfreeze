@@ -45,6 +45,11 @@ export interface ScreenshotOptionFragmentsForVariant extends ScreenshotOptionFra
 /** Named screenshot variants for one story. */
 export type Variants = Record<string, ScreenshotOptionFragmentsForVariant>;
 
+export interface StorySessionResetContext {
+  storyId: string;
+  variantId: string;
+}
+
 /**
  *
  * Represents a root(default) screenshot options.
@@ -54,6 +59,8 @@ export interface ScreenshotOptions extends ScreenshotOptionFragments {
   viewports?: string[] | { [key: string]: string | Viewport };
   variants?: Variants;
   defaultVariantSuffix?: string;
+  /** Restores story-owned state after an opt-in same-document variant capture. */
+  reset?: (context: StorySessionResetContext) => void | Promise<void>;
 }
 
 export interface StrictScreenshotOptions extends $Strict<ScreenshotOptionFragments> {

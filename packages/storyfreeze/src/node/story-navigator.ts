@@ -19,6 +19,7 @@ import {
   STORYFREEZE_PREVIEW_STATE_GLOBAL,
   STORYFREEZE_REQUEST_ID_PARAM,
   type NormalizedScreenshotOptions,
+  type PreviewRuntimeMetadata,
   type StoryFreezePreviewStateV1,
 } from '../shared/preview-protocol.js';
 
@@ -119,6 +120,20 @@ function validatePreviewState(raw: unknown, expected: ExpectedPreviewState): Sto
     if (!isRecord(raw.options)) {
       throw new PreviewStateValidationError('ready.options must be an object');
     }
+    if (raw.rootOptions !== undefined && !isRecord(raw.rootOptions)) {
+      throw new PreviewStateValidationError('ready.rootOptions must be an object when provided');
+    }
+    if (raw.runtime !== undefined) {
+      if (
+        !isRecord(raw.runtime) ||
+        typeof raw.runtime.hasCustomReset !== 'boolean' ||
+        typeof raw.runtime.hasRuntimeWaitFor !== 'boolean' ||
+        !Array.isArray(raw.runtime.runtimeWaitForVariants) ||
+        !raw.runtime.runtimeWaitForVariants.every(key => typeof key === 'string')
+      ) {
+        throw new PreviewStateValidationError('ready.runtime metadata is invalid');
+      }
+    }
   } else if (raw.status === 'error') {
     if (!isRecord(raw.error) || typeof raw.error.name !== 'string' || typeof raw.error.message !== 'string') {
       throw new PreviewStateValidationError('error must contain string name and message fields');
@@ -174,6 +189,8 @@ export async function detectPreviewMode(
 export class StoryNavigator {
   private sequence = 0;
   private current?: ExpectedPreviewState;
+  private _rootOptions?: NormalizedScreenshotOptions;
+  private _runtimeMetadata?: PreviewRuntimeMetadata;
 
   constructor(
     private readonly page: NavigationPage,
@@ -181,9 +198,19 @@ export class StoryNavigator {
     private readonly workerId: number,
   ) {}
 
+  get rootOptions() {
+    return this._rootOptions;
+  }
+
+  get runtimeMetadata() {
+    return this._runtimeMetadata;
+  }
+
   async navigate(storyId: string, timeout = 60_000, retryCount = 0): Promise<void> {
     const requestId = `${this.workerId}-${++this.sequence}`;
     this.current = { storyId, requestId };
+    this._rootOptions = undefined;
+    this._runtimeMetadata = undefined;
     const url = createStoryPreviewUrl(this.baseUrl, storyId, requestId, retryCount);
     await this.page.goto(url.href, { timeout, waitUntil: 'domcontentloaded' });
     assertPreviewUrl(this.page, url, this.current);
@@ -201,7 +228,11 @@ export class StoryNavigator {
       lastState = await readPreviewState(this.page);
       if (lastState !== undefined) {
         const state = validatePreviewState(lastState, this.current);
-        if (state.status === 'ready') return state.options;
+        if (state.status === 'ready') {
+          this._rootOptions = state.rootOptions ?? state.options;
+          this._runtimeMetadata = state.runtime;
+          return state.options;
+        }
         if (state.status === 'error') throw new PreviewRenderError(state.storyId, state.error);
       }
       await sleep(25);

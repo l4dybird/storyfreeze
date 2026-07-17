@@ -5,6 +5,9 @@ import { createScreenshotService } from './screenshot-service.js';
 import type { Story } from './story.js';
 import type { VariantKey } from '../shared/types.js';
 import { CAPTURE_DIAGNOSTIC_PREFIX } from './capture-diagnostics.js';
+import { createBaseScreenshotOptions } from '../shared/screenshot-options-helper.js';
+import { generateCaptureManifest } from './capture-manifest.js';
+import { createCapturePlan } from './capture-plan.js';
 
 const story: Story = {
   id: 'button--primary',
@@ -120,6 +123,69 @@ describe(createScreenshotService, () => {
     ]);
   });
 
+  it('boots dormant workers only after runtime discovery expands the queue', async () => {
+    const hovered: VariantKey = { isDefault: false, keys: ['hovered'] };
+    const focused: VariantKey = { isDefault: false, keys: ['focused'] };
+    let secondWorkerBooted = false;
+    const createWorker = (workerId: number) => ({
+      screenshot: vi.fn(async (_rid: string, _story: Story, variantKey: VariantKey) => {
+        if (workerId === 1) expect(secondWorkerBooted).toBe(true);
+        return {
+          buffer: Buffer.from('png'),
+          succeeded: true,
+          variantKeysToPush: variantKey.isDefault ? [hovered, focused] : [],
+          defaultVariantSuffix: '',
+        };
+      }),
+    });
+    const bootWorker = vi.fn(async (workerId: number) => {
+      expect(workerId).toBe(1);
+      secondWorkerBooted = true;
+    });
+    const service = createScreenshotService({
+      workers: [createWorker(0), createWorker(1)],
+      initialWorkerCount: 1,
+      bootWorker,
+      stories: [story],
+      fileSystem: { saveScreenshot: vi.fn(async () => 'screenshot.png') } as unknown as FileSystem,
+      logger: {
+        log: vi.fn(),
+        color: { magenta: (value: string) => value },
+      } as unknown as Logger,
+      forwardConsoleLogs: false,
+      trace: false,
+    });
+
+    await expect(service.execute()).resolves.toBe(3);
+    expect(bootWorker).toHaveBeenCalledOnce();
+  });
+
+  it('leaves dormant workers unbooted when the initial queue drains', async () => {
+    const screenshot = vi.fn(async () => ({
+      buffer: Buffer.from('png'),
+      succeeded: true,
+      variantKeysToPush: [],
+      defaultVariantSuffix: '',
+    }));
+    const bootWorker = vi.fn(async () => {});
+    const service = createScreenshotService({
+      workers: [{ screenshot }, { screenshot }],
+      initialWorkerCount: 1,
+      bootWorker,
+      stories: [story],
+      fileSystem: { saveScreenshot: vi.fn(async () => 'screenshot.png') } as unknown as FileSystem,
+      logger: {
+        log: vi.fn(),
+        color: { magenta: (value: string) => value },
+      } as unknown as Logger,
+      forwardConsoleLogs: false,
+      trace: false,
+    });
+
+    await expect(service.execute()).resolves.toBe(1);
+    expect(bootWorker).not.toHaveBeenCalled();
+  });
+
   it('maps the stored path to the request when capture diagnostics are enabled', async () => {
     vi.stubEnv('STORYFREEZE_CAPTURE_DIAGNOSTICS', '1');
     const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
@@ -167,5 +233,112 @@ describe(createScreenshotService, () => {
       storyId: 'button--primary',
       variantKey: [],
     });
+  });
+
+  it('captures safe variants through one opt-in story session without queueing duplicate navigation', async () => {
+    const hovered: VariantKey = { isDefault: false, keys: ['hovered'] };
+    const screenshot = vi.fn(async () => ({
+      buffer: Buffer.from('default'),
+      succeeded: true,
+      variantKeysToPush: [hovered],
+      defaultVariantSuffix: '',
+    }));
+    const screenshotSessionVariants = vi.fn(async (_sessionId, _story, requests) => ({
+      outputs: requests.map((request: { variantKey: VariantKey }) => ({
+        variantKey: request.variantKey,
+        buffer: Buffer.from('variant'),
+        durationMs: 25,
+      })),
+      strictFallbacks: [],
+    }));
+    const saveScreenshot = vi.fn(async () => 'screenshot.png');
+    const logger = {
+      log: vi.fn(),
+      debug: vi.fn(),
+      color: { magenta: (value: string) => value },
+    } as unknown as Logger;
+    const capturePlan = createCapturePlan(
+      generateCaptureManifest({
+        stories: [
+          {
+            id: story.id,
+            title: story.kind,
+            name: story.story,
+            screenshotOptions: { variants: { hovered: { hover: '#button' } } },
+            eligibility: 'static',
+          },
+        ],
+        baseOptions: createBaseScreenshotOptions({ delay: 0, disableWaitAssets: false, viewports: ['800x600'] }),
+        deviceDescriptors: [],
+        generatedAt: '2026-07-17T00:00:00.000Z',
+        mode: 'managed',
+      }),
+    );
+
+    const service = createScreenshotService({
+      workers: [{ screenshot, screenshotSessionVariants }],
+      stories: [story],
+      fileSystem: { saveScreenshot } as unknown as FileSystem,
+      logger,
+      forwardConsoleLogs: false,
+      trace: false,
+      capturePlan,
+      captureProtocol: 'auto',
+    });
+
+    await expect(service.execute()).resolves.toBe(2);
+    expect(screenshot).toHaveBeenCalledTimes(1);
+    expect(screenshotSessionVariants).toHaveBeenCalledTimes(1);
+    expect(screenshotSessionVariants.mock.calls[0][2]).toEqual([expect.objectContaining({ variantKey: hovered })]);
+    expect(saveScreenshot).toHaveBeenCalledTimes(2);
+  });
+
+  it('requeues only the remaining variants when a story session falls back to strict capture', async () => {
+    const hovered: VariantKey = { isDefault: false, keys: ['hovered'] };
+    const focused: VariantKey = { isDefault: false, keys: ['focused'] };
+    const screenshot = vi.fn(async (_rid: string, _story: Story, variantKey: VariantKey) => ({
+      buffer: Buffer.from(variantKey.isDefault ? 'default' : 'strict'),
+      succeeded: true,
+      variantKeysToPush: variantKey.isDefault ? [hovered, focused] : [],
+      defaultVariantSuffix: '',
+    }));
+    const screenshotSessionVariants = vi.fn(async () => ({
+      outputs: [{ variantKey: hovered, buffer: Buffer.from('fast'), durationMs: 25 }],
+      strictFallbacks: [{ variantKey: focused }],
+    }));
+    const saveScreenshot = vi.fn(async () => 'screenshot.png');
+    const logger = {
+      log: vi.fn(),
+      debug: vi.fn(),
+      color: { magenta: (value: string) => value },
+    } as unknown as Logger;
+    const capturePlan = createCapturePlan(
+      generateCaptureManifest({
+        stories: [{ id: story.id, title: story.kind, name: story.story }],
+        baseOptions: createBaseScreenshotOptions({ delay: 0, disableWaitAssets: false, viewports: ['800x600'] }),
+        deviceDescriptors: [],
+        generatedAt: '2026-07-17T00:00:00.000Z',
+        mode: 'managed',
+      }),
+    );
+
+    const service = createScreenshotService({
+      workers: [{ screenshot, screenshotSessionVariants }],
+      stories: [story],
+      fileSystem: { saveScreenshot } as unknown as FileSystem,
+      logger,
+      forwardConsoleLogs: false,
+      trace: false,
+      capturePlan,
+      captureProtocol: 'auto',
+    });
+
+    await expect(service.execute()).resolves.toBe(3);
+    expect(screenshotSessionVariants).toHaveBeenCalledTimes(1);
+    expect(screenshot.mock.calls.map(([, , variantKey]) => variantKey)).toEqual([
+      { isDefault: true, keys: [] },
+      focused,
+    ]);
+    expect(saveScreenshot).toHaveBeenCalledTimes(3);
   });
 });

@@ -58,6 +58,57 @@ The pull-request gate requires successful paired captures without retries, timeo
 
 PR-531 only adds this evidence pipeline: `process` remains the default regardless of the result.
 
+## Phase 1-3 topology and workload matrix
+
+The roadmap adds two independent measurements without rewriting the historical schema 1 isolation record.
+
+Set `STORYFREEZE_BENCHMARK_COMPARISON=topology` when running `scripts/browser-performance-benchmark.js` to compare the compatibility `process` (4×1), `hybrid` (2×2), and `context` (1×4) presets with alternating order. At smaller capture counts the same presets exercise 2×1 and 1×2 layouts. The schema 2 `browser-topology-differential` record stores the selected and actually booted worker topology, phase distributions, process/RSS data, and exact decoded-RGBA comparisons against process mode. Dormant runtime-discovery capacity does not count as a launched worker or process.
+
+The separate `scripts/performance-roadmap-benchmark.js` runner uses the dedicated `.storybook-performance` fixture. It measures three lanes for every required workload: stable `process + strict`, Phase 2 `auto + strict`, and cumulative optimized `auto + auto`. This makes the Phase 3 comparison use the Phase 2 topology lane as its direct baseline while retaining end-to-end comparison with the compatibility lane.
+
+| Scenario          | Stories | PNGs | Primary stressor                       |
+| ----------------- | ------: | ---: | -------------------------------------- |
+| single            |       1 |    1 | startup and unnecessary-worker cost    |
+| manyStories       |      24 |   24 | scheduling, balancing, and stealing    |
+| variantHeavy      |       1 |   13 | repeated navigation and reset protocol |
+| multipleViewports |       1 |    4 | width/height profile transitions       |
+| mixedDevices      |       1 |    4 | desktop/mobile/touch/DPR boundaries    |
+| largeFullPage     |       1 |    1 | tall document capture                  |
+| highDpr           |       1 |    3 | DPR memory and screenshot cost         |
+| networkHeavy      |       1 |    1 | resource quiet-window behavior         |
+| interactionHeavy  |       1 |    9 | Storybook play and variant actions     |
+
+Each scenario rotates all three lane orders and reports wall, capture, navigation, metrics, and screenshot p50/p95; navigation and story-session counts; Phase 1 scheduler diagnostics; selected topology; and retry, timeout, and crash counts. Its correctness gate compares output path, PNG byte length, dimensions, and decoded RGBA. Byte-length differences are recorded for diagnosis; path, dimensions, and RGBA are blocking. Missing, duplicate, retried, timed-out, or crashed captures also fail the record.
+
+The workflow exposes the matrix as an optional manual job. Locally, the isolated package harness can run a smoke record with:
+
+```sh
+STORYFREEZE_ROADMAP_BENCHMARK_PROFILE=smoke \
+node scripts/e2e-prestorybook.js examples/react-vite performance-roadmap-benchmark.js roadmap-matrix.json
+```
+
+Use `STORYFREEZE_ROADMAP_BENCHMARK_SCENARIOS=single,variantHeavy` for a subset and `STORYFREEZE_ROADMAP_BENCHMARK_PARALLEL=1|2|4|8|16` for scaling diagnostics. `pr` performs one warm-up and three measured runs per path; `record` performs two warm-ups and ten measured runs. Performance ratios are evidence, not blocking thresholds, until balanced records on the same source tree, Chromium, runner class, and options are accepted. The compatibility defaults remain process isolation and strict capture.
+
+### Local Phase 1-3 PR-profile evidence
+
+On 2026-07-17, the final Windows packaged-consumer record used Playwright 1.61.1, `parallel=4`, one warm-up, and three measured runs per lane for every scenario. The table reports each lane's wall-time p50 and the cumulative optimized change from the stable lane; scenario medians are not pooled.
+
+| Scenario          | Stable p50 | Phase 2 p50 | Phase 3 p50 | Phase 3 vs stable | Navigations per run (stable/2/3) |
+| ----------------- | ---------: | ----------: | ----------: | ----------------: | -------------------------------: |
+| single            |   2,800 ms |    2,789 ms |    2,836 ms |             +1.3% |                            1/1/1 |
+| manyStories       |   6,081 ms |    5,985 ms |    5,704 ms |             -6.2% |                         24/24/24 |
+| variantHeavy      |   5,020 ms |    4,982 ms |    4,325 ms |            -13.8% |                          13/13/1 |
+| multipleViewports |   4,215 ms |    3,623 ms |    3,343 ms |            -20.7% |                            4/4/2 |
+| mixedDevices      |   4,274 ms |    4,300 ms |    4,280 ms |             +0.1% |                            6/6/6 |
+| largeFullPage     |   2,857 ms |    2,930 ms |    2,962 ms |             +3.7% |                            1/1/1 |
+| highDpr           |   4,051 ms |    3,665 ms |    3,667 ms |             -9.5% |                            3/3/3 |
+| networkHeavy      |   2,753 ms |    2,839 ms |    2,795 ms |             +1.5% |                            1/1/1 |
+| interactionHeavy  |   5,075 ms |    4,937 ms |    4,160 ms |            -18.0% |                            9/9/1 |
+
+Across the nine scenario ratios, geometric-mean wall p50 improved 2.7% in Phase 2, a further 4.7% in Phase 3, and 7.3% cumulatively. Cumulative wall p95 improved 4.4%, capture-request p50 improved 38.8%, and capture-request p95 improved 9.3%. The optimized lane reduced navigation from 62 to 40 per complete matrix run and performed 22 same-document story-session captures.
+
+The largest wall-time gains appeared where safe same-story reuse applied: `multipleViewports` improved 20.7%, `interactionHeavy` 18.0%, and `variantHeavy` 13.8%. Boundary-heavy or single-capture cases intentionally retained fresh navigation and varied between a 0.1% and 3.7% regression on this local record. Every lane emitted the exact expected paths, PNG byte lengths, dimensions, and decoded RGBA values. Missing or duplicate outputs, retries, timeouts, browser crashes, and pixel mismatches were all zero, so the full correctness gate passed. This local record supports the implementation but does not change the compatibility defaults.
+
 ## Current browser isolation differential
 
 The [aggregated browser isolation record](./browser-isolation-record.json) contains four successful `parallel=4` record dispatches from `86ae115`, two per starting isolation, for 40 measured runs and 360 capture-request samples per isolation. All four dispatches used Node.js 22.18.0, Storybook 10.5.0, Playwright 1.61.1, and Chromium 149.0.7827.55 on the same runner image and source tree. GitHub assigned an AMD EPYC 9V74 host to records 1, 3, and 4 and an AMD EPYC 7763 host to record 2; every dispatch exposed four logical CPUs and about 16.77 GB of memory. The aggregate records this variance instead of claiming identical hosted-runner hardware. Process and context remain paired within each dispatch and their starting order is balanced, but pooled absolute timings still include host variance. Separate `parallel=1` and `parallel=2` diagnostics are attached to the aggregate; `parallel=8` and `parallel=16` remain independent exploratory artifacts.

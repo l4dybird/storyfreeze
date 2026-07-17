@@ -1,5 +1,12 @@
 # storyfreeze
 
+## 0.2.0-alpha.3
+
+### Patch Changes
+
+- d0d186d: Avoid rebuilding StoryFreeze during dependency installation and package packing; repository and release workflows now build it explicitly once before consuming the tarball.
+- b9d2c11: Export the documented public configuration types from the package root and validate the TypeScript contract from the packed package.
+
 ## 0.2.0-alpha.2
 
 ### Patch Changes

@@ -10,6 +10,8 @@
     "browser-context-isolation",
     "calm-ravens-freeze",
     "capture-attempt-deadline",
+    "fast-explicit-builds",
+    "freeze-public-types",
     "guard-rendered-previews",
     "harden-browser-path-handling",
     "isolate-browser-runtimes",

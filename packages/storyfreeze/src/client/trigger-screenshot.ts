@@ -1,4 +1,9 @@
-import type { ScreenshotOptions, Exposed, PreviewCaptureDiagnostic } from '../shared/types.js';
+import type {
+  ScreenshotOptionFragmentsForVariant,
+  ScreenshotOptions,
+  Exposed,
+  PreviewCaptureDiagnostic,
+} from '../shared/types.js';
 import {
   mergeScreenshotOptions,
   pickupWithVariantKey,
@@ -14,6 +19,11 @@ import {
 } from '../shared/preview-protocol.js';
 import { waitForVisualCommitInPage } from '../shared/visual-commit.js';
 import { applyViewportFromGlobals, type StoryContextLike } from './resolve-viewport-globals.js';
+import {
+  initializeStorySessionController,
+  registerStorySessionRuntime,
+  snapshotStorySessionRuntime,
+} from './story-session-controller.js';
 
 type Args<T> = T extends (...args: infer A) => any ? A : never;
 type Return<T> = T extends (...args: any) => infer R ? R : never;
@@ -49,6 +59,7 @@ export function initializePreviewState() {
   const win = getWindow();
   const identity = getCaptureIdentity();
   if (!win || !identity) return;
+  initializeStorySessionController(win);
   setState(win, { ...createPreviewStateBase(identity.storyId, identity.requestId), status: 'booting' });
 }
 
@@ -87,6 +98,10 @@ function serializeError(error: unknown): SerializedError {
 function normalizeOptions(options: ScreenshotOptions): NormalizedScreenshotOptions {
   const serializable = JSON.parse(JSON.stringify(options)) as NormalizedScreenshotOptions;
   delete (serializable as ScreenshotOptions).waitFor;
+  delete (serializable as ScreenshotOptions).reset;
+  for (const variant of Object.values(serializable.variants ?? {})) {
+    delete (variant as ScreenshotOptionFragmentsForVariant).waitFor;
+  }
   return serializable;
 }
 
@@ -99,7 +114,9 @@ export function triggerScreenshot(
   const identity = getCaptureIdentity();
   if (!win || !identity || !context.id) return;
   setState(win, { ...createPreviewStateBase(identity.storyId, identity.requestId), status: 'booting' });
-  pushOptions(win, context.id, applyViewportFromGlobals(screenshotOptions, context));
+  const resolvedOptions = applyViewportFromGlobals(screenshotOptions, context);
+  registerStorySessionRuntime(resolvedOptions, context);
+  pushOptions(win, context.id, resolvedOptions);
 }
 
 /** Publish ready only from Storybook's project afterEach hook, after render and play complete. */
@@ -155,7 +172,22 @@ export async function finalizeScreenshot(context: { id?: string; abortSignal?: A
     }
 
     if (context.abortSignal?.aborted) return;
-    setState(win, { ...baseState, status: 'ready', options: normalizeOptions(screenshotOptions) });
+    const runtimeWaitForVariants = Object.entries(mergedOptions.variants ?? {})
+      .filter(([, variant]) => Boolean(variant.waitFor))
+      .map(([key]) => key)
+      .sort();
+    snapshotStorySessionRuntime(context.id, win);
+    setState(win, {
+      ...baseState,
+      status: 'ready',
+      options: normalizeOptions(screenshotOptions),
+      rootOptions: normalizeOptions(mergedOptions),
+      runtime: {
+        hasCustomReset: typeof (mergedOptions as ScreenshotOptions).reset === 'function',
+        hasRuntimeWaitFor: Boolean(screenshotOptions.waitFor),
+        runtimeWaitForVariants,
+      },
+    });
   } catch (error) {
     if (context.abortSignal?.aborted) return;
     setState(win, { ...baseState, status: 'error', error: serializeError(error) });

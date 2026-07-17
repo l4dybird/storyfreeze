@@ -142,7 +142,7 @@ const viewport: Viewport = { width: 800, height: 600, deviceScaleFactor: 2 };
 const fragments: ScreenshotOptionFragments = { viewport };
 const variant: ScreenshotOptionFragmentsForVariant = { extends: 'base', focus: '#target' };
 const variants: Variants = { focused: variant };
-const options: ScreenshotOptions = { ...fragments, variants };
+const options: ScreenshotOptions = { ...fragments, variants, reset: async () => undefined };
 
 void isScreenshot;
 void withScreenshot;
@@ -221,7 +221,10 @@ void options;
     help.includes('--puppeteer-launch-config') ||
     help.includes('--browser-backend') ||
     !help.includes('--browser-isolation') ||
-    !help.includes('(default: process, choices: process | context)')
+    !help.includes('(default: process, choices: process | context | hybrid | auto)') ||
+    !help.includes('--capture-protocol') ||
+    !help.includes('--max-captures-per-context') ||
+    !help.includes('--max-context-age')
   ) {
     throw new Error('CLI help did not contain the expected Gunshi usage and kebab-case options.');
   }

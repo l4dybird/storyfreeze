@@ -46,7 +46,11 @@ function createBackend(instances: BrowserInstance[]) {
 describe(BrowserProcessCoordinator, () => {
   it('reports coordinated browser launches when diagnostics are enabled', async () => {
     vi.stubEnv('STORYFREEZE_CAPTURE_DIAGNOSTICS', '1');
-    const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    const write = vi.spyOn(process.stdout, 'write').mockImplementation(((...args: unknown[]) => {
+      const callback = args.find(value => typeof value === 'function') as (() => void) | undefined;
+      callback?.();
+      return true;
+    }) as never);
     const browser = createInstance('/chromium/first');
     const { backend } = createBackend([browser.instance]);
     const coordinator = new BrowserProcessCoordinator(backend, {});
@@ -54,8 +58,8 @@ describe(BrowserProcessCoordinator, () => {
     try {
       await coordinator.openSession();
 
-      expect(write).toHaveBeenCalledWith(expect.stringContaining('"type":"browser-launch"'));
-      expect(write).toHaveBeenCalledWith(expect.stringContaining('"source":"coordinator"'));
+      expect(write).toHaveBeenCalledWith(expect.stringContaining('"type":"browser-launch"'), expect.any(Function));
+      expect(write).toHaveBeenCalledWith(expect.stringContaining('"source":"coordinator"'), expect.any(Function));
     } finally {
       await coordinator.close();
       write.mockRestore();
@@ -109,5 +113,28 @@ describe(BrowserProcessCoordinator, () => {
     expect(browser.instance.close).toHaveBeenCalledTimes(1);
     expect(coordinator.isCurrent(lease.generation)).toBe(false);
     await expect(coordinator.openSession()).rejects.toThrow('coordinator is closed');
+  });
+
+  it('does not wait for a pending launch during close and cleans up a late instance', async () => {
+    const browser = createInstance('/chromium/late');
+    let resolveLaunch!: (instance: BrowserInstance) => void;
+    const launch = vi.fn(
+      () =>
+        new Promise<BrowserInstance>(resolve => {
+          resolveLaunch = resolve;
+        }),
+    );
+    const coordinator = new BrowserProcessCoordinator({ launch, name: 'playwright' }, {});
+    const opening = coordinator.openSession();
+
+    const closeState = await Promise.race([
+      coordinator.close().then(() => 'closed'),
+      new Promise<'pending'>(resolve => setTimeout(() => resolve('pending'), 50)),
+    ]);
+    expect(closeState).toBe('closed');
+
+    resolveLaunch(browser.instance);
+    await expect(opening).rejects.toThrow('coordinator is closed');
+    await vi.waitFor(() => expect(browser.instance.close).toHaveBeenCalledOnce());
   });
 });

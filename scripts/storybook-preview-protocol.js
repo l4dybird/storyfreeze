@@ -3,6 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
+const { PNG } = require('pngjs');
 
 const fixtureDir = path.resolve(process.cwd(), process.argv[2] || '.');
 const repoDir = path.resolve(__dirname, '..');
@@ -195,6 +196,23 @@ function assertScreenshots(directoryName, expectedPaths) {
     ) {
       throw new Error(
         `${relativePath} is ${dimensions.join('x')}; expected ${expected.map(value => value.join('x')).join(' or ')}.`,
+      );
+    }
+  }
+}
+
+function assertPixelEquivalent(actualDirectoryName, expectedDirectoryName, expectedPaths) {
+  for (const relativePath of expectedPaths) {
+    const actualPath = path.join(fixtureDir, actualDirectoryName, relativePath);
+    const expectedPath = path.join(fixtureDir, expectedDirectoryName, relativePath);
+    const actual = PNG.sync.read(fs.readFileSync(actualPath));
+    const expected = PNG.sync.read(fs.readFileSync(expectedPath));
+    if (actual.width !== expected.width || actual.height !== expected.height) {
+      throw new Error(`${relativePath} dimensions differ between ${actualDirectoryName} and ${expectedDirectoryName}.`);
+    }
+    if (!actual.data.equals(expected.data)) {
+      throw new Error(
+        `${relativePath} decoded RGBA pixels differ between ${actualDirectoryName} and ${expectedDirectoryName}.`,
       );
     }
   }
@@ -402,12 +420,20 @@ async function main() {
         extraFragments: ['Found 1 stories.', 'Retry to screenshot this story after this sequence.'],
       },
     ]);
+    assertCapture({
+      script: 'storyfreeze:auto-static',
+      mode: 'managed',
+      directoryName: '__screenshots__/auto-static',
+      expectedPaths: interactionScreenshotPaths,
+      extraFragments: ['Found 1 stories.', 'Browser isolation: hybrid', 'Capture protocol: auto'],
+    });
+    assertPixelEquivalent('__screenshots__/auto-static', '__screenshots__/filter-static', interactionScreenshotPaths);
   } finally {
     await stopServer(managedPreview);
   }
 
   console.log(
-    'Verified Storybook 10 static build reuse, simple/managed, filtering, sharding, retry, and packaged CLI execution.',
+    'Verified Storybook 10 static build reuse, strict/auto pixel parity, simple/managed, topology presets, filtering, sharding, retry, and packaged CLI execution.',
   );
 }
 

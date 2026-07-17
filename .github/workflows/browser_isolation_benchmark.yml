@@ -3,6 +3,14 @@ name: Browser isolation benchmark
 on:
   workflow_dispatch:
     inputs:
+      comparison:
+        description: Browser runtime comparison
+        required: true
+        type: choice
+        options:
+          - isolation
+          - topology
+        default: topology
       profile:
         description: Benchmark repetition profile
         required: true
@@ -30,11 +38,32 @@ on:
           - process
           - context
         default: process
+      run_roadmap_matrix:
+        description: Run the independent Phase 1-3 workload matrix
+        required: true
+        type: boolean
+        default: false
+      matrix_profile:
+        description: Roadmap matrix repetition profile
+        required: true
+        type: choice
+        options:
+          - smoke
+          - pr
+          - record
+        default: smoke
+      matrix_scenarios:
+        description: Comma-separated roadmap scenarios, or all
+        required: true
+        type: string
+        default: all
   pull_request:
     paths:
       - '.github/workflows/browser_isolation_benchmark.yml'
       - 'benchmarks/**'
       - 'examples/react-vite/.storybook/**'
+      - 'examples/react-vite/.storybook-performance/**'
+      - 'examples/react-vite/performance/**'
       - 'examples/react-vite/public/**'
       - 'examples/react-vite/src/**'
       - 'examples/react-vite/package.json'
@@ -47,6 +76,8 @@ on:
       - 'scripts/browser-performance-benchmark.js'
       - 'scripts/browser-performance-benchmark.test.js'
       - 'scripts/e2e-prestorybook.js'
+      - 'scripts/performance-roadmap-benchmark*.js'
+      - 'scripts/performance-roadmap-scenarios*.js'
 
 permissions:
   contents: read
@@ -79,14 +110,16 @@ jobs:
           node --test
           scripts/aggregate-browser-isolation-benchmarks.test.js
           scripts/browser-performance-benchmark.test.js
+          scripts/performance-roadmap-benchmark.test.js
+          scripts/performance-roadmap-scenarios.test.js
       - name: Install Playwright Chromium
         run: pnpm --filter storyfreeze exec playwright-core install --with-deps chromium
       - name: Record source tree
         run: echo "STORYFREEZE_BENCHMARK_TREE=$(git rev-parse 'HEAD^{tree}')" >> "$GITHUB_ENV"
-      - name: Compare process and context isolation
+      - name: Compare browser runtime modes
         env:
           STORYFREEZE_BENCHMARK_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
-          STORYFREEZE_BENCHMARK_COMPARISON: isolation
+          STORYFREEZE_BENCHMARK_COMPARISON: ${{ github.event_name == 'workflow_dispatch' && inputs.comparison || 'isolation' }}
           STORYFREEZE_BENCHMARK_PARALLEL: ${{ github.event_name == 'workflow_dispatch' && inputs.parallel || '4' }}
           STORYFREEZE_BENCHMARK_PROFILE: ${{ github.event_name == 'workflow_dispatch' && inputs.profile || 'pr' }}
           STORYFREEZE_BENCHMARK_START_ISOLATION: ${{ github.event_name == 'workflow_dispatch' && inputs.starting_isolation || 'process' }}
@@ -107,3 +140,46 @@ jobs:
             ${{ runner.temp }}/browser-isolation-explicit.json
             ${{ runner.temp }}/browser-isolation-explicit-failures
           if-no-files-found: error
+
+  roadmap-matrix-explicit:
+    if: github.event_name == 'workflow_dispatch' && inputs.run_roadmap_matrix
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1.15.0
+        with:
+          node-version: '22.18.0'
+          cache: true
+          cache-dependency-path: pnpm-lock.yaml
+          run-install: false
+      - uses: pnpm/action-setup@v6
+      - run: vp install --frozen-lockfile
+      - run: pnpm build
+      - name: Test roadmap benchmark helpers
+        run: >-
+          node --test
+          scripts/performance-roadmap-benchmark.test.js
+          scripts/performance-roadmap-scenarios.test.js
+      - name: Install Playwright Chromium
+        run: pnpm --filter storyfreeze exec playwright-core install --with-deps chromium
+      - name: Compare roadmap phase lanes
+        env:
+          STORYFREEZE_ROADMAP_BENCHMARK_PARALLEL: ${{ inputs.parallel }}
+          STORYFREEZE_ROADMAP_BENCHMARK_PROFILE: ${{ inputs.matrix_profile }}
+          STORYFREEZE_ROADMAP_BENCHMARK_SCENARIOS: ${{ inputs.matrix_scenarios }}
+        run: >-
+          node scripts/e2e-prestorybook.js examples/react-vite performance-roadmap-benchmark.js
+          "$RUNNER_TEMP/performance-roadmap-matrix.json"
+      - name: Print roadmap benchmark record
+        if: always()
+        run: test ! -f "$RUNNER_TEMP/performance-roadmap-matrix.json" || cat "$RUNNER_TEMP/performance-roadmap-matrix.json"
+      - name: Upload roadmap benchmark record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: performance-roadmap-matrix-${{ inputs.matrix_profile }}-p${{ inputs.parallel }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/performance-roadmap-matrix.json
+          if-no-files-found: warn

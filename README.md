@@ -42,6 +42,7 @@ It is primarily responsible for image generation necessary for Visual Testing su
 - [Multiple PNGs from 1 story](#multiple-pngs-from-1-story)
   - [Basic usage](#basic-usage)
   - [Variants composition](#variants-composition)
+  - [Story-scoped capture sessions](#story-scoped-capture-sessions)
   - [Parallelisation across multiple computers](#parallelisation-across-multiple-computers)
 - [Tips](#tips)
   - [Run with Docker](#run-with-docker)
@@ -348,7 +349,7 @@ OPTIONS:
   -h, --help                                                       Display this help message
   -v, --version                                                    Display this version
   -o, --out-dir [out-dir]                                          Output directory. (default: __screenshots__)
-  -p, --parallel [parallel]                                        Number of browsers to screenshot. (default: 4)
+  -p, --parallel [parallel]                                        Maximum number of capture workers. (default: 4)
   --mode [mode]                                                    Preview mode. Use managed in CI to require the StoryFreeze addon. (default: auto, choices: auto | managed | simple)
   -f, --flat                                                       Flatten output filename. (default: false)
   -i, --include <include>                                          Including stories name rule.
@@ -371,10 +372,13 @@ OPTIONS:
   --viewport-delay <viewport-delay>                                Delay time [msec] between changing viewport and capturing. (default: 0)
   --reload-after-change-viewport                                   Whether to reload after viewport changed. (default: false)
   --state-change-delay <state-change-delay>                        Delay time [msec] after changing element's state. (default: 0)
+  --max-captures-per-context <max-captures-per-context>            Recycle a browser context after this many captures. Zero disables count-based recycling. (default: 0)
+  --max-context-age <max-context-age>                              Recycle a browser context after this many milliseconds. Zero disables age-based recycling. (default: 0)
   --list-devices                                                   List available device descriptors. (default: false)
   -C, --chromium-channel [chromium-channel]                        Channel to search local Chromium. (default: *, choices: canary | stable | *)
   --chromium-path <chromium-path>                                  Executable Chromium path. (default: )
-  --browser-isolation [browser-isolation]                          Browser isolation mode for capture workers. (default: process, choices: process | context)
+  --browser-isolation [browser-isolation]                          Browser topology preset for capture workers. (default: process, choices: process | context | hybrid | auto)
+  --capture-protocol [capture-protocol]                            Variant capture protocol. strict preserves fresh navigation for every capture. (default: strict, choices: strict | story-session | auto)
   --browser-launch-options <browser-launch-options>                JSON string of browser launch options. (default: {})
 
 EXAMPLES:
@@ -457,6 +461,37 @@ The above example generates the following:
 
 > [!NOTE]
 > You can extend some viewports with keys of `viewports` option because the `viewports` field is expanded to variants internally.
+
+### Story-scoped capture sessions
+
+Fresh navigation remains the default for every capture. Use `--capture-protocol auto` to capture reset-safe variants from the same Storybook story document when possible:
+
+```sh
+$ npx storyfreeze --capture-protocol auto http://localhost:9009
+```
+
+`auto` batches safe hover, focus, screenshot-only, and same-emulation-class viewport variants. Mobile, touch, DPR, orientation, runtime `waitFor`, or reset-unsafe boundaries use fresh navigation automatically. A failed session or reset also recreates the worker session and requeues every unfinished variant through the strict path. Session reset is verified after pending requests and a visual commit by comparing focus, args/globals, scroll positions, and the full preview document, including portals, live form state, and open shadow roots. `--capture-protocol story-session` is the validation mode: it reports missing prerequisites, unsafe variants, and reset failures as errors instead of falling back.
+
+Context count and age limits are applied at safe capture boundaries. An active story session finishes its same-document variant batch before a reached recycling limit is applied.
+
+State-changing click variants require a story-owned reset hook before they are eligible:
+
+```js
+export const Toggle = {
+  parameters: {
+    screenshot: {
+      variants: {
+        clicked: { click: 'button' },
+      },
+      reset: async ({ storyId, variantId }) => {
+        // Restore component-owned state to the state after Storybook play completed.
+      },
+    },
+  },
+};
+```
+
+The reset hook must settle within the capture timeout and restore or cancel component-owned timers, listeners, module/window globals, and other state outside the preview document. Closed shadow roots and mutations that occur only after verification cannot be proven reset-safe. Use `strict` for those stories; `auto` falls back when an observable mismatch is found, but it cannot guarantee detection of invisible or arbitrarily late side effects.
 
 ### Parallelisation across multiple computers
 
@@ -603,9 +638,11 @@ Chromium's sandbox is enabled by default, including when capturing a hosted Stor
 $ npx storyfreeze --browser-launch-options '{"args":["--no-sandbox","--disable-setuid-sandbox","--disable-dev-shm-usage"]}' http://localhost:9009
 ```
 
-Capture workers use separate browser processes by default. You can opt into one isolated browser context per worker with `--browser-isolation context`; this can reduce the number of Chromium processes while keeping cookies, storage, cache, and service workers isolated between workers. The current balanced [browser isolation record](https://github.com/l4dybird/storyfreeze/blob/master/benchmarks/browser-isolation-record.json) observed wall p50 7.8% lower, wall p95 6.2% lower, peak RSS 54.1% lower, and a Chromium process peak of 14 instead of 32. Its capture-request p95 was still 6.8% slower, above the 5% default gate, so process isolation remains the default.
+Capture workers use separate browser processes by default. `--browser-isolation context` uses one browser process with an isolated context per worker, while `hybrid` distributes contexts across up to two processes. `auto` deterministically selects a consolidated, hybrid, or separate-process topology from the capture plan, logical CPUs, available memory, and high-cost capture ratio. High-cost plans favor separate processes; low-cost plans favor hybrid consolidation, while memory-constrained or small plans use one process. Workers start lazily from the number of captures and emulation-profile groups, preserve configured parallel capacity up to the capture count, then expand only when queue depth requires them. Every worker still uses an isolated context and every capture in the stable path uses a fresh document.
 
-`--trace` writes the existing Chromium CPU trace JSON format. Because Chromium CPU tracing is browser-process scoped, combining `--trace` with `--browser-isolation context` emits a warning and automatically uses process isolation for that run. The configured parallelism is preserved.
+The current balanced [browser isolation record](https://github.com/l4dybird/storyfreeze/blob/master/benchmarks/browser-isolation-record.json) observed context-mode wall p50 7.8% lower, wall p95 6.2% lower, peak RSS 54.1% lower, and a Chromium process peak of 14 instead of 32. Its capture-request p95 was still 6.8% slower, above the 5% default gate, so process isolation remains the default. `hybrid` and `auto` are opt-in until their representative matrix records are accepted.
+
+`--trace` writes the existing Chromium CPU trace JSON format. Because Chromium CPU tracing is browser-process scoped, combining `--trace` with any non-process browser isolation emits a warning and automatically uses process isolation for that run. The configured parallelism is preserved.
 
 ## Storybook compatibility
 
@@ -626,7 +663,7 @@ StoryFreeze (with both simple and managed mode) is agnostic for specific UI fram
 
 ## How it works
 
-StoryFreeze accesses the launched page using [Playwright][playwright]. It supports both process and context worker isolation.
+StoryFreeze accesses the launched page using [Playwright][playwright]. It supports process, context, hybrid, and statically selected auto worker topologies.
 
 ## Contributing
 

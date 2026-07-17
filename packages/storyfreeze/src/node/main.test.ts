@@ -3,24 +3,25 @@ import { BaseBrowser } from './browser.js';
 import {
   CapturingBrowser,
   resolveViewport,
+  shouldRecycleContext,
   shouldRecoverPlaywrightWorker,
   shouldWaitForVisualCommit,
 } from './capturing-browser.js';
 import { Logger } from './logger.js';
 import { ManagedStorybookConnection } from './managed-storybook-connection.js';
 import type { MainOptions } from './types.js';
-import {
-  bootCaptureWorkers,
-  disposeRuntimeResources,
-  filterStories,
-  main,
-  selectCaptureWorkerSessionSource,
-} from './main.js';
+import { bootCaptureWorkers, disposeRuntimeResources, filterStories, main } from './main.js';
 import type { StoryDescriptor } from './story-index-provider.js';
 import { CAPTURE_DIAGNOSTIC_PREFIX } from './capture-diagnostics.js';
 import { CaptureAttemptTimeoutError, PreviewReadyTimeoutError } from './errors.js';
 import { CaptureDeadline } from './capture-deadline.js';
 import { StoryNavigator } from './story-navigator.js';
+
+function completeStdoutWrite(...args: unknown[]) {
+  const callback = args.find(value => typeof value === 'function') as (() => void) | undefined;
+  callback?.();
+  return true;
+}
 
 function story(id: string, title: string, name: string): StoryDescriptor {
   return { id, title, name };
@@ -46,20 +47,6 @@ describe(filterStories, () => {
   });
 });
 
-describe(selectCaptureWorkerSessionSource, () => {
-  const source = {} as never;
-
-  it('reuses the enumeration process only for worker zero in process isolation', () => {
-    expect(selectCaptureWorkerSessionSource('process', 0, source)).toBe(source);
-    expect(selectCaptureWorkerSessionSource('process', 1, source)).toBeUndefined();
-  });
-
-  it('uses the shared process coordinator for every context-isolated worker', () => {
-    expect(selectCaptureWorkerSessionSource('context', 0, source)).toBe(source);
-    expect(selectCaptureWorkerSessionSource('context', 3, source)).toBe(source);
-  });
-});
-
 describe(resolveViewport, () => {
   const devices = [{ name: 'Phone', viewport: { height: 800, width: 400, hasTouch: true, isMobile: true } }];
 
@@ -73,6 +60,15 @@ describe(resolveViewport, () => {
     const viewport = { height: 720, width: 1280 };
     expect(resolveViewport(viewport, devices)).toBe(viewport);
     expect(resolveViewport('Unknown', devices)).toBeUndefined();
+  });
+});
+
+describe(shouldRecycleContext, () => {
+  it('recycles only when an enabled count or age boundary is reached', () => {
+    expect(shouldRecycleContext(undefined, 100, 100_000)).toBe(false);
+    expect(shouldRecycleContext({ maxCapturesPerContext: 10, maxContextAgeMs: 60_000 }, 9, 59_999)).toBe(false);
+    expect(shouldRecycleContext({ maxCapturesPerContext: 10, maxContextAgeMs: 60_000 }, 10, 1)).toBe(true);
+    expect(shouldRecycleContext({ maxCapturesPerContext: 0 }, 100, 0)).toBe(false);
   });
 });
 
@@ -187,7 +183,7 @@ describe(bootCaptureWorkers, () => {
 
   it('records each concurrent worker boot independently', async () => {
     vi.stubEnv('STORYFREEZE_CAPTURE_DIAGNOSTICS', '1');
-    const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    const write = vi.spyOn(process.stdout, 'write').mockImplementation(completeStdoutWrite as never);
     const workers = [createWorker(async () => {}), createWorker(async () => {})];
 
     await expect(bootCaptureWorkers(workers)).resolves.toEqual(workers);
@@ -515,7 +511,7 @@ describe(CapturingBrowser, () => {
 
   it('returns a retry after an unhealthy Playwright capture closes and reboots the worker', async () => {
     process.env.STORYFREEZE_CAPTURE_DIAGNOSTICS = '1';
-    const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    const write = vi.spyOn(process.stdout, 'write').mockImplementation(completeStdoutWrite as never);
     const order: string[] = [];
     const watcher = { clear: vi.fn(), dispose: vi.fn() };
     const options = {
@@ -747,7 +743,7 @@ describe(main, () => {
 
   it('emits runtime phase diagnostics without changing a failed run', async () => {
     vi.stubEnv('STORYFREEZE_CAPTURE_DIAGNOSTICS', '1');
-    const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    const write = vi.spyOn(process.stdout, 'write').mockImplementation(completeStdoutWrite as never);
     vi.spyOn(ManagedStorybookConnection.prototype, 'connect').mockImplementation(
       async function (this: ManagedStorybookConnection) {
         return this;
@@ -767,12 +763,12 @@ describe(main, () => {
       .filter(line => line.startsWith(CAPTURE_DIAGNOSTIC_PREFIX))
       .map(line => JSON.parse(line.slice(CAPTURE_DIAGNOSTIC_PREFIX.length)))
       .filter(event => event.type === 'runtime-phase' && event.state === 'end');
-    expect(events.map(event => event.phase)).toEqual([
-      'storybook-connect',
-      'story-index-browser-boot',
-      'story-index-load',
-      'runtime-dispose',
-    ]);
+    const phases = events.map(event => event.phase);
+    expect(new Set(phases)).toEqual(
+      new Set(['storybook-connect', 'story-index-browser-boot', 'story-index-load', 'runtime-dispose']),
+    );
+    expect(phases.indexOf('story-index-load')).toBeGreaterThan(phases.indexOf('storybook-connect'));
+    expect(phases.at(-1)).toBe('runtime-dispose');
     expect(events.find(event => event.phase === 'story-index-load')).toMatchObject({
       durationMs: expect.any(Number),
       error: { message: 'enumeration failed', name: 'Error' },

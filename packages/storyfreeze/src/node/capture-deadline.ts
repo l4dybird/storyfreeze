@@ -38,6 +38,10 @@ export class CaptureDeadline {
         });
       }
     });
+    // Some callers need to do preparatory work before racing the interruption.
+    // Observe the rejection immediately so an early timeout/abort is never
+    // reported as unhandled; the original promise remains rejected for callers.
+    void this.interruption.catch(() => {});
   }
 
   get signal() {

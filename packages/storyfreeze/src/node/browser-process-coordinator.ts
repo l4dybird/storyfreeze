@@ -86,7 +86,11 @@ export class BrowserProcessCoordinator implements BrowserSessionSource {
   }
 
   private async closeCurrentInstance() {
-    await this.replacementPromise?.catch(() => {});
+    // Closing marks the coordinator first, so a replacement that finishes late
+    // will close its newly launched instance in performReplacement(). Do not
+    // wait here: a backend launch that never settles must not deadlock runtime
+    // disposal.
+    if (this.replacementPromise) void this.replacementPromise.catch(() => {});
     const current = this.current;
     this.current = undefined;
     if (current) {

@@ -15,17 +15,19 @@ const failureArtifactDir = outputFile
   : undefined;
 const sampleIntervalMs = 50;
 const processExitTimeoutMs = 2000;
-const benchmarkProfiles = {
-  pr: { measuredRuns: 3, warmupRuns: 1 },
-  record: { measuredRuns: 10, warmupRuns: 2 },
-};
+const benchmarkComparison = process.env.STORYFREEZE_BENCHMARK_COMPARISON || 'isolation';
+if (!['isolation', 'topology'].includes(benchmarkComparison)) {
+  throw new Error(`Unsupported browser benchmark comparison: ${benchmarkComparison}`);
+}
+function benchmarkProfilesForComparison(comparison) {
+  return comparison === 'topology'
+    ? { pr: { measuredRuns: 3, warmupRuns: 1 }, record: { measuredRuns: 9, warmupRuns: 2 } }
+    : { pr: { measuredRuns: 3, warmupRuns: 1 }, record: { measuredRuns: 10, warmupRuns: 2 } };
+}
+const benchmarkProfiles = benchmarkProfilesForComparison(benchmarkComparison);
 const benchmarkProfile = process.env.STORYFREEZE_BENCHMARK_PROFILE || 'pr';
 if (!Object.hasOwn(benchmarkProfiles, benchmarkProfile)) {
   throw new Error(`Unknown browser benchmark profile: ${benchmarkProfile}`);
-}
-const benchmarkComparison = process.env.STORYFREEZE_BENCHMARK_COMPARISON || 'isolation';
-if (benchmarkComparison !== 'isolation') {
-  throw new Error(`This benchmark supports only isolation comparison, received: ${benchmarkComparison}`);
 }
 const { measuredRuns, warmupRuns } = benchmarkProfiles[benchmarkProfile];
 function parseParallel(value) {
@@ -35,16 +37,24 @@ function parseParallel(value) {
 }
 const parallel = parseParallel(process.env.STORYFREEZE_BENCHMARK_PARALLEL || 4);
 const startingIsolation = process.env.STORYFREEZE_BENCHMARK_START_ISOLATION || 'process';
-if (!['process', 'context'].includes(startingIsolation)) {
+const isolations = benchmarkComparison === 'topology' ? ['process', 'hybrid', 'context'] : ['process', 'context'];
+if (!isolations.includes(startingIsolation)) {
   throw new Error(`Unsupported starting isolation: ${startingIsolation}`);
 }
 if (process.env.STORYFREEZE_BENCHMARK_TRACE === 'true') {
   throw new Error('Browser isolation comparison does not support trace capture.');
 }
+
+function isolationExecutionOrder(iteration, values = isolations, first = startingIsolation) {
+  const firstIndex = values.indexOf(first);
+  if (firstIndex < 0) throw new Error(`Unknown starting isolation: ${first}`);
+  const seeded = [...values.slice(firstIndex), ...values.slice(0, firstIndex)];
+  const offset = (iteration - 1) % seeded.length;
+  return [...seeded.slice(offset), ...seeded.slice(0, offset)];
+}
 const expectedStoryCount = 2;
 const expectedPngCount = 9;
 const benchmarkExclude = 'Compatibility/Fixture/Retry';
-const isolations = ['process', 'context'];
 const captureDiagnosticPrefix = 'STORYFREEZE_CAPTURE_DIAGNOSTIC=';
 const launchOptions = {
   args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
@@ -353,6 +363,30 @@ function measureCapture({
       const runtimeBrowserLaunchCount = diagnostics.captureDiagnostics.filter(
         event => event.type === 'browser-launch',
       ).length;
+      const topologyDiagnostic = diagnostics.captureDiagnostics.findLast(event => event.type === 'browser-topology');
+      const queueSummary = diagnostics.captureDiagnostics.findLast(event => event.type === 'queue-summary');
+      const topology = topologyDiagnostic
+        ? (() => {
+            const configuredWorkerCount = topologyDiagnostic.workerCount;
+            const workerCount = queueSummary?.bootedWorkerCount ?? configuredWorkerCount;
+            const workerProcessIds = Array.isArray(topologyDiagnostic.workerProcessIds)
+              ? topologyDiagnostic.workerProcessIds.slice(0, workerCount)
+              : [];
+            return {
+              browserProcessCount: workerProcessIds.length
+                ? new Set(workerProcessIds).size
+                : topologyDiagnostic.browserProcessCount,
+              configuredBrowserProcessCount: topologyDiagnostic.browserProcessCount,
+              configuredWorkerCount,
+              contextsPerBrowser: topologyDiagnostic.contextsPerBrowser,
+              workerCount,
+            };
+          })()
+        : {
+            browserProcessCount: isolation === 'context' ? 1 : parallel,
+            contextsPerBrowser: isolation === 'context' ? parallel : 1,
+            workerCount: parallel,
+          };
       const browserCloseEvents = diagnostics.captureDiagnostics.filter(event => event.type === 'browser-close');
       const browserCloseErrorCount = browserCloseEvents.filter(
         event => event.browserCloseError || event.sessionCloseError,
@@ -388,8 +422,11 @@ function measureCapture({
       if (diagnostics.browserCrashCount !== 0 || signal) {
         errors.push(`Observed ${diagnostics.browserCrashCount + (signal ? 1 : 0)} browser crash event(s).`);
       }
-      if (browserCloseEvents.length < parallel + 1) {
-        errors.push(`Expected at least ${parallel + 1} browser close events, observed ${browserCloseEvents.length}.`);
+      const expectedBrowserCloseEvents = (topology.configuredWorkerCount ?? topology.workerCount) + 1;
+      if (browserCloseEvents.length < expectedBrowserCloseEvents) {
+        errors.push(
+          `Expected at least ${expectedBrowserCloseEvents} browser close events, observed ${browserCloseEvents.length}.`,
+        );
       }
       if (browserCloseErrorCount !== 0) {
         errors.push(`Observed ${browserCloseErrorCount} session or browser close error(s).`);
@@ -442,6 +479,7 @@ function measureCapture({
         storyDurationsMs: diagnostics.storyDurationsMs,
         success: errors.length === 0,
         timeoutCount: diagnostics.timeoutCount,
+        topology,
         trace,
         traceCount: tracePaths.length,
         tracePaths,
@@ -837,12 +875,11 @@ function publicRun(run) {
 }
 
 async function runIsolationComparison(browser) {
-  const warmups = { context: [], process: [] };
+  const warmups = Object.fromEntries(isolations.map(isolation => [isolation, []]));
   const warmupExecutionOrder = [];
   let warmupSequenceIndex = 0;
   for (let iteration = 1; iteration <= warmupRuns; iteration += 1) {
-    const processFirst = startingIsolation === 'process' ? iteration % 2 === 1 : iteration % 2 === 0;
-    const order = processFirst ? isolations : [...isolations].reverse();
+    const order = isolationExecutionOrder(iteration);
     for (const [positionInPair, isolation] of order.entries()) {
       const run = await measureCapture({
         backend: 'playwright',
@@ -862,12 +899,11 @@ async function runIsolationComparison(browser) {
     }
   }
 
-  const runs = { context: [], process: [] };
+  const runs = Object.fromEntries(isolations.map(isolation => [isolation, []]));
   const measuredExecutionOrder = [];
   let measuredSequenceIndex = 0;
   for (let iteration = 1; iteration <= measuredRuns; iteration += 1) {
-    const processFirst = startingIsolation === 'process' ? iteration % 2 === 1 : iteration % 2 === 0;
-    const order = processFirst ? isolations : [...isolations].reverse();
+    const order = isolationExecutionOrder(iteration);
     for (const [positionInPair, isolation] of order.entries()) {
       const run = await measureCapture({
         backend: 'playwright',
@@ -892,9 +928,15 @@ async function runIsolationComparison(browser) {
 
   const pixelComparisons = [];
   for (let index = 0; index < measuredRuns; index += 1) {
-    pixelComparisons.push(
-      compareDirectories(`isolation-run-${index + 1}`, runs.process[index].outputDir, runs.context[index].outputDir),
-    );
+    for (const isolation of isolations.filter(value => value !== 'process')) {
+      pixelComparisons.push(
+        compareDirectories(
+          `${isolation}-to-process-run-${index + 1}`,
+          runs.process[index].outputDir,
+          runs[isolation][index].outputDir,
+        ),
+      );
+    }
   }
   for (const isolation of isolations) {
     for (let index = 1; index < measuredRuns; index += 1) {
@@ -908,10 +950,7 @@ async function runIsolationComparison(browser) {
     }
   }
 
-  const summaries = {
-    context: summarizeRuns(runs.context),
-    process: summarizeRuns(runs.process),
-  };
+  const summaries = Object.fromEntries(isolations.map(isolation => [isolation, summarizeRuns(runs[isolation])]));
   const gateErrors = [];
   for (const isolation of isolations) {
     for (const run of warmups[isolation]) run.errors.forEach(error => gateErrors.push(`${run.label}: ${error}`));
@@ -921,24 +960,18 @@ async function runIsolationComparison(browser) {
     if (comparison.mismatchCount !== 0)
       gateErrors.push(`${comparison.label}: ${comparison.mismatchCount} PNG mismatch(es).`);
   }
-  for (const run of [...warmups.context, ...runs.context]) {
-    if (run.peakBrowserRootCount < 1) {
-      gateErrors.push(`${run.label}: expected at least one sampled browser root, observed none.`);
-    }
-    if (run.runtimeBrowserLaunchCount !== 1) {
-      gateErrors.push(`${run.label}: expected one runtime browser launch, observed ${run.runtimeBrowserLaunchCount}.`);
-    }
-  }
-  for (const run of [...warmups.process, ...runs.process]) {
-    if (run.peakBrowserRootCount < parallel) {
-      gateErrors.push(
-        `${run.label}: expected at least ${parallel} simultaneous sampled browser roots, observed ${run.peakBrowserRootCount}.`,
-      );
-    }
-    if (run.runtimeBrowserLaunchCount !== parallel) {
-      gateErrors.push(
-        `${run.label}: expected ${parallel} runtime browser launches, observed ${run.runtimeBrowserLaunchCount}.`,
-      );
+  for (const isolation of isolations) {
+    for (const run of [...warmups[isolation], ...runs[isolation]]) {
+      if (run.peakBrowserRootCount < run.topology.browserProcessCount) {
+        gateErrors.push(
+          `${run.label}: expected at least ${run.topology.browserProcessCount} simultaneous sampled browser roots, observed ${run.peakBrowserRootCount}.`,
+        );
+      }
+      if (run.runtimeBrowserLaunchCount !== run.topology.browserProcessCount) {
+        gateErrors.push(
+          `${run.label}: expected ${run.topology.browserProcessCount} runtime browser launches, observed ${run.runtimeBrowserLaunchCount}.`,
+        );
+      }
     }
   }
   if (parallel > 1 && summaries.context.peakBrowserRootCount >= summaries.process.peakBrowserRootCount) {
@@ -957,8 +990,8 @@ async function runIsolationComparison(browser) {
   );
   const fixturePackage = JSON.parse(fs.readFileSync(path.join(fixtureDir, 'package.json'), 'utf8'));
   const result = {
-    schemaVersion: 1,
-    kind: 'browser-isolation-differential',
+    schemaVersion: benchmarkComparison === 'topology' ? 2 : 1,
+    kind: benchmarkComparison === 'topology' ? 'browser-topology-differential' : 'browser-isolation-differential',
     recordedAt: new Date().toISOString(),
     githubActions: {
       repository: process.env.GITHUB_REPOSITORY || 'unknown',
@@ -1004,27 +1037,59 @@ async function runIsolationComparison(browser) {
       runnerImageVersion: process.env.ImageVersion || 'unknown',
       totalMemoryBytes: os.totalmem(),
     },
-    isolations: {
-      process: {
-        warmups: warmups.process.map(publicRun),
-        runs: runs.process.map(publicRun),
-        summary: summaries.process,
-      },
-      context: {
-        warmups: warmups.context.map(publicRun),
-        runs: runs.context.map(publicRun),
-        summary: summaries.context,
-      },
-    },
-    isolationDifferential: {
-      pixelComparisons,
-      ratios: {
-        captureTimeP95: ratio(summaries.context.captureTimeP95Ms, summaries.process.captureTimeP95Ms),
-        cpuTime: ratio(summaries.context.medianCpuTimeMs, summaries.process.medianCpuTimeMs),
-        peakTreeRss: ratio(summaries.context.medianPeakTreeRssBytes, summaries.process.medianPeakTreeRssBytes),
-        wallTime: ratio(summaries.context.medianWallTimeMs, summaries.process.medianWallTimeMs),
-      },
-    },
+    ...(benchmarkComparison === 'topology'
+      ? {
+          topologies: Object.fromEntries(
+            isolations.map(isolation => [
+              isolation,
+              {
+                warmups: warmups[isolation].map(publicRun),
+                runs: runs[isolation].map(publicRun),
+                summary: summaries[isolation],
+              },
+            ]),
+          ),
+          topologyDifferential: {
+            pixelComparisons,
+            ratios: Object.fromEntries(
+              isolations
+                .filter(isolation => isolation !== 'process')
+                .map(isolation => [
+                  isolation,
+                  {
+                    captureTimeP95: ratio(summaries[isolation].captureTimeP95Ms, summaries.process.captureTimeP95Ms),
+                    cpuTime: ratio(summaries[isolation].medianCpuTimeMs, summaries.process.medianCpuTimeMs),
+                    peakTreeRss: ratio(
+                      summaries[isolation].medianPeakTreeRssBytes,
+                      summaries.process.medianPeakTreeRssBytes,
+                    ),
+                    wallTime: ratio(summaries[isolation].medianWallTimeMs, summaries.process.medianWallTimeMs),
+                  },
+                ]),
+            ),
+          },
+        }
+      : {
+          isolations: Object.fromEntries(
+            isolations.map(isolation => [
+              isolation,
+              {
+                warmups: warmups[isolation].map(publicRun),
+                runs: runs[isolation].map(publicRun),
+                summary: summaries[isolation],
+              },
+            ]),
+          ),
+          isolationDifferential: {
+            pixelComparisons,
+            ratios: {
+              captureTimeP95: ratio(summaries.context.captureTimeP95Ms, summaries.process.captureTimeP95Ms),
+              cpuTime: ratio(summaries.context.medianCpuTimeMs, summaries.process.medianCpuTimeMs),
+              peakTreeRss: ratio(summaries.context.medianPeakTreeRssBytes, summaries.process.medianPeakTreeRssBytes),
+              wallTime: ratio(summaries.context.medianWallTimeMs, summaries.process.medianWallTimeMs),
+            },
+          },
+        }),
     gate: { errors: gateErrors, passed: gateErrors.length === 0 },
   };
 
@@ -1034,7 +1099,8 @@ async function runIsolationComparison(browser) {
     fs.writeFileSync(outputFile, json);
   }
   console.log(`STORYFREEZE_BROWSER_BENCHMARK_RESULT=${JSON.stringify(result)}`);
-  if (gateErrors.length) throw new Error(`Browser isolation differential gate failed:\n- ${gateErrors.join('\n- ')}`);
+  if (gateErrors.length)
+    throw new Error(`Browser ${benchmarkComparison} differential gate failed:\n- ${gateErrors.join('\n- ')}`);
 }
 
 async function main() {
@@ -1059,14 +1125,11 @@ if (require.main === module) {
         outputFile,
         `${JSON.stringify(
           {
-            schemaVersion: benchmarkComparison === 'isolation' ? 1 : 3,
-            ...(benchmarkComparison === 'isolation'
-              ? {
-                  kind: 'browser-isolation-differential',
-                  storyfreezeCommit: process.env.STORYFREEZE_BENCHMARK_COMMIT || 'unknown',
-                  storyfreezeTree: process.env.STORYFREEZE_BENCHMARK_TREE || 'unknown',
-                }
-              : {}),
+            schemaVersion: benchmarkComparison === 'topology' ? 2 : 1,
+            kind:
+              benchmarkComparison === 'topology' ? 'browser-topology-differential' : 'browser-isolation-differential',
+            storyfreezeCommit: process.env.STORYFREEZE_BENCHMARK_COMMIT || 'unknown',
+            storyfreezeTree: process.env.STORYFREEZE_BENCHMARK_TREE || 'unknown',
             recordedAt: new Date().toISOString(),
             fatalError: message,
             gate: { errors: [message], passed: false },
@@ -1082,4 +1145,12 @@ if (require.main === module) {
   });
 }
 
-module.exports = { chromiumProcessType, findObservedProcesses, parseParallel, processIdentity, summarizeRuns };
+module.exports = {
+  benchmarkProfilesForComparison,
+  chromiumProcessType,
+  findObservedProcesses,
+  isolationExecutionOrder,
+  parseParallel,
+  processIdentity,
+  summarizeRuns,
+};

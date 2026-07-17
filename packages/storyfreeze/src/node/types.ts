@@ -1,6 +1,7 @@
 import type { Logger } from './logger.js';
 import type { BrowserLaunchOptions, BrowserRuntimeOptions, ChromeChannel } from './browser-backend.js';
 import type { StorybookConnectionOptions } from './managed-storybook-connection.js';
+import type { CaptureProtocolMode } from './story-session.js';
 
 /**
  *
@@ -18,10 +19,15 @@ export type PreviewMode = 'auto' | RunMode;
 
 /**
  *
- * Controls whether capture workers use separate browser processes or browser contexts.
+ * Selects a process/context topology preset for capture workers.
  *
  **/
-export type BrowserIsolationMode = 'process' | 'context';
+export type BrowserIsolationMode = 'process' | 'context' | 'hybrid' | 'auto';
+
+export interface RecyclingPolicy {
+  maxCapturesPerContext?: number;
+  maxContextAgeMs?: number;
+}
 
 /**
  *
@@ -60,6 +66,8 @@ export interface MainOptions extends BrowserRuntimeOptions {
   parallel: number;
   mode: PreviewMode;
   browserIsolation: BrowserIsolationMode;
+  captureProtocol: CaptureProtocolMode;
+  recyclingPolicy?: RecyclingPolicy;
   shard: ShardOptions;
   metricsWatchRetryCount: number;
   chromiumChannel: ChromeChannel;

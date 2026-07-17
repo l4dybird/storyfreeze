@@ -4,6 +4,7 @@
 
 - [From Storycapture 9 to StoryFreeze](#from-storycapture-9-to-storyfreeze)
 - [Migrating to the Playwright-only browser runtime](#migrating-to-the-playwright-only-browser-runtime)
+- [Adopting the performance roadmap modes](#adopting-the-performance-roadmap-modes)
 - [Migrating the CLI to Gunshi](#migrating-the-cli-to-gunshi)
 - [From storybook-chrome-screenshot 1.x to storyfreeze](#from-storybook-chrome-screenshot-1x-to-storyfreeze)
   - [Replace dependency](#replace-dependency)
@@ -75,6 +76,24 @@ An existing Puppeteer-managed browser is not reused automatically. Environments 
 Remove `--browser-backend puppeteer`; StoryFreeze no longer exposes a backend selector. Replace the deprecated `--puppeteer-launch-config` alias with `--browser-launch-options` while preserving the same JSON object.
 
 Screenshot paths, parallelism, capture options, and PNG behavior remain unchanged.
+
+## Adopting the performance roadmap modes
+
+The compatibility defaults remain `--browser-isolation process` and `--capture-protocol strict`. Existing commands therefore retain a separate browser process per active worker and fresh navigation for every capture.
+
+The new browser runtime modes are opt-in:
+
+```sh
+# Up to two browser processes with multiple isolated contexts.
+$ npx storyfreeze --browser-isolation hybrid http://localhost:9001
+
+# Deterministic topology selection from the capture plan and machine capacity.
+$ npx storyfreeze --browser-isolation auto http://localhost:9001
+```
+
+Use `--capture-protocol auto` to batch reset-safe variants within one story and emulation class. Unsafe or failed sessions fall back to strict capture. Use `story-session` only when you want unsafe variants to fail validation instead. Click variants need `parameters.screenshot.reset`; runtime functions and mobile/touch/DPR/orientation boundaries remain strict. Output paths and PNG semantics are unchanged.
+
+Long-running suites may set `--max-captures-per-context` or `--max-context-age` to recycle worker contexts deterministically. Omitting both preserves the existing lifecycle.
 
 ## Migrating the CLI to Gunshi
 

@@ -157,7 +157,6 @@ export class PlaywrightCapturePage implements CapturePage {
 
   async resetPointer() {
     await this.rawPage.mouse.move(0, 0);
-    await this.rawPage.mouse.click(0, 0);
   }
 
   waitForVisualCommit(options: VisualCommitOptions, signal?: AbortSignal) {

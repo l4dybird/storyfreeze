@@ -27,6 +27,7 @@ type RuntimeRegistration = {
   reset?: ResetHook;
   args?: Record<string, unknown>;
   globals?: Record<string, unknown>;
+  baselineError?: string;
   baseArgs?: Record<string, unknown>;
   baseGlobals?: Record<string, unknown>;
   baseActiveElement?: Element | null;
@@ -88,15 +89,13 @@ function cloneValue(value: unknown, seen = new Map<object, unknown>()): unknown 
         return clone;
       }
     } catch {
-      // Fall through to a descriptor clone for user-defined class instances.
+      // Report unsupported state below without changing strict capture behavior.
     }
-    const constructor = prototype.constructor;
-    if (typeof constructor !== 'function' || Function.prototype.toString.call(constructor).includes('[native code]')) {
-      // Keep opaque host objects by reference rather than manufacturing an
-      // object with the right prototype but missing native internal slots.
-      seen.set(value, value);
-      return value;
-    }
+    const constructorName =
+      typeof prototype.constructor === 'function' && prototype.constructor.name
+        ? prototype.constructor.name
+        : 'non-plain object';
+    throw new Error(`Story session cannot safely clone ${constructorName} state.`);
   }
 
   const clone = Object.create(prototype) as Record<PropertyKey, unknown>;
@@ -315,11 +314,27 @@ function blurActiveElement() {
 }
 
 function snapshotBaseline(runtime: RuntimeRegistration) {
-  runtime.baseArgs = cloneState(runtime.args);
-  runtime.baseGlobals = cloneState(runtime.globals);
-  runtime.baseActiveElement = currentActiveElement();
-  runtime.baseDocumentFingerprint = documentFingerprint();
-  runtime.baseScrollSnapshot = captureScrollSnapshot();
+  try {
+    const baseArgs = cloneState(runtime.args);
+    const baseGlobals = cloneState(runtime.globals);
+    const baseActiveElement = currentActiveElement();
+    const baseDocumentFingerprint = documentFingerprint();
+    const baseScrollSnapshot = captureScrollSnapshot();
+    runtime.baseArgs = baseArgs;
+    runtime.baseGlobals = baseGlobals;
+    runtime.baseActiveElement = baseActiveElement;
+    runtime.baseDocumentFingerprint = baseDocumentFingerprint;
+    runtime.baseScrollSnapshot = baseScrollSnapshot;
+    delete runtime.baselineError;
+  } catch (error) {
+    runtime.baseArgs = undefined;
+    runtime.baseGlobals = undefined;
+    runtime.baseActiveElement = undefined;
+    runtime.baseDocumentFingerprint = undefined;
+    runtime.baseScrollSnapshot = undefined;
+    const reason = error instanceof Error ? error.message : String(error);
+    runtime.baselineError = `Story session baseline is unsafe: ${reason}`;
+  }
 }
 
 export function registerStorySessionRuntime(
@@ -338,8 +353,8 @@ export function registerStorySessionRuntime(
   target.__STORYFREEZE_STORY_SESSION_RUNTIME__ = {
     storyId: context.id,
     ...(screenshotOptions.reset ? { reset: screenshotOptions.reset } : {}),
-    ...(context.args ? { args: context.args, baseArgs: cloneState(context.args) } : {}),
-    ...(context.globals ? { globals: context.globals, baseGlobals: cloneState(context.globals) } : {}),
+    ...(context.args ? { args: context.args } : {}),
+    ...(context.globals ? { globals: context.globals } : {}),
   };
 }
 
@@ -379,6 +394,7 @@ export function initializeStorySessionController(
           `Story session expected ${request.storyId}, but the active story is ${runtime?.storyId ?? 'unknown'}.`,
         );
       }
+      if (runtime.baselineError) throw new Error(runtime.baselineError);
       if (
         (runtime.args !== undefined && runtime.baseArgs === undefined) ||
         (runtime.globals !== undefined && runtime.baseGlobals === undefined) ||
@@ -387,6 +403,7 @@ export function initializeStorySessionController(
       ) {
         snapshotBaseline(runtime);
       }
+      if (runtime.baselineError) throw new Error(runtime.baselineError);
       if (runtime.baseDocumentFingerprint === undefined) {
         throw new Error('Story session cannot validate the preview document state.');
       }

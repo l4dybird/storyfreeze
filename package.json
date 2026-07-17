@@ -21,7 +21,7 @@
     "lint": "vp lint packages/storyfreeze/src",
     "test": "vp run --filter \"./packages/**\" --fail-if-no-match test",
     "package:smoke": "node scripts/package-smoke.js",
-    "publish:dry-run": "pnpm --filter \"./packages/**\" -r publish --dry-run --no-git-checks --config.skip-manifest-obfuscation=true --tag next --access public --registry https://registry.npmjs.org/",
+    "publish:dry-run": "node scripts/publish-dry-run.js",
     "baseline:verify": "node scripts/validate-baseline.js",
     "e2e": "bash e2e.sh",
     "regression": "reg-suit run",

@@ -52,11 +52,11 @@ jobs:
           CI: true
       - run: pnpm package:smoke
         if: matrix.node-version == '22.18.0'
-      - name: Verify alpha publish metadata
+      - name: Verify release metadata
         if: matrix.node-version == '22.18.0'
         run: |
-          node -e "const { version } = require('./packages/storyfreeze/package.json'); if (!/^\\d+\\.\\d+\\.\\d+-alpha\\.\\d+$/.test(version)) throw new Error('Expected an alpha version, got ' + version)"
-          test "$(node scripts/get-dist-tag.js)" = "next"
+          node --test scripts/get-dist-tag.test.js
+          node scripts/get-dist-tag.js --json
       - run: pnpm publish:dry-run
         if: matrix.node-version == '22.18.0'
       - name: Save Vite Task cache

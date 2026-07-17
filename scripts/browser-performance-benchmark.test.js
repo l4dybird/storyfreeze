@@ -1,7 +1,13 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 
-const { chromiumProcessType, parseParallel, summarizeRuns } = require('./browser-performance-benchmark.js');
+const {
+  chromiumProcessType,
+  findObservedProcesses,
+  parseParallel,
+  processIdentity,
+  summarizeRuns,
+} = require('./browser-performance-benchmark.js');
 
 test('accepts exploratory parallel values without accepting arbitrary worker counts', () => {
   assert.equal(parseParallel('1'), 1);
@@ -20,10 +26,25 @@ test('classifies independently sampled Chromium process types', () => {
   assert.equal(chromiumProcessType({ argv: [chromium, '--type=broker'] }), 'other');
 });
 
+test('tracks observed processes by PID and Linux start time', () => {
+  const first = { pid: 101, startedAt: '1000' };
+  const reusedPid = { pid: 101, startedAt: '2000' };
+  const second = { pid: 202, startedAt: '3000' };
+  const processes = new Map([
+    [reusedPid.pid, reusedPid],
+    [second.pid, second],
+  ]);
+
+  assert.equal(processIdentity(first), '101:1000');
+  assert.deepEqual(findObservedProcesses(processes, new Set(['101:1000', '202:3000'])), [second]);
+});
+
 test('summarizes capture/runtime phases, queue utilization, and topology', () => {
   const summary = summarizeRuns([
     {
       browserCrashCount: 0,
+      browserCloseErrorCount: 0,
+      browserCloseEventCount: 5,
       captureDiagnostics: [
         { durationMs: 100, phase: 'navigation', state: 'end', type: 'capture-phase' },
         { durationMs: 250, phase: 'capture-worker-boot', state: 'end', type: 'runtime-phase' },
@@ -44,7 +65,9 @@ test('summarizes capture/runtime phases, queue utilization, and topology', () =>
       peakTreeRssBytes: 1000,
       pngCount: 1,
       retryCount: 0,
+      residualChromiumProcessCount: 0,
       runtimeBrowserLaunchCount: 1,
+      runtimeDisposeEventCount: 1,
       storyDurationsMs: [800],
       success: true,
       timeoutCount: 0,
@@ -72,5 +95,7 @@ test('summarizes capture/runtime phases, queue utilization, and topology', () =>
   assert.equal(summary.maxPeakProcessCount, 10);
   assert.equal(summary.maxUniqueBrowserLaunchCount, 1);
   assert.equal(summary.maxRuntimeBrowserLaunchCount, 1);
+  assert.equal(summary.maxResidualChromiumProcessCount, 0);
+  assert.equal(summary.sessionOrBrowserCloseErrorCount, 0);
   assert.deepEqual(summary.maxChromiumProcessCountsByType, { browser: 1, renderer: 4 });
 });

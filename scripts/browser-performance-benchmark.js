@@ -14,6 +14,7 @@ const failureArtifactDir = outputFile
   ? path.join(path.dirname(outputFile), `${path.basename(outputFile, '.json')}-failures`)
   : undefined;
 const sampleIntervalMs = 50;
+const processExitTimeoutMs = 2000;
 const benchmarkProfiles = {
   pr: { measuredRuns: 3, warmupRuns: 1 },
   record: { measuredRuns: 10, warmupRuns: 2 },
@@ -108,6 +109,24 @@ function descendantsOf(processes, rootPid) {
     }
   }
   return [...descendants].map(pid => processes.get(pid)).filter(Boolean);
+}
+
+function processIdentity(process) {
+  return `${process.pid}:${process.startedAt}`;
+}
+
+function findObservedProcesses(processes, observedIdentities) {
+  return [...processes.values()].filter(process => observedIdentities.has(processIdentity(process)));
+}
+
+async function waitForObservedProcessesToExit(observedIdentities, timeoutMs = processExitTimeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  let remaining = findObservedProcesses(readLinuxProcesses(), observedIdentities);
+  while (remaining.length > 0 && Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, 50));
+    remaining = findObservedProcesses(readLinuxProcesses(), observedIdentities);
+  }
+  return remaining;
 }
 
 function isChromiumProcess(process) {
@@ -277,6 +296,7 @@ function measureCapture({
     let samples = 0;
     const browserLaunches = new Set();
     const browserExecutables = new Set();
+    const observedChromiumProcesses = new Set();
     const cpuTicks = new Map();
 
     child.stdout.on('data', chunk => (stdout += chunk));
@@ -310,9 +330,10 @@ function measureCapture({
         cpuTicks.set(key, Math.max(cpuTicks.get(key) || 0, process.cpuTicks));
       }
       for (const process of browserRoots) {
-        browserLaunches.add(`${process.pid}:${process.startedAt}`);
+        browserLaunches.add(processIdentity(process));
         browserExecutables.add(normalizeExecutable(process.argv[0]));
       }
+      for (const process of chromium) observedChromiumProcesses.add(processIdentity(process));
       samples += 1;
     };
     sample();
@@ -322,7 +343,7 @@ function measureCapture({
       clearInterval(sampler);
       reject(error);
     });
-    child.once('close', (code, signal) => {
+    child.once('close', async (code, signal) => {
       clearInterval(sampler);
       sample();
       const wallTimeMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
@@ -332,6 +353,14 @@ function measureCapture({
       const runtimeBrowserLaunchCount = diagnostics.captureDiagnostics.filter(
         event => event.type === 'browser-launch',
       ).length;
+      const browserCloseEvents = diagnostics.captureDiagnostics.filter(event => event.type === 'browser-close');
+      const browserCloseErrorCount = browserCloseEvents.filter(
+        event => event.browserCloseError || event.sessionCloseError,
+      ).length;
+      const runtimeDisposeEvents = diagnostics.captureDiagnostics.filter(
+        event => event.type === 'runtime-phase' && event.phase === 'runtime-dispose' && event.state === 'end',
+      );
+      const remainingChromiumProcesses = await waitForObservedProcessesToExit(observedChromiumProcesses);
       const observedExecutables = [...browserExecutables].sort();
       const errors = [];
       if (code !== 0) errors.push(`CLI exited with code ${code}${signal ? ` (${signal})` : ''}.`);
@@ -359,11 +388,29 @@ function measureCapture({
       if (diagnostics.browserCrashCount !== 0 || signal) {
         errors.push(`Observed ${diagnostics.browserCrashCount + (signal ? 1 : 0)} browser crash event(s).`);
       }
+      if (browserCloseEvents.length < parallel + 1) {
+        errors.push(`Expected at least ${parallel + 1} browser close events, observed ${browserCloseEvents.length}.`);
+      }
+      if (browserCloseErrorCount !== 0) {
+        errors.push(`Observed ${browserCloseErrorCount} session or browser close error(s).`);
+      }
+      if (runtimeDisposeEvents.length !== 1) {
+        errors.push(`Expected one completed runtime dispose event, observed ${runtimeDisposeEvents.length}.`);
+      } else if (runtimeDisposeEvents[0].error) {
+        errors.push(`Runtime disposal failed: ${JSON.stringify(runtimeDisposeEvents[0].error)}.`);
+      }
+      if (remainingChromiumProcesses.length !== 0) {
+        errors.push(
+          `Observed ${remainingChromiumProcesses.length} Chromium process(es) still alive after ${processExitTimeoutMs} msec: ${remainingChromiumProcesses.map(process => processIdentity(process)).join(', ')}.`,
+        );
+      }
       if (errors.length) writeFailureLog(label, stdout, stderr);
 
       resolve({
         backend,
         browserCrashCount: diagnostics.browserCrashCount + (signal ? 1 : 0),
+        browserCloseErrorCount,
+        browserCloseEventCount: browserCloseEvents.length,
         browserExecutables: observedExecutables,
         cpuTimeMs: Math.round(
           ([...cpuTicks.values()].reduce((total, ticks) => total + ticks, 0) / clockTicksPerSecond) * 1000,
@@ -385,7 +432,9 @@ function measureCapture({
         pngPaths,
         positionInPair,
         retryCount: diagnostics.retryCount,
+        residualChromiumProcessCount: remainingChromiumProcesses.length,
         runtimeBrowserLaunchCount,
+        runtimeDisposeEventCount: runtimeDisposeEvents.length,
         sampleCount: samples,
         sequenceIndex,
         signal,
@@ -681,12 +730,14 @@ function summarizeRuns(runs) {
     maxPeakProcessCount: Math.max(...runs.map(run => run.peakProcessCount)),
     maxUniqueBrowserLaunchCount: Math.max(...runs.map(run => run.uniqueBrowserLaunchCount)),
     maxRuntimeBrowserLaunchCount: Math.max(...runs.map(run => run.runtimeBrowserLaunchCount)),
+    maxResidualChromiumProcessCount: Math.max(...runs.map(run => run.residualChromiumProcessCount ?? 0)),
     maxPeakTreeRssBytes: Math.max(...runs.map(run => run.peakTreeRssBytes)),
     medianCpuTimeMs: median(successful.map(run => run.cpuTimeMs)),
     medianPeakTreeRssBytes: median(successful.map(run => run.peakTreeRssBytes)),
     medianWallTimeMs: median(successful.map(run => run.wallTimeMs)),
     peakBrowserRootCount: Math.max(...runs.map(run => run.peakBrowserRootCount)),
     retryRate: runs.reduce((total, run) => total + run.retryCount, 0) / expectedCaptures,
+    sessionOrBrowserCloseErrorCount: runs.reduce((total, run) => total + (run.browserCloseErrorCount ?? 0), 0),
     runSuccessRate: successful.length / runs.length,
     successfulRuns: successful.length,
     timeoutRate: runs.reduce((total, run) => total + run.timeoutCount, 0) / expectedCaptures,
@@ -931,6 +982,7 @@ async function runIsolationComparison(browser) {
       mode: 'managed-static',
       parallel,
       pngs: expectedPngCount,
+      processExitTimeoutMs,
       sampleIntervalMs,
       startingIsolation,
       stories: expectedStoryCount,
@@ -1030,4 +1082,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { chromiumProcessType, parseParallel, summarizeRuns };
+module.exports = { chromiumProcessType, findObservedProcesses, parseParallel, processIdentity, summarizeRuns };

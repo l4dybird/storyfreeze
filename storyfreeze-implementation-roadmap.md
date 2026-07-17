@@ -1110,7 +1110,7 @@ Stacked PRは次の順で進める。
 
 PR-600では`withScreenshot`、`isScreenshot`をruntime export、`ScreenshotOptions`、option fragment、`Variants`、`Viewport`を公開型の1.0候補契約とし、browser adapterやNode内部型を公開しない。packed tarballをinstallした既存package smoke内で、runtime exportとTypeScript consumer compileを同時に検証する。TypeDocは`src/index.ts`だけをentry pointとし、内部実装をAPI referenceへ混入させない。
 
-PR-601は通常PRへ重い新規smokeを追加せず、既存fixture、packed tarball、static buildを使う反復実行として構成する。capture後にbrowser process、context、page、server processが残らず、abort、retry、失敗後も同じ終了契約を満たすことをblocking条件にする。
+PR-601は通常PRへ重い新規smokeを追加せず、既存fixture、packed tarball、static buildとbrowser isolation benchmarkのwarmup・paired runをsoakとして再利用する。各runで観測したChromium processがCLI終了後に残らず、runtime disposeが完了し、session/browser close errorがないことをblocking条件にする。abort、retry、失敗時の終了順は既存unit testとStorybook E2Eで維持する。
 
 PR-602のdependency更新は`minimumReleaseAge: 1440`を迂回しない。最新versionが24時間未満の場合は待機し、例外を追加しない。Storybook 9や追加framework fixtureは導入しない。
 

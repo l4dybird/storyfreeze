@@ -2,19 +2,28 @@ type $Strict<T> = {
   [P in keyof T]-?: T[P];
 };
 
+/** Browser-neutral Chromium viewport and device-emulation settings. */
 export type Viewport = {
+  /** Viewport width in CSS pixels. */
   width: number;
+  /** Viewport height in CSS pixels. */
   height: number;
+  /** Device pixel ratio used for the capture. */
   deviceScaleFactor?: number;
+  /** Whether Chromium should emulate a mobile viewport. */
   isMobile?: boolean;
+  /** Whether Chromium should emulate touch input. */
   hasTouch?: boolean;
+  /** Whether the emulated device is in landscape orientation. */
   isLandscape?: boolean;
 };
 
+/** Screenshot settings shared by root options and variants. */
 export interface ScreenshotOptionFragments {
   delay?: number;
   waitAssets?: boolean;
-  waitImages?: boolean; // deprecated. Use `waitAssets`
+  /** @deprecated Use `waitAssets`. */
+  waitImages?: boolean;
   waitFor?: string | (() => Promise<any>);
   viewport?: Viewport | string;
   fullPage?: boolean;
@@ -27,9 +36,14 @@ export interface ScreenshotOptionFragments {
   clip?: { x: number; y: number; width: number; height: number } | null;
 }
 
+/** Screenshot settings accepted by one named variant. */
 export interface ScreenshotOptionFragmentsForVariant extends ScreenshotOptionFragments {
+  /** Parent variants whose settings are merged before this variant. */
   extends?: string | string[];
 }
+
+/** Named screenshot variants for one story. */
+export type Variants = Record<string, ScreenshotOptionFragmentsForVariant>;
 
 /**
  *
@@ -38,9 +52,7 @@ export interface ScreenshotOptionFragmentsForVariant extends ScreenshotOptionFra
  **/
 export interface ScreenshotOptions extends ScreenshotOptionFragments {
   viewports?: string[] | { [key: string]: string | Viewport };
-  variants?: {
-    [key: string]: ScreenshotOptionFragmentsForVariant;
-  };
+  variants?: Variants;
   defaultVariantSuffix?: string;
 }
 

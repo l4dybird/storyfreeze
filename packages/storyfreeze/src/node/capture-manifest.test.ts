@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vite-plus/test';
 import { createBaseScreenshotOptions } from '../shared/screenshot-options-helper.js';
 import {
   createCaptureId,
+  createStorybookBuildHash,
   generateCaptureManifest,
   parseCaptureManifest,
   serializeCaptureManifest,
@@ -92,6 +93,63 @@ describe(generateCaptureManifest, () => {
       mode: 'simple',
     });
     expect(manifest.captures.every(capture => capture.planning.eligibility === 'static')).toBe(true);
+  });
+
+  it('keeps the default capture when a static variant graph is invalid', () => {
+    const manifest = generateCaptureManifest({
+      stories: [
+        {
+          id: 'button--primary',
+          title: 'Button',
+          name: 'Primary',
+          screenshotOptions: { variants: { broken: { extends: 'missing' } } },
+        },
+      ],
+      baseOptions: base(),
+      deviceDescriptors: devices,
+      generatedAt: '2026-07-17T00:00:00.000Z',
+      mode: 'managed',
+    });
+
+    expect(manifest.captures).toHaveLength(1);
+    expect(manifest.captures[0]).toMatchObject({ storyId: 'button--primary', variantKey: [] });
+  });
+
+  it('assigns distinct capture ids to the root and a variant named default', () => {
+    const manifest = generateCaptureManifest({
+      stories: [
+        {
+          id: 'button--primary',
+          title: 'Button',
+          name: 'Primary',
+          screenshotOptions: { variants: { default: {} } },
+        },
+      ],
+      baseOptions: base(),
+      deviceDescriptors: devices,
+      generatedAt: '2026-07-17T00:00:00.000Z',
+      mode: 'managed',
+    });
+
+    expect(manifest.captures.map(capture => capture.captureId)).toEqual([
+      createCaptureId('button--primary', []),
+      createCaptureId('button--primary', ['default']),
+    ]);
+    expect(new Set(manifest.captures.map(capture => capture.captureId))).toHaveProperty('size', 2);
+    expect(() => validateCaptureManifest(manifest)).not.toThrow();
+  });
+
+  it('hashes stories and tags independently of their input order', () => {
+    const stories = [
+      { id: 'b--story', title: 'B', name: 'Story', tags: ['beta', 'alpha'] },
+      { id: 'a--story', title: 'A', name: 'Story', tags: ['test', 'docs'] },
+    ];
+    const reordered = [
+      { ...stories[1], tags: [...stories[1].tags].reverse() },
+      { ...stories[0], tags: [...stories[0].tags].reverse() },
+    ];
+
+    expect(createStorybookBuildHash(stories)).toBe(createStorybookBuildHash(reordered));
   });
 });
 

@@ -43,12 +43,9 @@ export function selectWorkerCount(plan: CapturePlan, maximumParallel: number) {
   const runnableProfileGroupCount = Math.max(1, plan.profileCount);
   const initialWorkerCount = Math.min(maximumParallel, captureCount, runnableProfileGroupCount);
   const hasRuntimeDiscovery = plan.captures.some(capture => capture.executionMode === 'runtime-discovery');
-  // Deterministically expand only when queue depth can keep another worker useful.
-  const queueBackedWorkerCount = captureCount <= maximumParallel ? captureCount : Math.ceil(captureCount / 2);
   // Runtime-discovery plans reserve dormant slots because variants can expand the queue after the default capture.
-  const workerCount = hasRuntimeDiscovery
-    ? maximumParallel
-    : Math.min(maximumParallel, captureCount, Math.max(initialWorkerCount, queueBackedWorkerCount));
+  // Known plans preserve the configured compatibility capacity while still booting workers lazily.
+  const workerCount = hasRuntimeDiscovery ? maximumParallel : Math.min(maximumParallel, captureCount);
   return { initialWorkerCount, workerCount };
 }
 
@@ -88,14 +85,17 @@ export function selectTopology(
       topology = { browserProcessCount: 1, contextsPerBrowser: workerCount, workerCount };
       reason = memoryConstrained ? 'auto: available memory favors process consolidation' : 'auto: small plan';
     } else {
-      const browserProcessCount = Math.min(2, workerCount, Math.max(1, Math.floor(capacity.cpuCount / 2)));
+      const browserProcessCount =
+        highCostRatio >= 0.5 ? workerCount : Math.min(2, workerCount, Math.max(1, Math.floor(capacity.cpuCount / 2)));
       topology = {
         browserProcessCount,
         contextsPerBrowser: Math.ceil(workerCount / browserProcessCount),
         workerCount,
       };
       reason =
-        highCostRatio >= 0.5 ? 'auto: hybrid topology isolates high-cost captures' : 'auto: balanced hybrid topology';
+        highCostRatio >= 0.5
+          ? 'auto: high-cost captures use separate browser processes'
+          : 'auto: balanced hybrid topology';
     }
   }
   validateBrowserTopology(topology);

@@ -83,6 +83,22 @@ function percentile(values: number[], rank: number) {
   return sorted[Math.max(0, Math.ceil(rank * sorted.length) - 1)];
 }
 
+async function withOperationTimeout<T>(operation: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  const effectiveTimeout = Math.min(2_147_483_647, Math.max(1, Math.floor(timeoutMs)));
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timeoutHandle = setTimeout(
+      () => reject(new Error(`${label} did not settle within ${effectiveTimeout} msec.`)),
+      effectiveTimeout,
+    );
+  });
+  try {
+    return await Promise.race([operation, timeout]);
+  } finally {
+    if (timeoutHandle) clearTimeout(timeoutHandle);
+  }
+}
+
 /** Executor to capture all stories. */
 export interface ScreenshotService {
   /** Run the capture procedure and return the number of PNG files written. */
@@ -130,6 +146,7 @@ export type ScreenshotServiceOptions = {
   captureProtocol?: CaptureProtocolMode;
   initialWorkerCount?: number;
   bootWorker?: (workerId: number) => Promise<void>;
+  operationTimeoutMs?: number;
 };
 
 function initialAssignments(
@@ -190,6 +207,7 @@ export function createScreenshotService({
   captureProtocol = 'strict',
   initialWorkerCount = workers.length,
   bootWorker,
+  operationTimeoutMs = 60_000,
 }: ScreenshotServiceOptions): ScreenshotService {
   if (workers.length === 0) throw new Error('No screenshot workers are available.');
   if (!Number.isSafeInteger(initialWorkerCount) || initialWorkerCount < 1 || initialWorkerCount > workers.length) {
@@ -197,6 +215,9 @@ export function createScreenshotService({
   }
   if (initialWorkerCount < workers.length && !bootWorker) {
     throw new Error('bootWorker is required when capture workers are started lazily.');
+  }
+  if (!Number.isFinite(operationTimeoutMs) || operationTimeoutMs < 1) {
+    throw new Error('operationTimeoutMs must be a positive finite number.');
   }
   const { assignments, plannedWorkerCostMs } = initialAssignments(stories, workers, capturePlan, captureProtocol);
   const queue = new CaptureLeaseQueue(assignments);
@@ -285,7 +306,7 @@ export function createScreenshotService({
           lazyWorkerBootCount += 1;
           availableWorkerCount += 1;
           void measureCaptureDiagnostic({ type: 'runtime-phase', phase: 'lazy-worker-boot', workerId }, () =>
-            bootWorker!(workerId),
+            withOperationTimeout(bootWorker!(workerId), operationTimeoutMs, `Capture worker ${workerId} boot`),
           ).then(
             () => {
               workerStates[workerId] = 'ready';
@@ -404,16 +425,20 @@ export function createScreenshotService({
           let requeued = false;
           try {
             const [result, elapsedTime] = await time(
-              worker.screenshot(
-                request.rid,
-                request.story,
-                request.variantKey,
-                request.count,
-                logger,
-                forwardConsoleLogs,
-                trace,
-                fileSystem,
-                request.plannedCapture,
+              withOperationTimeout(
+                worker.screenshot(
+                  request.rid,
+                  request.story,
+                  request.variantKey,
+                  request.count,
+                  logger,
+                  forwardConsoleLogs,
+                  trace,
+                  fileSystem,
+                  request.plannedCapture,
+                ),
+                operationTimeoutMs,
+                `Capture ${request.captureId}`,
               ),
             );
             const { succeeded, buffer, variantKeysToPush, defaultVariantSuffix } = result;
@@ -462,15 +487,19 @@ export function createScreenshotService({
               worker.screenshotSessionVariants &&
               sessionCandidates.size > 0
             ) {
-              const sessionResult = await worker.screenshotSessionVariants(
-                request.sessionId,
-                request.story,
-                [...sessionCandidates.values()],
-                logger,
-                forwardConsoleLogs,
-                trace,
-                fileSystem,
-                captureProtocol,
+              const sessionResult = await withOperationTimeout(
+                worker.screenshotSessionVariants(
+                  request.sessionId,
+                  request.story,
+                  [...sessionCandidates.values()],
+                  logger,
+                  forwardConsoleLogs,
+                  trace,
+                  fileSystem,
+                  captureProtocol,
+                ),
+                operationTimeoutMs * Math.max(1, sessionCandidates.size),
+                `Story session ${request.sessionId}`,
               );
               for (const output of sessionResult.outputs) {
                 await saveCaptureOutput(request.story, output.variantKey, output.buffer, output.durationMs, 0);

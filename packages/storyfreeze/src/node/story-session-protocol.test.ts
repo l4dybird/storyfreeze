@@ -11,13 +11,14 @@ const profile = {
 };
 
 describe(StorySessionProtocolClient, () => {
-  it('validates the same session generation across open/apply/reset', async () => {
+  it('validates the same session generation across open/apply/reset/verify', async () => {
     const base = { storyId: 'button--primary', sessionGeneration: 2, profileHash: '800:600:1:0:0:1' };
     const evaluate = vi
       .fn()
       .mockResolvedValueOnce(base)
       .mockResolvedValueOnce({ ...base, variantId: 'hovered', variantGeneration: 1 })
-      .mockResolvedValueOnce({ ...base, activeElement: null, pendingRequestCount: 0 })
+      .mockResolvedValueOnce(base)
+      .mockResolvedValueOnce({ ...base, activeElement: null })
       .mockResolvedValueOnce(undefined);
     const client = new StorySessionProtocolClient({ evaluate } as never);
 
@@ -25,7 +26,8 @@ describe(StorySessionProtocolClient, () => {
       base,
     );
     await expect(client.applyVariant('hovered')).resolves.toMatchObject({ variantGeneration: 1 });
-    await expect(client.resetVariant('hovered')).resolves.toMatchObject({ activeElement: null });
+    await expect(client.resetVariant('hovered')).resolves.toEqual(base);
+    await expect(client.verifyReset()).resolves.toMatchObject({ activeElement: null });
     await expect(client.closeSession()).resolves.toBeUndefined();
   });
 

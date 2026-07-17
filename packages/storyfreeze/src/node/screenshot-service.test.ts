@@ -9,6 +9,12 @@ import { createBaseScreenshotOptions } from '../shared/screenshot-options-helper
 import { generateCaptureManifest } from './capture-manifest.js';
 import { createCapturePlan } from './capture-plan.js';
 
+function completeStdoutWrite(...args: unknown[]) {
+  const callback = args.find(value => typeof value === 'function') as (() => void) | undefined;
+  callback?.();
+  return true;
+}
+
 const story: Story = {
   id: 'button--primary',
   kind: 'Button',
@@ -24,7 +30,7 @@ describe(createScreenshotService, () => {
 
   it('queues a retry before adding all variants from the successful default capture', async () => {
     vi.stubEnv('STORYFREEZE_CAPTURE_DIAGNOSTICS', '1');
-    const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    const write = vi.spyOn(process.stdout, 'write').mockImplementation(completeStdoutWrite as never);
     const hovered: VariantKey = { isDefault: false, keys: ['hovered'] };
     const small: VariantKey = { isDefault: false, keys: ['SMALL'] };
     const screenshot = vi.fn(async (_rid: string, _story: Story, variantKey: VariantKey, count: number) => {
@@ -188,7 +194,7 @@ describe(createScreenshotService, () => {
 
   it('maps the stored path to the request when capture diagnostics are enabled', async () => {
     vi.stubEnv('STORYFREEZE_CAPTURE_DIAGNOSTICS', '1');
-    const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    const write = vi.spyOn(process.stdout, 'write').mockImplementation(completeStdoutWrite as never);
     const screenshot = vi.fn(async () => ({
       buffer: Buffer.from('png'),
       succeeded: true,
@@ -340,5 +346,67 @@ describe(createScreenshotService, () => {
       focused,
     ]);
     expect(saveScreenshot).toHaveBeenCalledTimes(3);
+  });
+
+  it('propagates a screenshot failure and releases its active lease', async () => {
+    const service = createScreenshotService({
+      workers: [{ screenshot: vi.fn(async () => Promise.reject(new Error('worker screenshot failed'))) }],
+      stories: [story],
+      fileSystem: { saveScreenshot: vi.fn() } as unknown as FileSystem,
+      logger: {
+        log: vi.fn(),
+        color: { magenta: (value: string) => value },
+      } as unknown as Logger,
+      forwardConsoleLogs: false,
+      trace: false,
+    });
+
+    await expect(service.execute()).rejects.toThrow('worker screenshot failed');
+  });
+
+  it('times out a screenshot operation that never settles', async () => {
+    const service = createScreenshotService({
+      workers: [{ screenshot: vi.fn(() => new Promise(() => {})) }],
+      stories: [story],
+      fileSystem: { saveScreenshot: vi.fn() } as unknown as FileSystem,
+      logger: {
+        log: vi.fn(),
+        color: { magenta: (value: string) => value },
+      } as unknown as Logger,
+      forwardConsoleLogs: false,
+      trace: false,
+      operationTimeoutMs: 25,
+    });
+
+    await expect(service.execute()).rejects.toThrow('did not settle within 25 msec');
+  });
+
+  it.each([
+    ['rejects', () => Promise.reject(new Error('lazy boot failed')), /lazy boot failed/],
+    ['never settles', () => new Promise<void>(() => {}), /did not settle within 25 msec/],
+  ])('propagates a lazy worker boot that %s', async (_label, bootWorker, expected) => {
+    const secondStory = { ...story, id: 'button--secondary', story: 'Secondary' };
+    const screenshot = vi.fn(async () => ({
+      buffer: Buffer.from('png'),
+      succeeded: true,
+      variantKeysToPush: [],
+      defaultVariantSuffix: '',
+    }));
+    const service = createScreenshotService({
+      workers: [{ screenshot }, { screenshot }],
+      initialWorkerCount: 1,
+      bootWorker,
+      stories: [story, secondStory],
+      fileSystem: { saveScreenshot: vi.fn(async () => 'screenshot.png') } as unknown as FileSystem,
+      logger: {
+        log: vi.fn(),
+        color: { magenta: (value: string) => value },
+      } as unknown as Logger,
+      forwardConsoleLogs: false,
+      trace: false,
+      operationTimeoutMs: 25,
+    });
+
+    await expect(service.execute()).rejects.toThrow(expected);
   });
 });

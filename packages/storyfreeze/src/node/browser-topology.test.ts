@@ -86,6 +86,7 @@ describe(selectTopology, () => {
 
   it('boots no more workers than captures and grows beyond the initial profile groups only for queue depth', () => {
     expect(selectWorkerCount(plan(2), 4)).toEqual({ initialWorkerCount: 1, workerCount: 2 });
+    expect(selectWorkerCount(plan(6), 4)).toEqual({ initialWorkerCount: 1, workerCount: 4 });
     expect(selectWorkerCount(plan(8), 4)).toEqual({ initialWorkerCount: 1, workerCount: 4 });
   });
 
@@ -93,14 +94,22 @@ describe(selectTopology, () => {
     expect(selectWorkerCount(runtimeDiscoveryPlan(1), 4)).toEqual({ initialWorkerCount: 1, workerCount: 4 });
   });
 
-  it('selects a deterministic consolidated or hybrid auto topology from capacity', () => {
-    const capturePlan = plan(8);
+  it('uses the high-cost ratio to select consolidated, hybrid, or separate-process auto topologies', () => {
+    const highCostPlan = plan(8);
+    const lowCostPlan = plan(8);
+    lowCostPlan.captures.forEach(capture => {
+      capture.options.fullPage = false;
+      capture.profile.deviceScaleFactor = 1;
+    });
     expect(
-      selectTopology(capturePlan, { cpuCount: 4, availableMemoryBytes: 1024 ** 3 }, 4, 'auto').topology,
+      selectTopology(highCostPlan, { cpuCount: 4, availableMemoryBytes: 1024 ** 3 }, 4, 'auto').topology,
     ).toMatchObject({ browserProcessCount: 1, workerCount: 4 });
     expect(
-      selectTopology(capturePlan, { cpuCount: 4, availableMemoryBytes: 8 * 1024 ** 3 }, 4, 'auto').topology,
+      selectTopology(lowCostPlan, { cpuCount: 4, availableMemoryBytes: 8 * 1024 ** 3 }, 4, 'auto').topology,
     ).toEqual({ browserProcessCount: 2, contextsPerBrowser: 2, workerCount: 4 });
+    expect(
+      selectTopology(highCostPlan, { cpuCount: 4, availableMemoryBytes: 8 * 1024 ** 3 }, 4, 'auto').topology,
+    ).toEqual({ browserProcessCount: 4, contextsPerBrowser: 1, workerCount: 4 });
   });
 
   it('rejects a topology with fewer context slots than workers', () => {

@@ -49,7 +49,7 @@ export function createPreviewStateBase(storyId: string, requestId: string): Prev
 }
 
 export const STORYFREEZE_STORY_SESSION_GLOBAL = '__STORYFREEZE_STORY_SESSION__';
-export const STORYFREEZE_STORY_SESSION_PROTOCOL_VERSION = 1 as const;
+export const STORYFREEZE_STORY_SESSION_PROTOCOL_VERSION = 2 as const;
 
 export interface OpenStorySessionRequest {
   sessionId: string;
@@ -74,17 +74,18 @@ export interface ResetVerification extends SessionReady {
   baseActiveElement?: string | null;
   argsHash?: string;
   baseArgsHash?: string;
+  baseDocumentFingerprint?: string;
   globalsHash?: string;
   baseGlobalsHash?: string;
-  pendingRequestCount: number;
-  baseRootFingerprint?: string;
-  rootFingerprint?: string;
+  documentFingerprint?: string;
+  scrollPositionMatchesBaseline?: boolean;
 }
 
 export interface StorySessionPreviewProtocol {
   protocolVersion: typeof STORYFREEZE_STORY_SESSION_PROTOCOL_VERSION;
   openSession(request: OpenStorySessionRequest): Promise<SessionReady>;
   applyVariant(variantId: string): Promise<VariantReady>;
-  resetVariant(variantId: string): Promise<ResetVerification>;
+  resetVariant(variantId: string): Promise<SessionReady>;
+  verifyReset(): Promise<ResetVerification>;
   closeSession(): Promise<void>;
 }

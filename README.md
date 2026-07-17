@@ -470,7 +470,9 @@ Fresh navigation remains the default for every capture. Use `--capture-protocol 
 $ npx storyfreeze --capture-protocol auto http://localhost:9009
 ```
 
-`auto` batches safe hover, focus, screenshot-only, and same-emulation-class viewport variants. Mobile, touch, DPR, orientation, runtime `waitFor`, or reset-unsafe boundaries use fresh navigation automatically. A failed session or reset also recreates the worker session and requeues every unfinished variant through the strict path. `--capture-protocol story-session` is the validation mode: it reports unsafe variants as errors instead of falling back.
+`auto` batches safe hover, focus, screenshot-only, and same-emulation-class viewport variants. Mobile, touch, DPR, orientation, runtime `waitFor`, or reset-unsafe boundaries use fresh navigation automatically. A failed session or reset also recreates the worker session and requeues every unfinished variant through the strict path. Session reset is verified after pending requests and a visual commit by comparing focus, args/globals, scroll positions, and the full preview document, including portals, live form state, and open shadow roots. `--capture-protocol story-session` is the validation mode: it reports missing prerequisites, unsafe variants, and reset failures as errors instead of falling back.
+
+Context count and age limits are applied at safe capture boundaries. An active story session finishes its same-document variant batch before a reached recycling limit is applied.
 
 State-changing click variants require a story-owned reset hook before they are eligible:
 
@@ -489,7 +491,7 @@ export const Toggle = {
 };
 ```
 
-The session protocol restores focus, pointer state, Storybook args and globals, waits for pending requests and a visual commit, and verifies the story, generation, emulation profile, focus, requests, args, and globals before the next variant.
+The reset hook must settle within the capture timeout and restore or cancel component-owned timers, listeners, module/window globals, and other state outside the preview document. Closed shadow roots and mutations that occur only after verification cannot be proven reset-safe. Use `strict` for those stories; `auto` falls back when an observable mismatch is found, but it cannot guarantee detection of invisible or arbitrarily late side effects.
 
 ### Parallelisation across multiple computers
 
@@ -636,7 +638,7 @@ Chromium's sandbox is enabled by default, including when capturing a hosted Stor
 $ npx storyfreeze --browser-launch-options '{"args":["--no-sandbox","--disable-setuid-sandbox","--disable-dev-shm-usage"]}' http://localhost:9009
 ```
 
-Capture workers use separate browser processes by default. `--browser-isolation context` uses one browser process with an isolated context per worker, while `hybrid` distributes contexts across up to two processes. `auto` deterministically selects a consolidated or hybrid topology from the capture plan, logical CPUs, available memory, and high-cost capture ratio. Workers start lazily from the number of captures and emulation-profile groups, then expand only when queue depth requires them. Every worker still uses an isolated context and every capture in the stable path uses a fresh document.
+Capture workers use separate browser processes by default. `--browser-isolation context` uses one browser process with an isolated context per worker, while `hybrid` distributes contexts across up to two processes. `auto` deterministically selects a consolidated, hybrid, or separate-process topology from the capture plan, logical CPUs, available memory, and high-cost capture ratio. High-cost plans favor separate processes; low-cost plans favor hybrid consolidation, while memory-constrained or small plans use one process. Workers start lazily from the number of captures and emulation-profile groups, preserve configured parallel capacity up to the capture count, then expand only when queue depth requires them. Every worker still uses an isolated context and every capture in the stable path uses a fresh document.
 
 The current balanced [browser isolation record](https://github.com/l4dybird/storyfreeze/blob/master/benchmarks/browser-isolation-record.json) observed context-mode wall p50 7.8% lower, wall p95 6.2% lower, peak RSS 54.1% lower, and a Chromium process peak of 14 instead of 32. Its capture-request p95 was still 6.8% slower, above the 5% default gate, so process isolation remains the default. `hybrid` and `auto` are opt-in until their representative matrix records are accepted.
 

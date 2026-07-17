@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vite-plus/test';
 import type { PlannedCapture } from './capture-plan.js';
-import { classifyBatchEligibility, createStorySessionPlans, createVariantTransition } from './story-session.js';
+import { classifyBatchEligibility, createStorySessionPlans } from './story-session.js';
 
 const desktop = {
   width: 800,
@@ -78,7 +78,6 @@ describe(createStorySessionPlans, () => {
       'mobile-hover',
     ]);
     expect(result.strictCaptures).toEqual([]);
-    expect(createVariantTransition(base, resized).actions).toEqual([{ type: 'viewport', profile: resizedProfile }]);
   });
 
   it('keeps every capture strict in strict mode and rejects unsafe forced sessions', () => {

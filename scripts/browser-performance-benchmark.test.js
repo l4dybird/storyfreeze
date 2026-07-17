@@ -2,12 +2,30 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 
 const {
+  benchmarkProfilesForComparison,
   chromiumProcessType,
   findObservedProcesses,
+  isolationExecutionOrder,
   parseParallel,
   processIdentity,
   summarizeRuns,
 } = require('./browser-performance-benchmark.js');
+
+test('uses complete measured rotations for each comparison profile', () => {
+  assert.deepEqual(benchmarkProfilesForComparison('topology'), {
+    pr: { measuredRuns: 3, warmupRuns: 1 },
+    record: { measuredRuns: 9, warmupRuns: 2 },
+  });
+  assert.deepEqual(benchmarkProfilesForComparison('isolation').record, { measuredRuns: 10, warmupRuns: 2 });
+});
+
+test('rotates every benchmark lane through every execution position', () => {
+  const topology = ['process', 'context', 'hybrid'];
+  assert.deepEqual(isolationExecutionOrder(1, topology, 'process'), topology);
+  assert.deepEqual(isolationExecutionOrder(2, topology, 'process'), ['context', 'hybrid', 'process']);
+  assert.deepEqual(isolationExecutionOrder(3, topology, 'process'), ['hybrid', 'process', 'context']);
+  assert.deepEqual(isolationExecutionOrder(2, ['process', 'context'], 'process'), ['context', 'process']);
+});
 
 test('accepts exploratory parallel values without accepting arbitrary worker counts', () => {
   assert.equal(parseParallel('1'), 1);

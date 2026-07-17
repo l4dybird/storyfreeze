@@ -63,14 +63,18 @@ describe(findChrome, () => {
 describe(BaseBrowser, () => {
   it('reports direct browser launches when diagnostics are enabled', async () => {
     vi.stubEnv('STORYFREEZE_CAPTURE_DIAGNOSTICS', '1');
-    const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    const write = vi.spyOn(process.stdout, 'write').mockImplementation(((...args: unknown[]) => {
+      const callback = args.find(value => typeof value === 'function') as (() => void) | undefined;
+      callback?.();
+      return true;
+    }) as never);
     const { browser } = createBrowser();
 
     try {
       await browser.boot();
 
-      expect(write).toHaveBeenCalledWith(expect.stringContaining('"type":"browser-launch"'));
-      expect(write).toHaveBeenCalledWith(expect.stringContaining('"source":"direct"'));
+      expect(write).toHaveBeenCalledWith(expect.stringContaining('"type":"browser-launch"'), expect.any(Function));
+      expect(write).toHaveBeenCalledWith(expect.stringContaining('"source":"direct"'), expect.any(Function));
     } finally {
       await browser.close();
       write.mockRestore();

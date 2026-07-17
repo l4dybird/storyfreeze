@@ -112,14 +112,6 @@ async function bootCapturingBrowserAsWorkers(
   return browsers;
 }
 
-export function selectCaptureWorkerSessionSource(
-  browserIsolation: MainOptions['browserIsolation'],
-  workerId: number,
-  source: BrowserSessionSource,
-) {
-  return browserIsolation === 'context' || workerId === 0 ? source : undefined;
-}
-
 export function filterStories(
   flatStories: readonly StoryDescriptor[],
   include: string[],
@@ -349,6 +341,9 @@ export async function main(mainOptions: MainOptions, overrides: Partial<MainDepe
         capturePlan,
         captureProtocol: mainOptions.captureProtocol ?? 'strict',
         initialWorkerCount: topologySelection.initialWorkerCount,
+        // This deadlock watchdog also covers cold browser boot and recovery, so
+        // keep it deliberately looser than the per-attempt capture deadline.
+        operationTimeoutMs: Math.max(60_000, mainOptions.captureTimeout * 2, mainOptions.captureTimeout + 30_000),
         bootWorker: async workerId => {
           await workers[workerId].boot(initialSessionOptions[workerId]);
         },

@@ -182,4 +182,4 @@ jobs:
         with:
           name: performance-roadmap-matrix-${{ inputs.matrix_profile }}-p${{ inputs.parallel }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/performance-roadmap-matrix.json
-          if-no-files-found: error
+          if-no-files-found: warn

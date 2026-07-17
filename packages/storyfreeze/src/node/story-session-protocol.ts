@@ -81,15 +81,25 @@ export class StorySessionProtocolClient {
     return ready;
   }
 
-  async resetVariant(variantId: string): Promise<ResetVerification> {
+  async resetVariant(variantId: string): Promise<SessionReady> {
     const current = this.requireCurrent();
-    const verification = await this.page.evaluate(
+    const ready = await this.page.evaluate(
       async ({ globalName, variantId }) => {
         const protocol = (window as unknown as Record<string, any>)[globalName];
-        return protocol.resetVariant(variantId) as Promise<ResetVerification>;
+        return protocol.resetVariant(variantId) as Promise<SessionReady>;
       },
       { globalName: STORYFREEZE_STORY_SESSION_GLOBAL, variantId },
     );
+    assertSessionReady(ready, current);
+    return ready;
+  }
+
+  async verifyReset(): Promise<ResetVerification> {
+    const current = this.requireCurrent();
+    const verification = await this.page.evaluate(async globalName => {
+      const protocol = (window as unknown as Record<string, any>)[globalName];
+      return protocol.verifyReset() as Promise<ResetVerification>;
+    }, STORYFREEZE_STORY_SESSION_GLOBAL);
     assertSessionReady(verification, current);
     return verification;
   }

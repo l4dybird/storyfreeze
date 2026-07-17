@@ -291,7 +291,6 @@ function toMainOptions(
           recyclingPolicy: {
             ...(values.maxCapturesPerContext > 0 ? { maxCapturesPerContext: values.maxCapturesPerContext } : {}),
             ...(values.maxContextAge > 0 ? { maxContextAgeMs: values.maxContextAge } : {}),
-            recycleAfterRecovery: true,
           },
         }
       : {}),

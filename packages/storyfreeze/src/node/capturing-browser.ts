@@ -806,24 +806,30 @@ export class CapturingBrowser extends BaseBrowser {
       this.viewport = baseViewport;
       await deadline.wait(this.opt.viewportDelay);
     }
-    const verification = await protocol.resetVariant(variantId);
+    await protocol.resetVariant(variantId);
     const requests = await this.resourceWatcher!.waitForRequestsComplete({
       quietMs: requiresSettling ? 50 : 0,
       timeoutMs: deadline.remaining(3000),
       signal: deadline.signal,
     });
     const pendingRequestCount = requests.pending.length;
+    await this.page.waitForVisualCommit({ paintFallbackMs: 250, timeoutMs: deadline.remaining(3000) }, deadline.signal);
+    const verification = await protocol.verifyReset();
     const activeElementMismatch =
       verification.activeElementMatchesBaseline === undefined
         ? verification.activeElement !== null
         : !verification.activeElementMatchesBaseline;
     if (
       activeElementMismatch ||
-      verification.pendingRequestCount !== 0 ||
       pendingRequestCount !== 0 ||
-      (verification.argsHash !== undefined && verification.argsHash !== verification.baseArgsHash) ||
-      (verification.globalsHash !== undefined && verification.globalsHash !== verification.baseGlobalsHash) ||
-      (verification.rootFingerprint !== undefined && verification.rootFingerprint !== verification.baseRootFingerprint)
+      verification.scrollPositionMatchesBaseline !== true ||
+      ((verification.argsHash !== undefined || verification.baseArgsHash !== undefined) &&
+        verification.argsHash !== verification.baseArgsHash) ||
+      ((verification.globalsHash !== undefined || verification.baseGlobalsHash !== undefined) &&
+        verification.globalsHash !== verification.baseGlobalsHash) ||
+      verification.documentFingerprint === undefined ||
+      verification.baseDocumentFingerprint === undefined ||
+      verification.documentFingerprint !== verification.baseDocumentFingerprint
     ) {
       throw new Error(
         `Story session reset verification failed for ${variantId}: ${JSON.stringify({
@@ -832,7 +838,6 @@ export class CapturingBrowser extends BaseBrowser {
         })}.`,
       );
     }
-    await this.page.waitForVisualCommit({ paintFallbackMs: 250, timeoutMs: deadline.remaining(3000) }, deadline.signal);
   }
 
   private async captureStorySessionVariant(
@@ -853,6 +858,7 @@ export class CapturingBrowser extends BaseBrowser {
     this.currentStoryRetryCount = 0;
     const deadline = new CaptureDeadline(this.opt.captureTimeout, requestId, this.opt.signal);
     this.activeDeadline = deadline;
+    const attemptContextGeneration = this.contextGeneration;
     this.resourceWatcher!.clear();
     let traceFile: TraceFile | undefined;
     let traceStarted = false;
@@ -865,7 +871,7 @@ export class CapturingBrowser extends BaseBrowser {
       else logger.log(niceMessage);
     });
 
-    try {
+    const attempt = (async () => {
       if (trace) {
         traceFile = await fileSystem.createTraceFile();
         await this.page.startTrace(traceFile);
@@ -899,15 +905,17 @@ export class CapturingBrowser extends BaseBrowser {
         });
       }
 
+      if (options.delay > 0) await this.measurePhase('delay', () => deadline.wait(options.delay));
       await this.measurePhase('interaction', async () => {
         this.touched = false;
         await this.setHover(options);
         await this.setFocus(options);
         await this.setClick(options);
         await this.waitIfTouched(deadline);
-        if (options.delay > 0) await deadline.wait(options.delay);
       });
-      const requiresSettling = Boolean(options.click || this.previewRuntimeMetadata?.hasCustomReset);
+      const requiresSettling = Boolean(
+        options.hover || options.focus || options.click || this.previewRuntimeMetadata?.hasCustomReset,
+      );
       if (requiresSettling) {
         await this.measurePhase('resource', () => this.waitForResources(options, deadline));
         await this.measurePhase('metrics', () => this.waitBrowserMetricsStable('postEmit', deadline));
@@ -915,7 +923,7 @@ export class CapturingBrowser extends BaseBrowser {
           this.page.waitForVisualCommit({ paintFallbackMs: 250, timeoutMs: deadline.remaining(3000) }, deadline.signal),
         );
       } else {
-        // Passive CSS/screenshot mutations need a committed paint and any requests observed by then, but no quiet delay.
+        // Passive screenshot mutations need a committed paint and any requests observed by then, but no quiet delay.
         await this.measurePhase('visual-commit', () =>
           this.page.waitForVisualCommit({ paintFallbackMs: 250, timeoutMs: deadline.remaining(3000) }, deadline.signal),
         );
@@ -934,10 +942,14 @@ export class CapturingBrowser extends BaseBrowser {
       );
       completed = true;
       return buffer;
+    })();
+
+    try {
+      return await Promise.race([attempt, deadline.interruption]);
     } finally {
       unsubscribeConsole();
       try {
-        if (traceStarted) {
+        if (traceStarted && !deadline.signal.aborted) {
           await this.page.stopTrace();
           if (completed) {
             const logicalId = JSON.stringify({ storyId: story.id, variantKey: request.variantKey });
@@ -948,7 +960,20 @@ export class CapturingBrowser extends BaseBrowser {
         await traceFile?.discard();
         deadline.dispose();
         if (this.activeDeadline === deadline) this.activeDeadline = undefined;
+        if (this.contextGeneration === attemptContextGeneration) this.capturesInContext += 1;
       }
+    }
+  }
+
+  private async closeStorySession(protocol: StorySessionProtocolClient, sessionId: string) {
+    const deadline = new CaptureDeadline(this.opt.captureTimeout, `${sessionId}:close`, this.opt.signal);
+    this.activeDeadline = deadline;
+    const attempt = protocol.closeSession();
+    try {
+      await Promise.race([attempt, deadline.interruption]);
+    } finally {
+      deadline.dispose();
+      if (this.activeDeadline === deadline) this.activeDeadline = undefined;
     }
   }
 
@@ -965,6 +990,9 @@ export class CapturingBrowser extends BaseBrowser {
   ): Promise<SessionVariantExecutionResult> {
     if (requests.length === 0) return { outputs: [], strictFallbacks: [] };
     if (this.currentStory?.id !== story.id || !this.rootScreenshotOptions || !this.viewport) {
+      if (protocolMode === 'story-session') {
+        throw new Error(`Story ${story.id} is not ready for forced story-session capture.`);
+      }
       return { outputs: [], strictFallbacks: requests };
     }
     const rootOptions = mergeScreenshotOptions(
@@ -1046,12 +1074,17 @@ export class CapturingBrowser extends BaseBrowser {
     const protocol = new StorySessionProtocolClient(this.page);
     const outputs: SessionVariantExecutionResult['outputs'] = [];
     try {
-      await protocol.openSession({ sessionId, storyId: story.id, profile: baseProfile });
       const baselineDeadline = new CaptureDeadline(this.opt.captureTimeout, `${sessionId}:baseline`, this.opt.signal);
-      try {
+      this.activeDeadline = baselineDeadline;
+      const baselineAttempt = (async () => {
+        await protocol.openSession({ sessionId, storyId: story.id, profile: baseProfile });
         await this.resetStorySessionVariant(protocol, '__base__', baseProfile, baselineDeadline, false);
+      })();
+      try {
+        await Promise.race([baselineAttempt, baselineDeadline.interruption]);
       } finally {
         baselineDeadline.dispose();
+        if (this.activeDeadline === baselineDeadline) this.activeDeadline = undefined;
       }
       for (let index = 0; index < eligible.length; index += 1) {
         const item = eligible[index];
@@ -1079,16 +1112,23 @@ export class CapturingBrowser extends BaseBrowser {
           });
         } catch (error) {
           const remaining = eligible.slice(index).map(entry => entry.request);
-          await protocol.closeSession().catch(() => {});
           if (protocolMode === 'story-session') throw error;
           await this.restartCaptureSession(error);
           return { outputs, strictFallbacks: [...strictFallbacks, ...remaining] };
         }
       }
-      await protocol.closeSession();
+      await this.closeStorySession(protocol, sessionId);
+      // A story session must keep one document/context for all variants. Honor
+      // the recycling policy at the first safe boundary after the session.
+      await this.recycleContextIfNeeded();
       return { outputs, strictFallbacks };
     } catch (error) {
-      await protocol.closeSession().catch(() => {});
+      if (this.opt.signal?.aborted) {
+        await this.close();
+        throw this.opt.signal.reason instanceof Error
+          ? this.opt.signal.reason
+          : new Error('StoryFreeze was interrupted.');
+      }
       await this.restartCaptureSession(error);
       if (protocolMode === 'story-session') throw error;
       const completedIds = new Set(outputs.map(output => createCaptureId(story.id, output.variantKey.keys)));

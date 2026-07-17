@@ -114,18 +114,21 @@ function hash(value: unknown): string {
 
 export function createStorybookBuildHash(stories: readonly StoryDescriptor[]): string {
   return hash(
-    stories.map(({ id, title, name, importPath, tags }) => ({
-      id,
-      title,
-      name,
-      ...(importPath === undefined ? {} : { importPath }),
-      ...(tags === undefined ? {} : { tags: [...tags] }),
-    })),
+    [...stories]
+      .sort((left, right) => compareDeterministicStrings(left.id, right.id))
+      .map(({ id, title, name, importPath, tags }) => ({
+        id,
+        title,
+        name,
+        ...(importPath === undefined ? {} : { importPath }),
+        ...(tags === undefined ? {} : { tags: [...tags].sort(compareDeterministicStrings) }),
+      })),
   );
 }
 
 export function createCaptureId(storyId: string, variantKey: readonly string[]): string {
-  const variant = variantKey.length === 0 ? 'default' : variantKey.map(key => encodeURIComponent(key)).join('/');
+  const variant =
+    variantKey.length === 0 ? 'root:' : `variant:${variantKey.map(key => encodeURIComponent(key)).join('/')}`;
   return `${encodeURIComponent(storyId)}::${variant}`;
 }
 
@@ -171,7 +174,7 @@ export function estimateCaptureCostMs(options: NormalizedCaptureOptions): number
 
 function variantInputs(options: ScreenshotOptions): VariantKey[] {
   const [invalid, variants] = extractVariantKeys(options);
-  return invalid ? [] : [{ isDefault: true, keys: [] }, ...variants];
+  return invalid ? [{ isDefault: true, keys: [] }] : [{ isDefault: true, keys: [] }, ...variants];
 }
 
 function classifyCapture(
@@ -195,7 +198,7 @@ export function generateCaptureManifest(options: ManifestGeneratorOptions): Stor
       title,
       name,
       ...(importPath === undefined ? {} : { importPath }),
-      ...(tags === undefined ? {} : { tags: [...tags] }),
+      ...(tags === undefined ? {} : { tags: [...tags].sort(compareDeterministicStrings) }),
     }));
   const captures: ManifestCapture[] = [];
 

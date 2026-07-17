@@ -1,27 +1,13 @@
 import type { PlannedCapture } from './capture-plan.js';
-import { sameEmulationClass, sameEmulationProfile, type EmulationProfile } from './emulation-profile.js';
+import type { EmulationProfile } from './emulation-profile.js';
 import { compareDeterministicStrings } from './capture-manifest.js';
 
 export type CaptureProtocolMode = 'strict' | 'story-session' | 'auto';
-
-export type CaptureAction =
-  | { type: 'hover'; selector: string }
-  | { type: 'focus'; selector: string }
-  | { type: 'click'; selector: string }
-  | { type: 'viewport'; profile: EmulationProfile };
-
-export interface VariantTransition {
-  actions: CaptureAction[];
-  delayMs?: number;
-  waitFor?: string;
-}
 
 export type BatchEligibility = { mode: 'safe' } | { mode: 'validated' } | { mode: 'strict'; reason: string };
 
 export interface PlannedVariantCapture {
   capture: PlannedCapture;
-  transition: VariantTransition;
-  resetStrategy: 'automatic' | 'custom' | 'fresh-navigation';
 }
 
 export interface StorySessionPlan {
@@ -65,21 +51,6 @@ export function classifyBatchEligibility(
       : { mode: 'strict', reason: 'click has no custom reset hook' };
   }
   return { mode: 'safe' };
-}
-
-export function createVariantTransition(base: PlannedCapture, capture: PlannedCapture): VariantTransition {
-  const actions: CaptureAction[] = [];
-  if (!sameEmulationProfile(base.profile, capture.profile) && sameEmulationClass(base.profile, capture.profile)) {
-    actions.push({ type: 'viewport', profile: capture.profile });
-  }
-  if (capture.options.hover) actions.push({ type: 'hover', selector: capture.options.hover });
-  if (capture.options.focus) actions.push({ type: 'focus', selector: capture.options.focus });
-  if (capture.options.click) actions.push({ type: 'click', selector: capture.options.click });
-  return {
-    actions,
-    ...(capture.options.delay > 0 ? { delayMs: capture.options.delay } : {}),
-    ...(capture.options.waitFor ? { waitFor: capture.options.waitFor } : {}),
-  };
 }
 
 function sessionId(storyId: string, profile: EmulationProfile): string {
@@ -165,11 +136,7 @@ export function createStorySessionPlans(plan: { captures: readonly PlannedCaptur
           strictCaptures.push(capture);
           continue;
         }
-        plannedVariants.push({
-          capture,
-          transition: createVariantTransition(baseCapture, capture),
-          resetStrategy: eligibility.mode === 'validated' ? 'custom' : 'automatic',
-        });
+        plannedVariants.push({ capture });
       }
 
       // A runtime-discovery default is retained as a session seed even before its variants are known.

@@ -13,7 +13,7 @@ const outputFile = process.argv[3] ? path.resolve(process.argv[3]) : undefined;
 const profileDefinitions = {
   smoke: { measuredRuns: 1, warmupRuns: 0 },
   pr: { measuredRuns: 3, warmupRuns: 1 },
-  record: { measuredRuns: 10, warmupRuns: 2 },
+  record: { measuredRuns: 9, warmupRuns: 2 },
 };
 const benchmarkProfile = process.env.STORYFREEZE_ROADMAP_BENCHMARK_PROFILE || 'pr';
 if (!Object.hasOwn(profileDefinitions, benchmarkProfile)) {
@@ -322,6 +322,32 @@ function publicRun(run) {
   return record;
 }
 
+function writeBenchmarkRecord(record) {
+  const json = `${JSON.stringify(record, null, 2)}\n`;
+  if (outputFile) {
+    fs.mkdirSync(path.dirname(outputFile), { recursive: true });
+    fs.writeFileSync(outputFile, json);
+  }
+  return json;
+}
+
+function fatalBenchmarkRecord(error) {
+  const message = error instanceof Error ? error.stack || error.message : String(error);
+  return {
+    schemaVersion: 1,
+    kind: 'performance-roadmap-matrix',
+    recordedAt: new Date().toISOString(),
+    benchmarkProfile,
+    measuredRuns,
+    modes,
+    parallel,
+    scenarios: {},
+    warmupRuns,
+    fatalError: message,
+    gate: { errors: [message], passed: false },
+  };
+}
+
 function executionOrder(iteration) {
   const offset = (iteration - 1) % modeNames.length;
   return [...modeNames.slice(offset), ...modeNames.slice(0, offset)];
@@ -470,17 +496,14 @@ async function main() {
     warmupRuns,
     gate: { errors, passed: errors.length === 0 },
   };
-  const json = `${JSON.stringify(result, null, 2)}\n`;
-  if (outputFile) {
-    fs.mkdirSync(path.dirname(outputFile), { recursive: true });
-    fs.writeFileSync(outputFile, json);
-  }
+  writeBenchmarkRecord(result);
   console.log(`STORYFREEZE_ROADMAP_BENCHMARK_RESULT=${JSON.stringify(result)}`);
   if (errors.length) throw new Error(`Performance roadmap benchmark failed:\n- ${errors.join('\n- ')}`);
 }
 
 if (require.main === module) {
   main().catch(error => {
+    if (outputFile && !fs.existsSync(outputFile)) writeBenchmarkRecord(fatalBenchmarkRecord(error));
     console.error(error);
     process.exitCode = 1;
   });
@@ -490,7 +513,9 @@ module.exports = {
   comparePngDirectories,
   comparisonRatios,
   executionOrder,
+  fatalBenchmarkRecord,
   parseDiagnostics,
   percentile,
+  profileDefinitions,
   summarizeRuns,
 };

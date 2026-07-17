@@ -27,7 +27,6 @@ export type BrowserIsolationMode = 'process' | 'context' | 'hybrid' | 'auto';
 export interface RecyclingPolicy {
   maxCapturesPerContext?: number;
   maxContextAgeMs?: number;
-  recycleAfterRecovery: boolean;
 }
 
 /**

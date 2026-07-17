@@ -93,7 +93,7 @@ export class CaptureLeaseQueue<T extends LeaseableCapture> {
   lease(workerId: number, lastProfile?: EmulationProfile, lastStoryId?: string): CaptureLease<T> | undefined {
     this.assertWorkerId(workerId);
     let ownerWorkerId = workerId;
-    let capture = this.takeBest(this.queues[workerId], lastProfile, lastStoryId, false);
+    let capture = this.queues[workerId].shift();
     if (!capture) {
       const candidates = this.queues
         .map((queue, candidateWorkerId) => ({
@@ -201,18 +201,6 @@ export class CaptureLeaseQueue<T extends LeaseableCapture> {
         this.affinityCost(left, lastProfile, lastStoryId) - this.affinityCost(right, lastProfile, lastStoryId) ||
         compareDeterministicStrings(left.captureId, right.captureId),
     )[0];
-  }
-
-  private takeBest(
-    queue: T[],
-    lastProfile?: EmulationProfile,
-    lastStoryId?: string,
-    useAffinity = true,
-  ): T | undefined {
-    if (queue.length === 0) return undefined;
-    if (!useAffinity) return queue.shift();
-    const capture = this.peekBest(queue, lastProfile, lastStoryId);
-    return capture ? this.takeById(queue, capture.captureId) : undefined;
   }
 
   private takeById(queue: T[], captureId: string): T | undefined {

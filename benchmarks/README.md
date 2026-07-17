@@ -2,7 +2,7 @@
 
 Browser backend and isolation changes are measured with the existing React/Vite managed static fixture. The original Puppeteer process baseline remains as a historical pre-Playwright record.
 
-The benchmark excludes dependency installation, package build, Storybook build, and the Vite preview server from the measured process tree. It measures the packed StoryFreeze CLI and all of its Chromium descendants. The blocking PR profile uses `parallel=4`, one warm-up pair, and three measured pairs. The manual record profile uses two warm-up pairs and ten measured pairs per dispatch.
+The benchmark excludes dependency installation, package build, Storybook build, and the Vite preview server from the measured process tree. It measures the packed StoryFreeze CLI and all of its Chromium descendants. Isolation PR dispatches use `parallel=4`, one warm-up pair, and three measured pairs; isolation record dispatches use two warm-up pairs and ten measured pairs. Three-lane topology dispatches use one warm-up and three measured rotations for PRs, or two warm-ups and nine measured rotations for records, so every topology lane occupies every measured position equally.
 
 Each dispatch record reports:
 
@@ -62,7 +62,7 @@ PR-531 only adds this evidence pipeline: `process` remains the default regardles
 
 The roadmap adds two independent measurements without rewriting the historical schema 1 isolation record.
 
-Set `STORYFREEZE_BENCHMARK_COMPARISON=topology` when running `scripts/browser-performance-benchmark.js` to compare the compatibility `process` (4×1), `hybrid` (2×2), and `context` (1×4) presets with alternating order. At smaller capture counts the same presets exercise 2×1 and 1×2 layouts. The schema 2 `browser-topology-differential` record stores the selected and actually booted worker topology, phase distributions, process/RSS data, and exact decoded-RGBA comparisons against process mode. Dormant runtime-discovery capacity does not count as a launched worker or process.
+Set `STORYFREEZE_BENCHMARK_COMPARISON=topology` when running `scripts/browser-performance-benchmark.js` to compare the compatibility `process` (4×1), `hybrid` (2×2), and `context` (1×4) presets with cyclic lane rotation. The PR profile uses three measured rotations and the record profile uses nine, removing the former fixed-middle bias for `hybrid`. At smaller capture counts the same presets exercise 2×1 and 1×2 layouts. The schema 2 `browser-topology-differential` record stores the selected and actually booted worker topology, phase distributions, process/RSS data, and exact decoded-RGBA comparisons against process mode. Dormant runtime-discovery capacity does not count as a launched worker or process.
 
 The separate `scripts/performance-roadmap-benchmark.js` runner uses the dedicated `.storybook-performance` fixture. It measures three lanes for every required workload: stable `process + strict`, Phase 2 `auto + strict`, and cumulative optimized `auto + auto`. This makes the Phase 3 comparison use the Phase 2 topology lane as its direct baseline while retaining end-to-end comparison with the compatibility lane.
 
@@ -87,7 +87,7 @@ STORYFREEZE_ROADMAP_BENCHMARK_PROFILE=smoke \
 node scripts/e2e-prestorybook.js examples/react-vite performance-roadmap-benchmark.js roadmap-matrix.json
 ```
 
-Use `STORYFREEZE_ROADMAP_BENCHMARK_SCENARIOS=single,variantHeavy` for a subset and `STORYFREEZE_ROADMAP_BENCHMARK_PARALLEL=1|2|4|8|16` for scaling diagnostics. `pr` performs one warm-up and three measured runs per path; `record` performs two warm-ups and ten measured runs. Performance ratios are evidence, not blocking thresholds, until balanced records on the same source tree, Chromium, runner class, and options are accepted. The compatibility defaults remain process isolation and strict capture.
+Use `STORYFREEZE_ROADMAP_BENCHMARK_SCENARIOS=single,variantHeavy` for a subset and `STORYFREEZE_ROADMAP_BENCHMARK_PARALLEL=1|2|4|8|16` for scaling diagnostics. `pr` performs one warm-up and three measured runs per path; `record` performs two warm-ups and nine measured runs. Both counts complete whole three-lane rotations, so each lane occupies each measured position equally. Performance ratios are evidence, not blocking thresholds, until balanced records on the same source tree, Chromium, runner class, and options are accepted. The compatibility defaults remain process isolation and strict capture.
 
 ### Local Phase 1-3 PR-profile evidence
 

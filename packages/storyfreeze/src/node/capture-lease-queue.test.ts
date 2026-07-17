@@ -58,4 +58,27 @@ describe(CaptureLeaseQueue, () => {
     await expect(waiting).resolves.toBeUndefined();
     expect(queue.lease(1)?.capture.captureId).toBe('discovered');
   });
+
+  it('fails a running lease, wakes drain waiters, and rejects invalid transitions', async () => {
+    const first = capture('first', 'a');
+    const queue = new CaptureLeaseQueue([[first]]);
+    expect(() => queue.markRunning(first.captureId)).toThrow('must be leased');
+
+    const lease = queue.lease(0)!;
+    expect(() => queue.complete(lease.capture.captureId)).toThrow('must be running');
+    queue.markRunning(lease.capture.captureId);
+    const waiting = queue.waitForChange();
+    queue.fail(lease.capture.captureId);
+
+    await expect(waiting).resolves.toBeUndefined();
+    expect(queue.stateOf(first.captureId)).toBe('failed');
+    expect(queue.isDrained()).toBe(true);
+    expect(() => queue.fail(first.captureId)).toThrow('must be running');
+  });
+
+  it('steals deterministically by capture id when affinity costs tie', () => {
+    const queue = new CaptureLeaseQueue([[capture('z-last', 'story'), capture('a-first', 'story')], []]);
+
+    expect(queue.lease(1)?.capture.captureId).toBe('a-first');
+  });
 });

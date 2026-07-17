@@ -3,10 +3,21 @@ const test = require('node:test');
 const {
   comparisonRatios,
   executionOrder,
+  fatalBenchmarkRecord,
   parseDiagnostics,
   percentile,
+  profileDefinitions,
   summarizeRuns,
 } = require('./performance-roadmap-benchmark.js');
+
+test('creates an uploadable fatal benchmark record', () => {
+  assert.deepEqual(profileDefinitions.record, { measuredRuns: 9, warmupRuns: 2 });
+  const record = fatalBenchmarkRecord(new Error('benchmark exploded'));
+  assert.equal(record.kind, 'performance-roadmap-matrix');
+  assert.equal(record.measuredRuns, 3);
+  assert.match(record.fatalError, /benchmark exploded/);
+  assert.deepEqual(record.gate, { errors: [record.fatalError], passed: false });
+});
 
 test('parses roadmap capture diagnostics and fallback console timings', () => {
   const log = [

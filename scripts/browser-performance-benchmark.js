@@ -15,17 +15,19 @@ const failureArtifactDir = outputFile
   : undefined;
 const sampleIntervalMs = 50;
 const processExitTimeoutMs = 2000;
-const benchmarkProfiles = {
-  pr: { measuredRuns: 3, warmupRuns: 1 },
-  record: { measuredRuns: 10, warmupRuns: 2 },
-};
-const benchmarkProfile = process.env.STORYFREEZE_BENCHMARK_PROFILE || 'pr';
-if (!Object.hasOwn(benchmarkProfiles, benchmarkProfile)) {
-  throw new Error(`Unknown browser benchmark profile: ${benchmarkProfile}`);
-}
 const benchmarkComparison = process.env.STORYFREEZE_BENCHMARK_COMPARISON || 'isolation';
 if (!['isolation', 'topology'].includes(benchmarkComparison)) {
   throw new Error(`Unsupported browser benchmark comparison: ${benchmarkComparison}`);
+}
+function benchmarkProfilesForComparison(comparison) {
+  return comparison === 'topology'
+    ? { pr: { measuredRuns: 3, warmupRuns: 1 }, record: { measuredRuns: 9, warmupRuns: 2 } }
+    : { pr: { measuredRuns: 3, warmupRuns: 1 }, record: { measuredRuns: 10, warmupRuns: 2 } };
+}
+const benchmarkProfiles = benchmarkProfilesForComparison(benchmarkComparison);
+const benchmarkProfile = process.env.STORYFREEZE_BENCHMARK_PROFILE || 'pr';
+if (!Object.hasOwn(benchmarkProfiles, benchmarkProfile)) {
+  throw new Error(`Unknown browser benchmark profile: ${benchmarkProfile}`);
 }
 const { measuredRuns, warmupRuns } = benchmarkProfiles[benchmarkProfile];
 function parseParallel(value) {
@@ -41,6 +43,14 @@ if (!isolations.includes(startingIsolation)) {
 }
 if (process.env.STORYFREEZE_BENCHMARK_TRACE === 'true') {
   throw new Error('Browser isolation comparison does not support trace capture.');
+}
+
+function isolationExecutionOrder(iteration, values = isolations, first = startingIsolation) {
+  const firstIndex = values.indexOf(first);
+  if (firstIndex < 0) throw new Error(`Unknown starting isolation: ${first}`);
+  const seeded = [...values.slice(firstIndex), ...values.slice(0, firstIndex)];
+  const offset = (iteration - 1) % seeded.length;
+  return [...seeded.slice(offset), ...seeded.slice(0, offset)];
 }
 const expectedStoryCount = 2;
 const expectedPngCount = 9;
@@ -869,8 +879,7 @@ async function runIsolationComparison(browser) {
   const warmupExecutionOrder = [];
   let warmupSequenceIndex = 0;
   for (let iteration = 1; iteration <= warmupRuns; iteration += 1) {
-    const processFirst = startingIsolation === 'process' ? iteration % 2 === 1 : iteration % 2 === 0;
-    const order = processFirst ? isolations : [...isolations].reverse();
+    const order = isolationExecutionOrder(iteration);
     for (const [positionInPair, isolation] of order.entries()) {
       const run = await measureCapture({
         backend: 'playwright',
@@ -894,8 +903,7 @@ async function runIsolationComparison(browser) {
   const measuredExecutionOrder = [];
   let measuredSequenceIndex = 0;
   for (let iteration = 1; iteration <= measuredRuns; iteration += 1) {
-    const processFirst = startingIsolation === 'process' ? iteration % 2 === 1 : iteration % 2 === 0;
-    const order = processFirst ? isolations : [...isolations].reverse();
+    const order = isolationExecutionOrder(iteration);
     for (const [positionInPair, isolation] of order.entries()) {
       const run = await measureCapture({
         backend: 'playwright',
@@ -1137,4 +1145,12 @@ if (require.main === module) {
   });
 }
 
-module.exports = { chromiumProcessType, findObservedProcesses, parseParallel, processIdentity, summarizeRuns };
+module.exports = {
+  benchmarkProfilesForComparison,
+  chromiumProcessType,
+  findObservedProcesses,
+  isolationExecutionOrder,
+  parseParallel,
+  processIdentity,
+  summarizeRuns,
+};

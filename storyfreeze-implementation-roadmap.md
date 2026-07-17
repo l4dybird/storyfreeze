@@ -1114,7 +1114,7 @@ PR-601は通常PRへ重い新規smokeを追加せず、既存fixture、packed ta
 
 PR-602のdependency更新は`minimumReleaseAge: 1440`を迂回しない。最新versionが24時間未満の場合は待機し、例外を追加しない。Storybook 9や追加framework fixtureは導入しない。
 
-PR-603まではChangesetsのprerelease modeを維持する。release candidateまたはstableへ移る操作は独立PRとし、検査済みtarball、Trusted Publishing、provenance、dist-tag、Git tag、GitHub Releaseの一致を確認する。公開済みversionの再実行は正常終了させる。
+PR-603まではChangesetsのprerelease modeを維持する。release candidateまたはstableへ移る操作は独立PRとする。alphaとRCは`next`かつGitHub Prerelease、stableは`latest`かつfinal releaseとして、検査済みtarball、Trusted Publishing、provenance、dist-tag、Git tag、GitHub Releaseの一致を確認する。公開済みversionの再実行では新しいdist-tagを過去へ戻さず正常終了させる。
 
 ## 12. Render stability契約
 

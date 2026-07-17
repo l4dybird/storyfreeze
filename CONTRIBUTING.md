@@ -108,8 +108,25 @@ $ pnpm exec changeset
 ```
 
 Changesets only creates the version pull request. Do not run `changeset
-publish`: the dedicated release workflow publishes the inspected alpha tarball
-to the `next` dist-tag after the version pull request is merged.
+publish`: the dedicated release workflow publishes the inspected tarball after
+the version pull request is merged.
+
+| Package version | npm dist-tag | GitHub Release |
+| --------------- | ------------ | -------------- |
+| `x.y.z-alpha.n` | `next`       | Prerelease     |
+| `x.y.z-rc.n`    | `next`       | Prerelease     |
+| `x.y.z`         | `latest`     | Final release  |
+
+Any other prerelease suffix is rejected before publishing. Moving from alpha
+to RC, or from prerelease to stable, requires a dedicated pull request that
+updates the Changesets prerelease state and reviews the generated version.
+
+The publish workflow packs once, passes that tarball to the existing package
+smoke, and publishes the same file through npm Trusted Publishing. It verifies
+integrity, provenance, the channel's dist-tag for a new publication, the Git
+tag, and the GitHub Release classification. Rerunning an already-published
+version verifies the immutable package without moving a newer dist-tag
+backwards.
 
 ## Update documents' ToC and CLI usage section
 

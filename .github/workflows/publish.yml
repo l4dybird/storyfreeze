@@ -69,13 +69,19 @@ jobs:
           shasum="$(PACK_JSON="$pack_json" node -p "JSON.parse(process.env.PACK_JSON)[0].shasum")"
           tarball="$RUNNER_TEMP/$filename"
           manifest_version="$(node -p "require('./packages/storyfreeze/package.json').version")"
+          release_metadata="$(node scripts/get-dist-tag.js "$version" --json)"
+          channel="$(RELEASE_METADATA="$release_metadata" node -p "JSON.parse(process.env.RELEASE_METADATA).channel")"
+          dist_tag="$(RELEASE_METADATA="$release_metadata" node -p "JSON.parse(process.env.RELEASE_METADATA).distTag")"
+          prerelease="$(RELEASE_METADATA="$release_metadata" node -p "JSON.parse(process.env.RELEASE_METADATA).prerelease")"
 
           test "$name" = "storyfreeze"
           test "$version" = "$manifest_version"
-          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+-alpha\.[0-9]+$ ]]
           test -f "$tarball"
 
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+          echo "dist_tag=$dist_tag" >> "$GITHUB_OUTPUT"
           echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "filename=$filename" >> "$GITHUB_OUTPUT"
           echo "tarball=$tarball" >> "$GITHUB_OUTPUT"
@@ -112,13 +118,15 @@ jobs:
           fi
       - name: Publish inspected tarball
         if: steps.release.outputs.should_release == 'true' && steps.registry.outputs.already_published != 'true'
-        run: pnpm publish "${{ steps.pack.outputs.tarball }}" --tag next --access public --provenance --registry https://registry.npmjs.org/
+        run: pnpm publish "${{ steps.pack.outputs.tarball }}" --tag "${{ steps.pack.outputs.dist_tag }}" --access public --provenance --registry https://registry.npmjs.org/
       - name: Verify npm metadata
         if: steps.release.outputs.should_release == 'true'
         shell: bash
         env:
           PACKAGE_NAME: ${{ steps.pack.outputs.name }}
           PACKAGE_VERSION: ${{ steps.pack.outputs.version }}
+          DIST_TAG: ${{ steps.pack.outputs.dist_tag }}
+          ALREADY_PUBLISHED: ${{ steps.registry.outputs.already_published }}
           LOCAL_INTEGRITY: ${{ steps.pack.outputs.integrity }}
           LOCAL_SHASUM: ${{ steps.pack.outputs.shasum }}
         run: |
@@ -129,11 +137,16 @@ jobs:
             set +e
             dist_json="$(npm view "$PACKAGE_NAME@$PACKAGE_VERSION" dist --json --registry https://registry.npmjs.org/ 2>/dev/null)"
             dist_status=$?
-            next_json="$(npm view "$PACKAGE_NAME" dist-tags.next --json --registry https://registry.npmjs.org/ 2>/dev/null)"
-            next_status=$?
+            tag_json="$(npm view "$PACKAGE_NAME" "dist-tags.$DIST_TAG" --json --registry https://registry.npmjs.org/ 2>/dev/null)"
+            tag_status=$?
             set -e
 
-            if [[ $dist_status -eq 0 && $next_status -eq 0 ]] && DIST_JSON="$dist_json" NEXT_JSON="$next_json" node -e "const dist = JSON.parse(process.env.DIST_JSON); const next = JSON.parse(process.env.NEXT_JSON); const provenance = dist.attestations?.provenance?.predicateType; process.exit(dist.integrity === process.env.LOCAL_INTEGRITY && dist.shasum === process.env.LOCAL_SHASUM && next === process.env.PACKAGE_VERSION && provenance === 'https://slsa.dev/provenance/v1' ? 0 : 1)"; then
+            require_tag=true
+            if [[ "$ALREADY_PUBLISHED" == "true" ]]; then
+              require_tag=false
+            fi
+
+            if [[ $dist_status -eq 0 && $tag_status -eq 0 ]] && DIST_JSON="$dist_json" TAG_JSON="$tag_json" REQUIRE_TAG="$require_tag" node -e "const { compareReleaseVersions, getReleaseMetadata } = require('./scripts/get-dist-tag.js'); const dist = JSON.parse(process.env.DIST_JSON); const tag = JSON.parse(process.env.TAG_JSON); const provenance = dist.attestations?.provenance?.predicateType; const sameChannel = getReleaseMetadata(tag).distTag === process.env.DIST_TAG; const tagIsValid = process.env.REQUIRE_TAG === 'true' ? tag === process.env.PACKAGE_VERSION : sameChannel && compareReleaseVersions(tag, process.env.PACKAGE_VERSION) >= 0; process.exit(dist.integrity === process.env.LOCAL_INTEGRITY && dist.shasum === process.env.LOCAL_SHASUM && tagIsValid && provenance === 'https://slsa.dev/provenance/v1' ? 0 : 1)"; then
               verified=true
               break
             fi
@@ -142,7 +155,7 @@ jobs:
           done
 
           if [[ "$verified" != "true" ]]; then
-            echo "npm metadata did not converge to the inspected tarball, next dist-tag, and provenance." >&2
+            echo "npm metadata did not converge to the inspected tarball, $DIST_TAG dist-tag, and provenance." >&2
             exit 1
           fi
       - name: Create Git tag and GitHub Release
@@ -152,6 +165,8 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PACKAGE_NAME: ${{ steps.pack.outputs.name }}
           PACKAGE_VERSION: ${{ steps.pack.outputs.version }}
+          RELEASE_CHANNEL: ${{ steps.pack.outputs.channel }}
+          RELEASE_PRERELEASE: ${{ steps.pack.outputs.prerelease }}
         run: |
           set -euo pipefail
           tag="v$PACKAGE_VERSION"
@@ -172,8 +187,12 @@ jobs:
           fi
 
           if ! gh release view "$tag" >/dev/null 2>&1; then
-            gh release create "$tag" --verify-tag --title "$PACKAGE_NAME@$PACKAGE_VERSION" --generate-notes --prerelease
+            prerelease_arguments=()
+            if [[ "$RELEASE_PRERELEASE" == "true" ]]; then
+              prerelease_arguments+=(--prerelease)
+            fi
+            gh release create "$tag" --verify-tag --title "$PACKAGE_NAME@$PACKAGE_VERSION" --generate-notes "${prerelease_arguments[@]}"
           fi
 
           release_json="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag")"
-          RELEASE_JSON="$release_json" node -e "const release = JSON.parse(process.env.RELEASE_JSON); if (release.tag_name !== 'v' + process.env.PACKAGE_VERSION || release.name !== process.env.PACKAGE_NAME + '@' + process.env.PACKAGE_VERSION || !release.prerelease) throw new Error('GitHub Release metadata does not match')"
+          RELEASE_JSON="$release_json" node -e "const release = JSON.parse(process.env.RELEASE_JSON); const expectedPrerelease = process.env.RELEASE_PRERELEASE === 'true'; if (release.tag_name !== 'v' + process.env.PACKAGE_VERSION || release.name !== process.env.PACKAGE_NAME + '@' + process.env.PACKAGE_VERSION || release.prerelease !== expectedPrerelease || release.draft) throw new Error('GitHub Release metadata does not match the ' + process.env.RELEASE_CHANNEL + ' channel')"

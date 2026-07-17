@@ -807,13 +807,16 @@ export class CapturingBrowser extends BaseBrowser {
       await deadline.wait(this.opt.viewportDelay);
     }
     await protocol.resetVariant(variantId);
-    const requests = await this.resourceWatcher!.waitForRequestsComplete({
+    // Flush reset-triggered animation-frame work before declaring the network quiet.
+    // A second paint commits response-driven DOM changes before fingerprinting.
+    await this.page.waitForVisualCommit({ paintFallbackMs: 250, timeoutMs: deadline.remaining(3000) }, deadline.signal);
+    await this.resourceWatcher!.waitForRequestsComplete({
       quietMs: requiresSettling ? 50 : 0,
       timeoutMs: deadline.remaining(3000),
       signal: deadline.signal,
     });
-    const pendingRequestCount = requests.pending.length;
     await this.page.waitForVisualCommit({ paintFallbackMs: 250, timeoutMs: deadline.remaining(3000) }, deadline.signal);
+    const pendingRequestCount = this.resourceWatcher!.getDiagnosticSnapshot().pending.length;
     const verification = await protocol.verifyReset();
     const activeElementMismatch =
       verification.activeElementMatchesBaseline === undefined

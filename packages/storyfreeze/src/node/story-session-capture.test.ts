@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vite-plus/test';
 import { createBaseScreenshotOptions } from '../shared/screenshot-options-helper.js';
 import { BaseBrowser } from './browser.js';
+import { CaptureDeadline } from './capture-deadline.js';
 import { CapturingBrowser } from './capturing-browser.js';
 import { Logger } from './logger.js';
 import type { ManagedStorybookConnection } from './managed-storybook-connection.js';
@@ -34,6 +35,71 @@ function createBrowserFixture(captureTimeout = 5000) {
 
 describe(CapturingBrowser.prototype.screenshotSessionVariants, () => {
   afterEach(() => vi.restoreAllMocks());
+
+  it('drains requests started by reset paint before verifying the restored state', async () => {
+    const { browser } = createBrowserFixture();
+    const order: string[] = [];
+    let paintCount = 0;
+    let pending = false;
+    let observedPaintRequest = false;
+    const page = {
+      waitForVisualCommit: vi.fn(async () => {
+        paintCount += 1;
+        order.push(`paint-${paintCount}`);
+        if (paintCount === 1) pending = true;
+        return { didTimeout: false };
+      }),
+    };
+    vi.spyOn(BaseBrowser.prototype, 'page', 'get').mockReturnValue(page as never);
+    const resourceWatcher = {
+      getDiagnosticSnapshot: vi.fn(() => {
+        order.push('snapshot');
+        return {
+          pending: pending ? [{ method: 'GET', resourceType: 'fetch', url: 'https://example.test/late' }] : [],
+          requestedUrls: [],
+        };
+      }),
+      waitForRequestsComplete: vi.fn(async () => {
+        order.push('requests');
+        observedPaintRequest = pending;
+        pending = false;
+        return { didTimeout: false, elapsedMs: 0, pending: [], requestedUrls: [] };
+      }),
+    };
+    const verification = {
+      activeElement: null,
+      activeElementMatchesBaseline: true,
+      baseDocumentFingerprint: 'baseline',
+      documentFingerprint: 'baseline',
+      scrollPositionMatchesBaseline: true,
+    };
+    const protocol = {
+      resetVariant: vi.fn(async () => order.push('reset')),
+      verifyReset: vi.fn(async () => {
+        order.push('verify');
+        return verification;
+      }),
+    };
+    const profile = {
+      width: 800,
+      height: 600,
+      deviceScaleFactor: 1,
+      isMobile: false,
+      hasTouch: false,
+      isLandscape: true,
+    };
+    Object.assign(browser, { resourceWatcher, viewport: profile });
+    const deadline = new CaptureDeadline(1000, 'reset-paint-request');
+
+    try {
+      await (browser as any).resetStorySessionVariant(protocol, 'hovered', profile, deadline, true);
+    } finally {
+      deadline.dispose();
+    }
+
+    expect(observedPaintRequest).toBe(true);
+    expect(order).toEqual(['reset', 'paint-1', 'requests', 'paint-2', 'snapshot', 'verify']);
+  });
 
   it('captures a click variant with custom reset without another Storybook navigation and verifies reset', async () => {
     const logger = new Logger('silent');
@@ -317,6 +383,7 @@ describe(CapturingBrowser.prototype.screenshotSessionVariants, () => {
         runtimeWaitForVariants: [],
       },
       resourceWatcher: {
+        getDiagnosticSnapshot: vi.fn(() => ({ pending: [], requestedUrls: [] })),
         waitForRequestsComplete: vi.fn(async () => ({ pending: [] })),
       },
       rootScreenshotOptions: rootOptions,

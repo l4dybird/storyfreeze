@@ -208,12 +208,16 @@ describe(initializeStorySessionController, () => {
     expect(verification.argsHash).toBe(verification.baseArgsHash);
   });
 
-  it('preserves user-defined class prototypes while restoring rerendered args', async () => {
+  it('fails closed for class instances with private state without corrupting strict capture args', async () => {
     class Model {
-      constructor(public value: string) {}
+      #value: string;
+
+      constructor(value: string) {
+        this.#value = value;
+      }
 
       label() {
-        return `model:${this.value}`;
+        return `model:${this.#value}`;
       }
     }
 
@@ -223,20 +227,14 @@ describe(initializeStorySessionController, () => {
       value: { activeElement: body, body, documentElement: {} },
     });
     const target = {} as any;
+    const model = new Model('before');
     initializeStorySessionController(target);
-    registerStorySessionRuntime({}, { id: 'model--story', args: { model: new Model('before') } }, target);
-    snapshotStorySessionRuntime('model--story', target);
+    expect(() => registerStorySessionRuntime({}, { id: 'model--story', args: { model } }, target)).not.toThrow();
+    expect(() => snapshotStorySessionRuntime('model--story', target)).not.toThrow();
     const protocol = target[STORYFREEZE_STORY_SESSION_GLOBAL]!;
-    await protocol.openSession({ sessionId: 'model', storyId: 'model--story', profileHash: 'desktop' });
-    await protocol.applyVariant('changed');
-
-    const rerenderedArgs = { model: new Model('after') };
-    registerStorySessionRuntime({}, { id: 'model--story', args: rerenderedArgs }, target);
-    await protocol.resetVariant('changed');
-
-    expect(rerenderedArgs.model).toBeInstanceOf(Model);
-    expect(rerenderedArgs.model.label()).toBe('model:before');
-    const verification = await protocol.verifyReset();
-    expect(verification.argsHash).toBe(verification.baseArgsHash);
+    await expect(
+      protocol.openSession({ sessionId: 'model', storyId: 'model--story', profileHash: 'desktop' }),
+    ).rejects.toThrow('Story session baseline is unsafe: Story session cannot safely clone Model state.');
+    expect(model.label()).toBe('model:before');
   });
 });

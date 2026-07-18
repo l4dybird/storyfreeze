@@ -237,4 +237,41 @@ describe(initializeStorySessionController, () => {
     ).rejects.toThrow('Story session baseline is unsafe: Story session cannot safely clone Model state.');
     expect(model.label()).toBe('model:before');
   });
+
+  it('fails closed for native objects whose hidden state cannot be fingerprinted', async () => {
+    const body = { innerHTML: '<button>Ready</button>' };
+    Object.defineProperty(globalThis, 'document', {
+      configurable: true,
+      value: { activeElement: body, body, documentElement: {} },
+    });
+    const target = {} as any;
+    initializeStorySessionController(target);
+    registerStorySessionRuntime({}, { id: 'error--story', args: { error: new Error('before') } }, target);
+    snapshotStorySessionRuntime('error--story', target);
+    const protocol = target[STORYFREEZE_STORY_SESSION_GLOBAL]!;
+
+    await expect(
+      protocol.openSession({ sessionId: 'error', storyId: 'error--story', profileHash: 'desktop' }),
+    ).rejects.toThrow('Story session cannot safely clone Error state');
+  });
+
+  it('fails closed for accessor state instead of sharing its closure with the baseline', async () => {
+    const body = { innerHTML: '<button>Ready</button>' };
+    Object.defineProperty(globalThis, 'document', {
+      configurable: true,
+      value: { activeElement: body, body, documentElement: {} },
+    });
+    let shared = 'before';
+    const accessor = Object.defineProperty({}, 'value', { enumerable: true, get: () => shared });
+    const target = {} as any;
+    initializeStorySessionController(target);
+    registerStorySessionRuntime({}, { id: 'accessor--story', args: { accessor } }, target);
+    snapshotStorySessionRuntime('accessor--story', target);
+    shared = 'after';
+    const protocol = target[STORYFREEZE_STORY_SESSION_GLOBAL]!;
+
+    await expect(
+      protocol.openSession({ sessionId: 'accessor', storyId: 'accessor--story', profileHash: 'desktop' }),
+    ).rejects.toThrow('Story session cannot safely clone accessor state');
+  });
 });

@@ -20,9 +20,12 @@ class TestBackend implements BrowserBackend {
   readonly closePage = vi.fn(async () => {});
   readonly closeBrowser = vi.fn(async () => {});
   readonly exposeFunction = vi.fn(async () => {});
+  launchCount = 0;
+  newSessionCount = 0;
   newPageError?: Error;
 
   async launch(options: BrowserRuntimeOptions): Promise<BrowserInstance> {
+    this.launchCount += 1;
     this.locatedWith = { executablePath: options.chromiumPath, channel: options.chromiumChannel };
     if (!this.findResult.executablePath) throw new ChromiumNotFoundError();
     this.launchedWith = {
@@ -35,6 +38,7 @@ class TestBackend implements BrowserBackend {
       close: this.closeBrowser,
       isHealthy: () => true,
       newSession: async () => {
+        this.newSessionCount += 1;
         if (this.newPageError) throw this.newPageError;
         return {
           close: this.closePage,
@@ -127,6 +131,52 @@ describe(BaseBrowser, () => {
     expect(backend.closePage.mock.invocationCallOrder[0]).toBeLessThan(
       backend.closeBrowser.mock.invocationCallOrder[0],
     );
+  });
+
+  it('shares concurrent boot and close operations without leaking resources', async () => {
+    const { backend, browser } = createBrowser();
+
+    const [first, second] = await Promise.all([browser.boot(), browser.boot()]);
+    expect(first).toBe(browser);
+    expect(second).toBe(browser);
+    expect(backend.launchCount).toBe(1);
+    expect(backend.newSessionCount).toBe(1);
+
+    const firstClose = browser.close();
+    const secondClose = browser.close();
+    expect(secondClose).toBe(firstClose);
+    await Promise.all([firstClose, secondClose]);
+    expect(backend.closePage).toHaveBeenCalledTimes(1);
+    expect(backend.closeBrowser).toHaveBeenCalledTimes(1);
+  });
+
+  it('can boot a fresh generation after close completes', async () => {
+    const { backend, browser } = createBrowser();
+    await browser.boot();
+    await browser.close();
+    await browser.boot();
+
+    expect(backend.launchCount).toBe(2);
+    expect(backend.newSessionCount).toBe(2);
+    await browser.close();
+  });
+
+  it('waits for an in-flight close before booting the next generation', async () => {
+    const { backend, browser } = createBrowser();
+    await browser.boot();
+    let releaseClose = () => {};
+    backend.closePage.mockImplementationOnce(() => new Promise<void>(resolve => (releaseClose = resolve)));
+
+    const closing = browser.close();
+    const booting = browser.boot();
+    await Promise.resolve();
+    expect(backend.launchCount).toBe(1);
+    releaseClose();
+    await closing;
+    await booting;
+
+    expect(backend.launchCount).toBe(2);
+    await browser.close();
   });
 
   it('closes a partially launched browser when session creation fails', async () => {

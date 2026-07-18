@@ -38,6 +38,7 @@ import {
   type SessionVariantRequest,
 } from './story-session.js';
 import { StorySessionProtocolClient } from './story-session-protocol.js';
+import { raceAgainstTimeout } from './async-utils.js';
 
 export { resolveViewport } from './emulation-profile.js';
 
@@ -139,41 +140,33 @@ export class CapturingBrowser extends BaseBrowser {
     this.opt.logger.debug(`[cid: ${this.idx}]`, ...args);
   }
 
-  /**
-   *
-   * @override
-   *
-   **/
-  async boot(sessionOptions?: BrowserSessionOptions) {
+  protected override prepareSessionOptions(sessionOptions?: BrowserSessionOptions) {
     const initialViewport =
       sessionOptions?.viewport ?? resolveViewport(this.baseScreenshotOptions.viewport, this.getDeviceDescriptors());
-    await super.boot(initialViewport ? { ...sessionOptions, viewport: initialViewport } : sessionOptions);
-    this.viewport = initialViewport ? toViewport(normalizeEmulationProfile(initialViewport)) : undefined;
+    return initialViewport ? { ...sessionOptions, viewport: initialViewport } : sessionOptions;
+  }
+
+  protected override async onBooted(sessionOptions?: BrowserSessionOptions) {
+    this.viewport = sessionOptions?.viewport
+      ? toViewport(normalizeEmulationProfile(sessionOptions.viewport))
+      : undefined;
     this.contextStartedAt = performance.now();
     this.capturesInContext = 0;
     this.contextGeneration += 1;
-    try {
-      await this.expose();
-      this.resourceWatcher = new ResourceWatcher(this.page);
-      this.resourceWatcher.init();
-      this.navigator = new StoryNavigator(this.page, new URL(this.connection.url), this.idx);
-      return this;
-    } catch (error) {
-      try {
-        await this.close();
-      } catch {
-        // Preserve the initialization error when cleanup also fails.
-      }
-      throw error;
-    }
+    await this.expose();
+    this.resourceWatcher = new ResourceWatcher(this.page).init();
+    this.navigator = new StoryNavigator(this.page, new URL(this.connection.url), this.idx);
   }
 
-  async close() {
+  protected override async onClosing() {
     const resourceWatcher = this.resourceWatcher;
     this.resourceWatcher = undefined;
     this.navigator = undefined;
-    resourceWatcher?.dispose();
-    await super.close();
+    try {
+      resourceWatcher?.dispose();
+    } catch {
+      // Session close still owns the browser resources when watcher cleanup fails.
+    }
   }
 
   private async addStyles() {
@@ -488,6 +481,13 @@ export class CapturingBrowser extends BaseBrowser {
     }
   }
 
+  private async interruptAttempt(attempt: Promise<unknown> | undefined, timeoutMs = 1_000) {
+    const operations = [this.close(), ...(attempt ? [attempt] : [])];
+    const drained = Promise.allSettled(operations).then(() => undefined);
+    const result = await raceAgainstTimeout(drained, timeoutMs);
+    return !result.timedOut;
+  }
+
   private async recycleContextIfNeeded() {
     const ageMs = this.contextStartedAt === 0 ? 0 : performance.now() - this.contextStartedAt;
     if (!shouldRecycleContext(this.opt.recyclingPolicy, this.capturesInContext, ageMs)) return;
@@ -542,13 +542,11 @@ export class CapturingBrowser extends BaseBrowser {
     const attemptDiagnosticContext = { ...this.diagnosticContext(), storyId: story.id };
     const deadline = new CaptureDeadline(this.opt.captureTimeout, requestId, this.opt.signal);
     this.activeDeadline = deadline;
-    let attempt: Promise<ScreenshotResult> | undefined;
     let attemptContextGeneration: number | undefined;
-
-    try {
+    const attempt = (async () => {
       await this.recycleContextIfNeeded();
       attemptContextGeneration = this.contextGeneration;
-      attempt = this.screenshotAttempt(
+      return this.screenshotAttempt(
         requestId,
         story,
         variantKey,
@@ -559,6 +557,9 @@ export class CapturingBrowser extends BaseBrowser {
         deadline,
         plannedCapture,
       );
+    })();
+
+    try {
       return await Promise.race([attempt, deadline.interruption]);
     } catch (error) {
       const captureError = error instanceof Error ? error : new Error(String(error));
@@ -573,9 +574,15 @@ export class CapturingBrowser extends BaseBrowser {
           : deadline.didTimeout
             ? deadline.timeoutError
             : captureError;
-        const closing = this.close();
-        await Promise.allSettled([attempt ?? Promise.resolve(), closing]);
+        const drained = await this.interruptAttempt(attempt);
         this.resetCaptureState();
+
+        if (!drained) {
+          throw new AggregateError(
+            [interruptionError],
+            'The interrupted capture attempt did not stop after its browser session was closed.',
+          );
+        }
 
         if (!interruptedByRun && retryCount < this.opt.captureMaxRetryCount) {
           this.opt.logger.warn(`${interruptionError.message} Retry to screenshot this story after this sequence.`);
@@ -766,16 +773,18 @@ export class CapturingBrowser extends BaseBrowser {
         defaultVariantSuffix,
       };
     } finally {
-      unsubscribeConsole();
-
       try {
-        if (traceStarted) {
-          await this.measurePhase('trace-flush', async () => {
-            await this.page.stopTrace();
-            const suffix = variantKey.isDefault && defaultVariantSuffix ? [defaultVariantSuffix] : variantKey.keys;
-            const logicalId = JSON.stringify({ storyId: story.id, variantKey });
-            await traceFile!.commit(story.kind, story.story, suffix, logicalId);
-          });
+        try {
+          unsubscribeConsole();
+        } finally {
+          if (traceStarted) {
+            await this.measurePhase('trace-flush', async () => {
+              await this.page.stopTrace();
+              const suffix = variantKey.isDefault && defaultVariantSuffix ? [defaultVariantSuffix] : variantKey.keys;
+              const logicalId = JSON.stringify({ storyId: story.id, variantKey });
+              await traceFile!.commit(story.kind, story.story, suffix, logicalId);
+            });
+          }
         }
       } finally {
         await traceFile?.discard();
@@ -818,20 +827,12 @@ export class CapturingBrowser extends BaseBrowser {
     await this.page.waitForVisualCommit({ paintFallbackMs: 250, timeoutMs: deadline.remaining(3000) }, deadline.signal);
     const pendingRequestCount = this.resourceWatcher!.getDiagnosticSnapshot().pending.length;
     const verification = await protocol.verifyReset();
-    const activeElementMismatch =
-      verification.activeElementMatchesBaseline === undefined
-        ? verification.activeElement !== null
-        : !verification.activeElementMatchesBaseline;
     if (
-      activeElementMismatch ||
+      !verification.activeElementMatchesBaseline ||
       pendingRequestCount !== 0 ||
-      verification.scrollPositionMatchesBaseline !== true ||
-      ((verification.argsHash !== undefined || verification.baseArgsHash !== undefined) &&
-        verification.argsHash !== verification.baseArgsHash) ||
-      ((verification.globalsHash !== undefined || verification.baseGlobalsHash !== undefined) &&
-        verification.globalsHash !== verification.baseGlobalsHash) ||
-      verification.documentFingerprint === undefined ||
-      verification.baseDocumentFingerprint === undefined ||
+      !verification.scrollPositionMatchesBaseline ||
+      verification.argsHash !== verification.baseArgsHash ||
+      verification.globalsHash !== verification.baseGlobalsHash ||
       verification.documentFingerprint !== verification.baseDocumentFingerprint
     ) {
       throw new Error(
@@ -947,25 +948,64 @@ export class CapturingBrowser extends BaseBrowser {
       return buffer;
     })();
 
+    let result: Buffer | null = null;
+    let captureError: unknown;
+    let captureFailed = false;
     try {
-      return await Promise.race([attempt, deadline.interruption]);
-    } finally {
-      unsubscribeConsole();
+      result = await Promise.race([attempt, deadline.interruption]);
+    } catch (error) {
+      captureFailed = true;
+      captureError = error;
+      if (deadline.signal.aborted) {
+        const drained = await this.interruptAttempt(attempt);
+        if (!drained) {
+          captureError = new AggregateError(
+            [error],
+            'The interrupted story-session attempt did not stop after its browser session was closed.',
+          );
+        }
+      }
+    }
+
+    let cleanupError: unknown;
+    try {
       try {
+        unsubscribeConsole();
         if (traceStarted && !deadline.signal.aborted) {
-          await this.page.stopTrace();
+          const stopTrace = this.page.stopTrace();
+          try {
+            await Promise.race([stopTrace, deadline.interruption]);
+          } catch (error) {
+            if (deadline.signal.aborted && !(await this.interruptAttempt(stopTrace))) {
+              throw new AggregateError([error], 'The interrupted trace flush did not stop after session close.');
+            }
+            throw error;
+          }
           if (completed) {
             const logicalId = JSON.stringify({ storyId: story.id, variantKey: request.variantKey });
             await traceFile!.commit(story.kind, story.story, request.variantKey.keys, logicalId);
           }
         }
-      } finally {
-        await traceFile?.discard();
-        deadline.dispose();
-        if (this.activeDeadline === deadline) this.activeDeadline = undefined;
-        if (this.contextGeneration === attemptContextGeneration) this.capturesInContext += 1;
+      } catch (error) {
+        cleanupError = error;
       }
+      try {
+        await traceFile?.discard();
+      } catch (error) {
+        cleanupError = cleanupError === undefined ? error : new AggregateError([cleanupError, error]);
+      }
+    } finally {
+      deadline.dispose();
+      if (this.activeDeadline === deadline) this.activeDeadline = undefined;
+      if (this.contextGeneration === attemptContextGeneration) this.capturesInContext += 1;
     }
+
+    if (captureFailed) {
+      if (cleanupError !== undefined) throw new AggregateError([captureError, cleanupError]);
+      throw captureError;
+    }
+    if (cleanupError !== undefined) throw cleanupError;
+    return result;
   }
 
   private async closeStorySession(protocol: StorySessionProtocolClient, sessionId: string) {
@@ -974,6 +1014,11 @@ export class CapturingBrowser extends BaseBrowser {
     const attempt = protocol.closeSession();
     try {
       await Promise.race([attempt, deadline.interruption]);
+    } catch (error) {
+      if (deadline.signal.aborted && !(await this.interruptAttempt(attempt))) {
+        throw new AggregateError([error], 'The interrupted story-session close did not stop after session close.');
+      }
+      throw error;
     } finally {
       deadline.dispose();
       if (this.activeDeadline === deadline) this.activeDeadline = undefined;
@@ -1085,6 +1130,11 @@ export class CapturingBrowser extends BaseBrowser {
       })();
       try {
         await Promise.race([baselineAttempt, baselineDeadline.interruption]);
+      } catch (error) {
+        if (baselineDeadline.signal.aborted && !(await this.interruptAttempt(baselineAttempt))) {
+          throw new AggregateError([error], 'The interrupted story-session baseline did not stop after session close.');
+        }
+        throw error;
       } finally {
         baselineDeadline.dispose();
         if (this.activeDeadline === baselineDeadline) this.activeDeadline = undefined;

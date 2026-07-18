@@ -31,13 +31,13 @@ function planWithVariants() {
 }
 
 describe(createExecutionWorkload, () => {
-  it('batches session variants before runtime capacity is selected', () => {
+  it('batches session variants while retaining dormant auto-fallback capacity', () => {
     const workload = createExecutionWorkload(planWithVariants(), 'auto');
 
     expect(workload.workItems).toHaveLength(1);
     expect(workload.workItems[0]).toMatchObject({ kind: 'story-session', storyId: 'button--primary' });
     expect(workload.workItems[0].captures).toHaveLength(3);
-    expect(selectWorkerCount(workload, 4)).toEqual({ initialWorkerCount: 1, workerCount: 1 });
+    expect(selectWorkerCount(workload, 4)).toEqual({ initialWorkerCount: 1, workerCount: 4 });
   });
 
   it('keeps one authoritative work-item order and includes transition cost in worker load', () => {

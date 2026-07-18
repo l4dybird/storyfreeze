@@ -52,9 +52,14 @@ export function selectWorkerCount(plan: SchedulablePlan, maximumParallel: number
   const runnableProfileGroupCount = Math.max(1, plan.profileCount);
   const initialWorkerCount = Math.min(maximumParallel, captureCount, runnableProfileGroupCount);
   const hasRuntimeDiscovery = items.some(item => item.executionMode === 'runtime-discovery');
-  // Runtime-discovery plans reserve dormant slots because variants can expand the queue after the default capture.
-  // Known plans preserve the configured compatibility capacity while still booting workers lazily.
-  const workerCount = hasRuntimeDiscovery ? maximumParallel : Math.min(maximumParallel, captureCount);
+  const hasAutoSessionFallback =
+    'workItems' in plan &&
+    plan.captureProtocol === 'auto' &&
+    plan.workItems.some(item => item.kind === 'story-session');
+  // Runtime discovery and auto-session validation can both expand one planned item into many strict captures.
+  // Keep those slots dormant until queue depth requires them instead of permanently serializing the fallback.
+  const workerCount =
+    hasRuntimeDiscovery || hasAutoSessionFallback ? maximumParallel : Math.min(maximumParallel, captureCount);
   return { initialWorkerCount, workerCount };
 }
 

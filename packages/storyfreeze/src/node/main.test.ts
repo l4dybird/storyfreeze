@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vite-plus/test';
+import fs from 'node:fs';
 import { BaseBrowser } from './browser.js';
 import {
   CapturingBrowser,
@@ -173,13 +174,13 @@ describe(bootCaptureWorkers, () => {
 
   it('records each concurrent worker boot independently', async () => {
     vi.stubEnv('STORYFREEZE_CAPTURE_DIAGNOSTICS', '1');
-    const write = vi.spyOn(process.stdout, 'write').mockImplementation(completeStdoutWrite as never);
+    const write = vi.spyOn(fs, 'write').mockImplementation(completeStdoutWrite as never);
     const workers = [createWorker(async () => {}), createWorker(async () => {})];
 
     await expect(bootCaptureWorkers(workers)).resolves.toEqual(workers);
 
     const completions = write.mock.calls
-      .map(([chunk]) => String(chunk))
+      .map(([, chunk]) => String(chunk))
       .filter(line => line.startsWith(CAPTURE_DIAGNOSTIC_PREFIX))
       .map(line => JSON.parse(line.slice(CAPTURE_DIAGNOSTIC_PREFIX.length)))
       .filter(
@@ -527,7 +528,7 @@ describe(CapturingBrowser, () => {
 
   it('returns a retry after an unhealthy Playwright capture closes and reboots the worker', async () => {
     process.env.STORYFREEZE_CAPTURE_DIAGNOSTICS = '1';
-    const write = vi.spyOn(process.stdout, 'write').mockImplementation(completeStdoutWrite as never);
+    const write = vi.spyOn(fs, 'write').mockImplementation(completeStdoutWrite as never);
     const order: string[] = [];
     const watcher = { clear: vi.fn(), dispose: vi.fn() };
     const options = {
@@ -588,7 +589,7 @@ describe(CapturingBrowser, () => {
       browser as unknown as { navigator?: unknown; resourceWatcher?: unknown; touched: boolean; viewport?: unknown },
     ).toMatchObject({ navigator: undefined, resourceWatcher: undefined, touched: false, viewport: undefined });
     const completion = write.mock.calls
-      .map(([chunk]) => String(chunk))
+      .map(([, chunk]) => String(chunk))
       .find(line => line.includes('"type":"capture-complete"'));
     expect(completion).toBeDefined();
     expect(JSON.parse(completion!.slice(CAPTURE_DIAGNOSTIC_PREFIX.length))).toMatchObject({
@@ -759,7 +760,7 @@ describe(main, () => {
 
   it('emits runtime phase diagnostics without changing a failed run', async () => {
     vi.stubEnv('STORYFREEZE_CAPTURE_DIAGNOSTICS', '1');
-    const write = vi.spyOn(process.stdout, 'write').mockImplementation(completeStdoutWrite as never);
+    const write = vi.spyOn(fs, 'write').mockImplementation(completeStdoutWrite as never);
     vi.spyOn(ManagedStorybookConnection.prototype, 'connect').mockImplementation(
       async function (this: ManagedStorybookConnection) {
         return this;
@@ -775,7 +776,7 @@ describe(main, () => {
     await expect(main(options)).rejects.toThrow('enumeration failed');
 
     const events = write.mock.calls
-      .map(([chunk]) => String(chunk))
+      .map(([, chunk]) => String(chunk))
       .filter(line => line.startsWith(CAPTURE_DIAGNOSTIC_PREFIX))
       .map(line => JSON.parse(line.slice(CAPTURE_DIAGNOSTIC_PREFIX.length)))
       .filter(event => event.type === 'runtime-phase' && event.state === 'end');

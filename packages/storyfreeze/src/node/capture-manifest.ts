@@ -16,7 +16,7 @@ import {
 } from '../shared/screenshot-options-helper.js';
 import type { ScreenshotOptions, StrictScreenshotOptions, VariantKey } from '../shared/types.js';
 
-export const STORYFREEZE_MANIFEST_SCHEMA_VERSION = 1 as const;
+export const STORYFREEZE_MANIFEST_SCHEMA_VERSION = 2 as const;
 
 export type ManifestEligibility = 'static' | 'runtime-validation' | 'runtime-discovery';
 
@@ -65,6 +65,7 @@ export interface StoryFreezeManifest {
   schemaVersion: typeof STORYFREEZE_MANIFEST_SCHEMA_VERSION;
   generatedAt: string;
   storybookBuildHash: string;
+  warnings: string[];
   stories: ManifestStory[];
   captures: ManifestCapture[];
 }
@@ -172,9 +173,12 @@ export function estimateCaptureCostMs(options: NormalizedCaptureOptions): number
   return 400 + Math.max(0, options.delay) + pixelCost + interactionCost + fullPageCost;
 }
 
-function variantInputs(options: ScreenshotOptions): VariantKey[] {
+function variantInputs(options: ScreenshotOptions) {
   const [invalid, variants] = extractVariantKeys(options);
-  return invalid ? [{ isDefault: true, keys: [] }] : [{ isDefault: true, keys: [] }, ...variants];
+  return {
+    invalid,
+    variants: invalid ? [{ isDefault: true, keys: [] }] : [{ isDefault: true, keys: [] }, ...variants],
+  };
 }
 
 function classifyCapture(
@@ -191,23 +195,27 @@ function classifyCapture(
 
 export function generateCaptureManifest(options: ManifestGeneratorOptions): StoryFreezeManifest {
   const base = options.baseOptions;
-  const stories = [...options.stories]
-    .sort((left, right) => compareDeterministicStrings(left.id, right.id))
-    .map(({ id, title, name, importPath, tags }) => ({
-      storyId: id,
-      title,
-      name,
-      ...(importPath === undefined ? {} : { importPath }),
-      ...(tags === undefined ? {} : { tags: [...tags].sort(compareDeterministicStrings) }),
-    }));
+  const sortedStoryInputs = [...options.stories].sort((left, right) => compareDeterministicStrings(left.id, right.id));
+  const stories = sortedStoryInputs.map(({ id, title, name, importPath, tags }) => ({
+    storyId: id,
+    title,
+    name,
+    ...(importPath === undefined ? {} : { importPath }),
+    ...(tags === undefined ? {} : { tags: [...tags].sort(compareDeterministicStrings) }),
+  }));
   const captures: ManifestCapture[] = [];
+  const warnings: string[] = [];
 
-  for (const story of [...options.stories].sort((left, right) => compareDeterministicStrings(left.id, right.id))) {
+  for (const story of sortedStoryInputs) {
     const storyOptions = story.screenshotOptions ? expandViewportsOption(story.screenshotOptions) : {};
     const merged = mergeScreenshotOptions(base, storyOptions);
     const hasRuntimeValue = containsRuntimeValue(story.screenshotOptions);
 
-    for (const variantKey of variantInputs(merged)) {
+    const variantInput = variantInputs(merged);
+    if (variantInput.invalid) {
+      warnings.push(`Story ${story.id} has an invalid variant graph: ${deterministicSerialize(variantInput.invalid)}.`);
+    }
+    for (const variantKey of variantInput.variants) {
       const selected = pickupWithVariantKey(merged, variantKey);
       const resolved = normalizeCaptureOptions(selected, options.deviceDescriptors);
       // Preserve the legacy runtime warning/skip path for an unknown device name.
@@ -235,6 +243,7 @@ export function generateCaptureManifest(options: ManifestGeneratorOptions): Stor
     schemaVersion: STORYFREEZE_MANIFEST_SCHEMA_VERSION,
     generatedAt: options.generatedAt ?? new Date().toISOString(),
     storybookBuildHash: options.storybookBuildHash ?? createStorybookBuildHash(options.stories),
+    warnings,
     stories,
     captures: captures.sort((left, right) => compareDeterministicStrings(left.captureId, right.captureId)),
   };
@@ -267,6 +276,9 @@ export function validateCaptureManifest(value: unknown): asserts value is StoryF
   assertString(value.storybookBuildHash, 'manifest.storybookBuildHash');
   if (!Array.isArray(value.stories)) throw new Error('manifest.stories must be an array.');
   if (!Array.isArray(value.captures)) throw new Error('manifest.captures must be an array.');
+  if (!Array.isArray(value.warnings) || !value.warnings.every(warning => typeof warning === 'string')) {
+    throw new Error('manifest.warnings must be an array of strings.');
+  }
 
   const storyIds = new Set<string>();
   value.stories.forEach((raw, index) => {

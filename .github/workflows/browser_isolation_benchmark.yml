@@ -173,6 +173,14 @@ jobs:
         run: >-
           node scripts/e2e-prestorybook.js examples/react-vite performance-roadmap-benchmark.js
           "$RUNNER_TEMP/performance-roadmap-matrix.json"
+      - name: Preserve roadmap benchmark failure
+        if: failure()
+        env:
+          STORYFREEZE_ROADMAP_BENCHMARK_PROFILE: ${{ inputs.matrix_profile }}
+        run: >-
+          node -e "const fs=require('node:fs');const p=process.env.RUNNER_TEMP+'/performance-roadmap-matrix.json';
+          if(!fs.existsSync(p))fs.writeFileSync(p,JSON.stringify({status:'fatal',profile:process.env.STORYFREEZE_ROADMAP_BENCHMARK_PROFILE,
+          message:'Roadmap benchmark exited before producing a result.'})+'\n')"
       - name: Print roadmap benchmark record
         if: always()
         run: test ! -f "$RUNNER_TEMP/performance-roadmap-matrix.json" || cat "$RUNNER_TEMP/performance-roadmap-matrix.json"

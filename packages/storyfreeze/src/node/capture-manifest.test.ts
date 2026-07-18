@@ -113,6 +113,9 @@ describe(generateCaptureManifest, () => {
 
     expect(manifest.captures).toHaveLength(1);
     expect(manifest.captures[0]).toMatchObject({ storyId: 'button--primary', variantKey: [] });
+    expect(manifest.warnings).toEqual([
+      'Story button--primary has an invalid variant graph: {"from":"broken","to":"missing","type":"notFound"}.',
+    ]);
   });
 
   it('assigns distinct capture ids to the root and a variant named default', () => {

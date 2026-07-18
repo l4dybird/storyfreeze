@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vite-plus/test';
+import fs from 'node:fs';
 import type { FileSystem } from './file.js';
 import type { Logger } from './logger.js';
 import { createScreenshotService } from './screenshot-service.js';
@@ -31,7 +32,7 @@ describe(createScreenshotService, () => {
 
   it('queues a retry before adding all variants from the successful default capture', async () => {
     vi.stubEnv('STORYFREEZE_CAPTURE_DIAGNOSTICS', '1');
-    const write = vi.spyOn(process.stdout, 'write').mockImplementation(completeStdoutWrite as never);
+    const write = vi.spyOn(fs, 'write').mockImplementation(completeStdoutWrite as never);
     const hovered: VariantKey = { isDefault: false, keys: ['hovered'] };
     const small: VariantKey = { isDefault: false, keys: ['SMALL'] };
     const screenshot = vi.fn(async (_rid: string, _story: Story, variantKey: VariantKey, count: number) => {
@@ -72,7 +73,7 @@ describe(createScreenshotService, () => {
     ]);
     expect(saveScreenshot.mock.calls.map(([, , suffix]) => suffix)).toEqual([['LARGE'], ['hovered'], ['SMALL']]);
     const events = write.mock.calls
-      .map(([chunk]) => String(chunk))
+      .map(([, chunk]) => String(chunk))
       .filter(line => line.startsWith(CAPTURE_DIAGNOSTIC_PREFIX))
       .map(line => JSON.parse(line.slice(CAPTURE_DIAGNOSTIC_PREFIX.length)));
     expect(events.filter(event => event.type === 'queue-task' && event.state === 'start')).toHaveLength(4);
@@ -167,10 +168,11 @@ describe(createScreenshotService, () => {
     expect(bootWorker).toHaveBeenCalledOnce();
   });
 
-  it('leaves dormant workers unbooted when the initial queue drains', async () => {
+  it('leaves dormant workers unbooted when one active worker can perform its retry', async () => {
+    let attempt = 0;
     const screenshot = vi.fn(async () => ({
       buffer: Buffer.from('png'),
-      succeeded: true,
+      succeeded: ++attempt > 1,
       variantKeysToPush: [],
       defaultVariantSuffix: '',
     }));
@@ -190,12 +192,13 @@ describe(createScreenshotService, () => {
     });
 
     await expect(service.execute()).resolves.toBe(1);
+    expect(screenshot).toHaveBeenCalledTimes(2);
     expect(bootWorker).not.toHaveBeenCalled();
   });
 
   it('maps the stored path to the request when capture diagnostics are enabled', async () => {
     vi.stubEnv('STORYFREEZE_CAPTURE_DIAGNOSTICS', '1');
-    const write = vi.spyOn(process.stdout, 'write').mockImplementation(completeStdoutWrite as never);
+    const write = vi.spyOn(fs, 'write').mockImplementation(completeStdoutWrite as never);
     const screenshot = vi.fn(async () => ({
       buffer: Buffer.from('png'),
       succeeded: true,
@@ -219,7 +222,7 @@ describe(createScreenshotService, () => {
     });
 
     await expect(service.execute()).resolves.toBe(1);
-    const lines = write.mock.calls.map(call => String(call[0]));
+    const lines = write.mock.calls.map(call => String(call[1]));
     const queueLine = lines.find(value => value.includes('"type":"queue-task"') && value.includes('"state":"start"'));
     expect(queueLine).toBeDefined();
     expect(JSON.parse(queueLine!.slice(CAPTURE_DIAGNOSTIC_PREFIX.length))).toMatchObject({

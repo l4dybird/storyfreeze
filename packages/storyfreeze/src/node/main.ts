@@ -287,6 +287,7 @@ export async function main(mainOptions: MainOptions, overrides: Partial<MainDepe
       mode,
       freshContext: false,
     });
+    for (const warning of manifest.warnings) logger.warn(warning);
     const capturePlan = createCapturePlan(manifest);
     const executionWorkload = createExecutionWorkload(capturePlan, mainOptions.captureProtocol ?? 'strict');
     const topologySelection = selectTopology(

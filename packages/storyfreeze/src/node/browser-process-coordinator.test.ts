@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vite-plus/test';
+import fs from 'node:fs';
 import type {
   BrowserBackend,
   BrowserInstance,
@@ -46,10 +47,9 @@ function createBackend(instances: BrowserInstance[]) {
 describe(BrowserProcessCoordinator, () => {
   it('reports coordinated browser launches when diagnostics are enabled', async () => {
     vi.stubEnv('STORYFREEZE_CAPTURE_DIAGNOSTICS', '1');
-    const write = vi.spyOn(process.stdout, 'write').mockImplementation(((...args: unknown[]) => {
+    const write = vi.spyOn(fs, 'write').mockImplementation(((...args: unknown[]) => {
       const callback = args.find(value => typeof value === 'function') as (() => void) | undefined;
       callback?.();
-      return true;
     }) as never);
     const browser = createInstance('/chromium/first');
     const { backend } = createBackend([browser.instance]);
@@ -58,8 +58,16 @@ describe(BrowserProcessCoordinator, () => {
     try {
       await coordinator.openSession();
 
-      expect(write).toHaveBeenCalledWith(expect.stringContaining('"type":"browser-launch"'), expect.any(Function));
-      expect(write).toHaveBeenCalledWith(expect.stringContaining('"source":"coordinator"'), expect.any(Function));
+      expect(write).toHaveBeenCalledWith(
+        process.stdout.fd,
+        expect.stringContaining('"type":"browser-launch"'),
+        expect.any(Function),
+      );
+      expect(write).toHaveBeenCalledWith(
+        process.stdout.fd,
+        expect.stringContaining('"source":"coordinator"'),
+        expect.any(Function),
+      );
     } finally {
       await coordinator.close();
       write.mockRestore();

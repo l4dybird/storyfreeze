@@ -32,6 +32,18 @@ import {
 } from './browser-backend.js';
 import { findChrome, type FindChromeOptions, type FindChromeResult } from './chromium-resolver.js';
 
+const styleFileContents = new Map<string, Promise<string>>();
+
+function readStyleFile(path: string) {
+  let content = styleFileContents.get(path);
+  if (!content) {
+    content = fs.promises.readFile(path, 'utf8');
+    styleFileContents.set(path, content);
+    void content.catch(() => styleFileContents.delete(path));
+  }
+  return content;
+}
+
 const traceCategories = [
   '-*',
   'devtools.timeline',
@@ -100,8 +112,8 @@ export class PlaywrightCapturePage implements CapturePage {
     await this.rawPage.bringToFront();
   }
 
-  addStyleFile(path: string) {
-    return this.rawPage.addStyleTag({ path }).then(() => {});
+  async addStyleFile(path: string) {
+    await this.rawPage.addStyleTag({ content: await readStyleFile(path) });
   }
 
   click(selector: string) {

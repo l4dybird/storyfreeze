@@ -1,7 +1,7 @@
 import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
-import { afterEach, beforeEach, describe, expect, it } from 'vite-plus/test';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vite-plus/test';
 import { FileSystem } from './file.js';
 import type { MainOptions } from './types.js';
 
@@ -13,6 +13,7 @@ describe(FileSystem, () => {
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     await fs.rm(outDir, { recursive: true, force: true });
   });
 
@@ -58,6 +59,44 @@ describe(FileSystem, () => {
 
     await expect(fs.readFile(savedPath, 'utf8')).resolves.toBe('second');
     await expect(fs.readdir(path.dirname(savedPath))).resolves.toEqual(['Primary.png']);
+  });
+
+  it('bounds concurrent writes and creates a shared output directory once', async () => {
+    const fileSystem = new FileSystem({ outDir, flat: false, parallel: 2 } as MainOptions);
+    const originalWriteFile = fs.writeFile.bind(fs);
+    let active = 0;
+    let peak = 0;
+    vi.spyOn(fs, 'writeFile').mockImplementation((async (...args: Parameters<typeof fs.writeFile>) => {
+      active += 1;
+      peak = Math.max(peak, active);
+      await new Promise<void>(resolve => setImmediate(resolve));
+      try {
+        return await originalWriteFile(...args);
+      } finally {
+        active -= 1;
+      }
+    }) as typeof fs.writeFile);
+    const mkdir = vi.spyOn(fs, 'mkdir');
+
+    await Promise.all(
+      Array.from({ length: 6 }, (_, index) =>
+        fileSystem.saveScreenshot('Button', `Story ${index}`, [], Buffer.from(`png-${index}`)),
+      ),
+    );
+    await fileSystem.flush();
+
+    expect(peak).toBe(2);
+    expect(mkdir).toHaveBeenCalledTimes(1);
+  });
+
+  it('closes the writer and flush fails after an output error', async () => {
+    await fs.rm(outDir, { recursive: true, force: true });
+    await fs.writeFile(outDir, 'not a directory');
+    const fileSystem = createFileSystem(false);
+
+    await expect(fileSystem.saveScreenshot('Button', 'First', [], Buffer.from('png'))).rejects.toThrow();
+    await expect(fileSystem.saveScreenshot('Button', 'Second', [], Buffer.from('png'))).rejects.toThrow();
+    await expect(fileSystem.flush()).rejects.toThrow();
   });
 
   it('streams trace chunks through a temporary file before committing the final path', async () => {

@@ -81,4 +81,45 @@ describe(CaptureLeaseQueue, () => {
 
     expect(queue.lease(1)?.capture.captureId).toBe('a-first');
   });
+
+  it('maintains pending and queued-cost counters across a large FIFO lane', () => {
+    const captures = Array.from({ length: 256 }, (_, index) => ({
+      ...capture(`capture-${String(index).padStart(3, '0')}`, 'story'),
+      estimatedCostMs: index + 1,
+    }));
+    const queue = new CaptureLeaseQueue([captures, []]);
+
+    for (let index = 0; index < captures.length; index += 1) {
+      const lease = queue.lease(0)!;
+      expect(lease.capture).toBe(captures[index]);
+      queue.markRunning(lease.capture.captureId);
+      queue.complete(lease.capture.captureId);
+      expect(queue.pendingCount).toBe(captures.length - index - 1);
+    }
+    expect(queue.isDrained()).toBe(true);
+  });
+
+  it('wakes one idle worker per new capture and all remaining waiters only when drained', async () => {
+    const first = capture('active', 'story');
+    const queue = new CaptureLeaseQueue([[first], [], []]);
+    const active = queue.lease(0)!;
+    queue.markRunning(active.capture.captureId);
+    const awakened: number[] = [];
+    const waitingOne = queue.waitForChange().then(() => awakened.push(1));
+    const waitingTwo = queue.waitForChange().then(() => awakened.push(2));
+
+    queue.enqueue(capture('new', 'story'), 1);
+    await Promise.resolve();
+    expect(awakened).toEqual([1]);
+
+    const added = queue.lease(1)!;
+    queue.markRunning(added.capture.captureId);
+    queue.complete(added.capture.captureId);
+    await Promise.resolve();
+    expect(awakened).toEqual([1]);
+
+    queue.fail(active.capture.captureId);
+    await Promise.all([waitingOne, waitingTwo]);
+    expect(awakened).toEqual([1, 2]);
+  });
 });

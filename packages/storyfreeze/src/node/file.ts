@@ -12,10 +12,19 @@ export interface TraceFile {
 
 export class FileSystem {
   private readonly reservedPaths = new Map<string, string>();
+  private readonly directoryPromises = new Map<string, Promise<void>>();
   private readonly outputRoot: string;
+  private readonly maximumConcurrentWrites: number;
+  private readonly maximumBufferedBytes = 64 * 1024 * 1024;
+  private readonly writeWaiters: Array<{ bytes: number; resolve: () => void; reject: (error: unknown) => void }> = [];
+  private readonly pendingWrites = new Set<Promise<unknown>>();
+  private activeWrites = 0;
+  private activeWriteBytes = 0;
+  private writerError?: unknown;
 
   constructor(private opt: MainOptions) {
     this.outputRoot = path.resolve(opt.outDir);
+    this.maximumConcurrentWrites = Math.max(1, Math.min(8, opt.parallel || 1));
   }
 
   private getPath(kind: string, story: string, suffix: string[], extension: string, logicalId?: string) {
@@ -48,17 +57,76 @@ export class FileSystem {
     return resolvedPath;
   }
 
-  private async writeAtomic(filePath: string, buffer: Buffer) {
-    await fs.mkdir(path.dirname(filePath), { recursive: true });
-    const temporaryPath = `${filePath}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`;
-
-    try {
-      await fs.writeFile(temporaryPath, buffer);
-      await fs.rename(temporaryPath, filePath);
-    } catch (error) {
-      await fs.rm(temporaryPath, { force: true });
-      throw error;
+  private ensureDirectory(directory: string) {
+    let creating = this.directoryPromises.get(directory);
+    if (!creating) {
+      creating = fs.mkdir(directory, { recursive: true }).then(() => undefined);
+      this.directoryPromises.set(directory, creating);
+      void creating.catch(() => this.directoryPromises.delete(directory));
     }
+    return creating;
+  }
+
+  private acquireWrite(bytes: number) {
+    if (this.writerError !== undefined) return Promise.reject(this.writerError);
+    return new Promise<void>((resolve, reject) => {
+      this.writeWaiters.push({ bytes, resolve, reject });
+      this.startWaitingWrites();
+    });
+  }
+
+  private startWaitingWrites() {
+    while (this.writeWaiters.length > 0 && this.activeWrites < this.maximumConcurrentWrites) {
+      const next = this.writeWaiters[0];
+      const fits = this.activeWriteBytes + next.bytes <= this.maximumBufferedBytes;
+      if (!fits && this.activeWrites > 0) return;
+      this.writeWaiters.shift();
+      this.activeWrites += 1;
+      this.activeWriteBytes += next.bytes;
+      next.resolve();
+    }
+  }
+
+  private releaseWrite(bytes: number) {
+    this.activeWrites -= 1;
+    this.activeWriteBytes -= bytes;
+    this.startWaitingWrites();
+  }
+
+  private closeWriter(error: unknown) {
+    if (this.writerError !== undefined) return;
+    this.writerError = error;
+    for (const waiter of this.writeWaiters.splice(0)) waiter.reject(error);
+  }
+
+  private writeAtomic(filePath: string, buffer: Buffer) {
+    const operation = (async () => {
+      await this.acquireWrite(buffer.byteLength);
+      const temporaryPath = `${filePath}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`;
+
+      try {
+        await this.ensureDirectory(path.dirname(filePath));
+        await fs.writeFile(temporaryPath, buffer);
+        await fs.rename(temporaryPath, filePath);
+      } catch (error) {
+        await fs.rm(temporaryPath, { force: true });
+        this.closeWriter(error);
+        throw error;
+      } finally {
+        this.releaseWrite(buffer.byteLength);
+      }
+    })();
+    this.pendingWrites.add(operation);
+    void operation.then(
+      () => this.pendingWrites.delete(operation),
+      () => this.pendingWrites.delete(operation),
+    );
+    return operation;
+  }
+
+  async flush() {
+    await Promise.allSettled([...this.pendingWrites]);
+    if (this.writerError !== undefined) throw this.writerError;
   }
 
   /**
@@ -81,7 +149,7 @@ export class FileSystem {
   }
 
   async createTraceFile(): Promise<TraceFile> {
-    await fs.mkdir(this.outputRoot, { recursive: true });
+    await this.ensureDirectory(this.outputRoot);
     const temporaryPath = path.join(
       this.outputRoot,
       `.storyfreeze-trace.${process.pid}.${randomBytes(6).toString('hex')}.tmp`,
@@ -103,7 +171,7 @@ export class FileSystem {
       commit: async (kind, story, suffix, logicalId) => {
         if (state !== 'open') throw new Error('Cannot commit a finalized Chromium trace.');
         const filePath = this.getPath(kind, story, [...suffix, 'trace'], '.json', logicalId);
-        await fs.mkdir(path.dirname(filePath), { recursive: true });
+        await this.ensureDirectory(path.dirname(filePath));
         await close();
         try {
           await fs.rename(temporaryPath, filePath);

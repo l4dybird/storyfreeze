@@ -40,6 +40,8 @@ import {
 import { StorySessionProtocolClient } from './story-session-protocol.js';
 import { raceAgainstTimeout } from './async-utils.js';
 
+const disableAnimationStylePath = fileURLToPath(new URL('../../assets/disable-animation.css', import.meta.url));
+
 export { resolveViewport } from './emulation-profile.js';
 
 /**
@@ -173,7 +175,7 @@ export class CapturingBrowser extends BaseBrowser {
 
   private async addStyles() {
     if (this.opt.disableCssAnimation) {
-      await this.page.addStyleFile(fileURLToPath(new URL('../../assets/disable-animation.css', import.meta.url)));
+      await this.page.addStyleFile(disableAnimationStylePath);
     }
   }
 

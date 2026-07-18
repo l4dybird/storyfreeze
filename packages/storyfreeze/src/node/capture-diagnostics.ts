@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+
 export const CAPTURE_DIAGNOSTIC_PREFIX = 'STORYFREEZE_CAPTURE_DIAGNOSTIC=';
 
 export type CaptureDiagnosticEvent = {
@@ -13,27 +15,38 @@ export type CaptureDiagnosticEvent = {
 };
 
 const captureDiagnosticListeners = new Set<(event: CaptureDiagnosticEvent) => void>();
-let pendingDiagnosticWrites = 0;
 
-function ignoreDiagnosticWriteError() {
-  // A closed diagnostics consumer (for example EPIPE) must not fail capture work.
+class DiagnosticSink {
+  private readonly lines: string[] = [];
+  private head = 0;
+  private writing = false;
+
+  write(line: string) {
+    this.lines.push(line);
+    this.flushNext();
+  }
+
+  private flushNext() {
+    if (this.writing || this.head >= this.lines.length) return;
+    this.writing = true;
+    const line = this.lines[this.head++];
+    const complete = () => {
+      this.writing = false;
+      if (this.head === this.lines.length) {
+        this.lines.length = 0;
+        this.head = 0;
+      }
+      this.flushNext();
+    };
+    try {
+      fs.write(process.stdout.fd, line, complete);
+    } catch {
+      complete();
+    }
+  }
 }
 
-function beginDiagnosticWrite() {
-  if (pendingDiagnosticWrites === 0) process.stdout.on('error', ignoreDiagnosticWriteError);
-  pendingDiagnosticWrites += 1;
-}
-
-function finishDiagnosticWrite(error?: Error | null) {
-  const release = () => {
-    pendingDiagnosticWrites = Math.max(0, pendingDiagnosticWrites - 1);
-    if (pendingDiagnosticWrites === 0) process.stdout.off('error', ignoreDiagnosticWriteError);
-  };
-  // Node invokes a failed write callback before emitting the stream's error.
-  // Keep the scoped listener through that emission, then remove it immediately.
-  if (error) setImmediate(release);
-  else release();
-}
+let diagnosticSink: DiagnosticSink | undefined;
 
 export function captureDiagnosticsEnabled() {
   return process.env.STORYFREEZE_CAPTURE_DIAGNOSTICS === '1';
@@ -51,18 +64,8 @@ export function emitCaptureDiagnostic(event: CaptureDiagnosticEvent) {
   try {
     const line = `${CAPTURE_DIAGNOSTIC_PREFIX}${JSON.stringify(event)}\n`;
     if (process.stdout.destroyed || process.stdout.writableEnded) return;
-    beginDiagnosticWrite();
-    let finished = false;
-    const finish = (error?: Error | null) => {
-      if (finished) return;
-      finished = true;
-      finishDiagnosticWrite(error);
-    };
-    try {
-      process.stdout.write(line, finish);
-    } catch {
-      finish();
-    }
+    diagnosticSink ??= new DiagnosticSink();
+    diagnosticSink.write(line);
   } catch {
     // Serialization and output are best effort for the same reason as diagnostic listeners.
   }

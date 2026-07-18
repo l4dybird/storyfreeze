@@ -5,8 +5,8 @@ import type {
   BrowserSession,
   BrowserSessionOptions,
 } from './browser-backend.js';
-import { sleep } from './async-utils.js';
 import { emitCaptureDiagnostic } from './capture-diagnostics.js';
+import { raceAgainstTimeout } from './async-utils.js';
 
 export interface BrowserSessionLease {
   readonly executablePath: string;
@@ -94,7 +94,6 @@ export class BrowserProcessCoordinator implements BrowserSessionSource {
     const current = this.current;
     this.current = undefined;
     if (current) {
-      await sleep(50);
       await this.closeInstance(current.instance);
     }
   }
@@ -102,7 +101,9 @@ export class BrowserProcessCoordinator implements BrowserSessionSource {
   private closeInstance(instance: BrowserInstance) {
     let closing = this.instanceClosures.get(instance);
     if (!closing) {
-      closing = Promise.resolve().then(() => instance.close());
+      closing = Promise.resolve()
+        .then(() => raceAgainstTimeout(instance.close(), 5_000))
+        .then(() => undefined);
       this.instanceClosures.set(instance, closing);
     }
     return closing;

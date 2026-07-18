@@ -31,15 +31,22 @@ type StateRecord<T> = {
   state: CaptureExecutionState;
 };
 
+type QueueLane<T> = {
+  items: T[];
+  head: number;
+  queuedCostMs: number;
+};
+
 /**
  * Owns every capture state transition and guarantees that a capture has at most one active lease.
  * JavaScript's run-to-completion semantics make transitions atomic between worker awaits.
  */
 export class CaptureLeaseQueue<T extends LeaseableCapture> {
-  private readonly queues: T[][];
+  private readonly lanes: QueueLane<T>[];
   private readonly states = new Map<string, StateRecord<T>>();
   private readonly waiters: Array<() => void> = [];
   private activeLeaseCount = 0;
+  private pendingCaptureCount = 0;
   private readonly diagnostics: CaptureLeaseQueueDiagnostics = {
     affinityHitCount: 0,
     affinityMissCount: 0,
@@ -50,7 +57,7 @@ export class CaptureLeaseQueue<T extends LeaseableCapture> {
 
   constructor(assignments: readonly (readonly T[])[]) {
     if (assignments.length === 0) throw new Error('CaptureLeaseQueue requires at least one worker queue.');
-    this.queues = assignments.map(() => []);
+    this.lanes = assignments.map(() => ({ items: [], head: 0, queuedCostMs: 0 }));
     assignments.forEach((captures, workerId) => {
       for (const capture of captures) {
         if (!this.enqueue(capture, workerId)) throw new Error(`Duplicate planned capture id: ${capture.captureId}.`);
@@ -59,11 +66,11 @@ export class CaptureLeaseQueue<T extends LeaseableCapture> {
   }
 
   get workerCount() {
-    return this.queues.length;
+    return this.lanes.length;
   }
 
   get pendingCount() {
-    return this.queues.reduce((total, queue) => total + queue.length, 0);
+    return this.pendingCaptureCount;
   }
 
   get activeCount() {
@@ -85,31 +92,31 @@ export class CaptureLeaseQueue<T extends LeaseableCapture> {
     }
     const ownerWorkerId = this.selectOwner(preferredWorkerId);
     this.states.set(capture.captureId, { capture, ownerWorkerId, state: 'planned' });
-    this.queues[ownerWorkerId].push(capture);
-    this.wakeAll();
+    this.push(ownerWorkerId, capture);
+    this.wakeOne();
     return true;
   }
 
   lease(workerId: number, lastProfile?: EmulationProfile, lastStoryId?: string): CaptureLease<T> | undefined {
     this.assertWorkerId(workerId);
     let ownerWorkerId = workerId;
-    let capture = this.queues[workerId].shift();
+    let capture = this.takeFront(this.lanes[workerId]);
     if (!capture) {
-      const candidates = this.queues
-        .map((queue, candidateWorkerId) => ({
-          candidateWorkerId,
-          capture: this.peekBest(queue, lastProfile, lastStoryId),
-        }))
-        .filter(candidate => candidate.capture !== undefined)
-        .sort((left, right) => {
-          const leftCost = this.affinityCost(left.capture!, lastProfile, lastStoryId);
-          const rightCost = this.affinityCost(right.capture!, lastProfile, lastStoryId);
-          return leftCost - rightCost || left.candidateWorkerId - right.candidateWorkerId;
-        });
-      const selected = candidates[0];
+      let selected: { candidateWorkerId: number; capture: T; index: number; affinityCost: number } | undefined;
+      for (let candidateWorkerId = 0; candidateWorkerId < this.lanes.length; candidateWorkerId += 1) {
+        const candidate = this.peekBest(this.lanes[candidateWorkerId], lastProfile, lastStoryId);
+        if (
+          candidate &&
+          (!selected ||
+            candidate.affinityCost < selected.affinityCost ||
+            (candidate.affinityCost === selected.affinityCost && candidateWorkerId < selected.candidateWorkerId))
+        ) {
+          selected = { candidateWorkerId, ...candidate };
+        }
+      }
       if (!selected) return undefined;
       ownerWorkerId = selected.candidateWorkerId;
-      capture = this.takeById(this.queues[ownerWorkerId], selected.capture!.captureId);
+      capture = this.takeAt(this.lanes[ownerWorkerId], selected.index);
     }
     if (!capture) return undefined;
 
@@ -152,7 +159,8 @@ export class CaptureLeaseQueue<T extends LeaseableCapture> {
     record.capture = capture;
     record.ownerWorkerId = ownerWorkerId;
     record.state = 'requeued';
-    this.queues[ownerWorkerId].push(capture);
+    this.push(ownerWorkerId, capture);
+    this.wakeOne();
     this.releaseLease();
   }
 
@@ -166,11 +174,11 @@ export class CaptureLeaseQueue<T extends LeaseableCapture> {
   }
 
   wakeAll(): void {
-    this.waiters.splice(0).forEach(resolve => resolve());
+    for (const resolve of this.waiters.splice(0)) resolve();
   }
 
   private assertWorkerId(workerId: number) {
-    if (!Number.isSafeInteger(workerId) || workerId < 0 || workerId >= this.queues.length) {
+    if (!Number.isSafeInteger(workerId) || workerId < 0 || workerId >= this.lanes.length) {
       throw new Error(`Invalid capture worker id: ${workerId}.`);
     }
   }
@@ -180,12 +188,16 @@ export class CaptureLeaseQueue<T extends LeaseableCapture> {
       this.assertWorkerId(preferredWorkerId);
       return preferredWorkerId;
     }
-    return this.queues
-      .map((queue, workerId) => ({
-        workerId,
-        cost: queue.reduce((total, item) => total + (item.estimatedCostMs ?? 0), 0),
-      }))
-      .sort((left, right) => left.cost - right.cost || left.workerId - right.workerId)[0].workerId;
+    let selectedWorkerId = 0;
+    let selectedCost = this.lanes[0].queuedCostMs;
+    for (let workerId = 1; workerId < this.lanes.length; workerId += 1) {
+      const cost = this.lanes[workerId].queuedCostMs;
+      if (cost < selectedCost) {
+        selectedWorkerId = workerId;
+        selectedCost = cost;
+      }
+    }
+    return selectedWorkerId;
   }
 
   private affinityCost(capture: T, lastProfile?: EmulationProfile, lastStoryId?: string): number {
@@ -195,18 +207,57 @@ export class CaptureLeaseQueue<T extends LeaseableCapture> {
     );
   }
 
-  private peekBest(queue: T[], lastProfile?: EmulationProfile, lastStoryId?: string): T | undefined {
-    return [...queue].sort(
-      (left, right) =>
-        this.affinityCost(left, lastProfile, lastStoryId) - this.affinityCost(right, lastProfile, lastStoryId) ||
-        compareDeterministicStrings(left.captureId, right.captureId),
-    )[0];
+  private push(workerId: number, capture: T) {
+    const lane = this.lanes[workerId];
+    lane.items.push(capture);
+    lane.queuedCostMs += capture.estimatedCostMs ?? 0;
+    this.pendingCaptureCount += 1;
   }
 
-  private takeById(queue: T[], captureId: string): T | undefined {
-    const index = queue.findIndex(capture => capture.captureId === captureId);
-    if (index < 0) return undefined;
-    return queue.splice(index, 1)[0];
+  private takeFront(lane: QueueLane<T>): T | undefined {
+    if (lane.head >= lane.items.length) return undefined;
+    const capture = lane.items[lane.head++];
+    this.removed(lane, capture);
+    if (lane.head >= 64 && lane.head * 2 >= lane.items.length) {
+      lane.items = lane.items.slice(lane.head);
+      lane.head = 0;
+    }
+    return capture;
+  }
+
+  private peekBest(lane: QueueLane<T>, lastProfile?: EmulationProfile, lastStoryId?: string) {
+    let selected: { capture: T; index: number; affinityCost: number } | undefined;
+    for (let index = lane.head; index < lane.items.length; index += 1) {
+      const capture = lane.items[index];
+      const affinityCost = this.affinityCost(capture, lastProfile, lastStoryId);
+      if (
+        !selected ||
+        affinityCost < selected.affinityCost ||
+        (affinityCost === selected.affinityCost &&
+          compareDeterministicStrings(capture.captureId, selected.capture.captureId) < 0)
+      ) {
+        selected = { capture, index, affinityCost };
+      }
+    }
+    return selected;
+  }
+
+  private takeAt(lane: QueueLane<T>, index: number): T | undefined {
+    if (index === lane.head) return this.takeFront(lane);
+    if (index < lane.head || index >= lane.items.length) return undefined;
+    const [capture] = lane.items.splice(index, 1);
+    if (capture) this.removed(lane, capture);
+    return capture;
+  }
+
+  private removed(lane: QueueLane<T>, capture: T) {
+    lane.queuedCostMs -= capture.estimatedCostMs ?? 0;
+    this.pendingCaptureCount -= 1;
+    if (this.pendingCaptureCount < 0) throw new Error('Capture pending count became negative.');
+  }
+
+  private wakeOne() {
+    this.waiters.shift()?.();
   }
 
   private requireState(captureId: string, expected: CaptureExecutionState): StateRecord<T> {
@@ -220,6 +271,6 @@ export class CaptureLeaseQueue<T extends LeaseableCapture> {
   private releaseLease() {
     this.activeLeaseCount -= 1;
     if (this.activeLeaseCount < 0) throw new Error('Capture lease count became negative.');
-    this.wakeAll();
+    if (this.isDrained()) this.wakeAll();
   }
 }

@@ -232,6 +232,43 @@ describe(initializeStorySessionController, () => {
     expect(handler.calls).toEqual(['clicked']);
   });
 
+  it('detects mutable name and length metadata retained by function-valued args', async () => {
+    const body = { innerHTML: '<button>Ready</button>' };
+    Object.defineProperty(globalThis, 'document', {
+      configurable: true,
+      value: { activeElement: body, body, documentElement: {} },
+    });
+    function handler(value: unknown) {
+      return value;
+    }
+    const originalName = Object.getOwnPropertyDescriptor(handler, 'name')!;
+    const originalLength = Object.getOwnPropertyDescriptor(handler, 'length')!;
+    const target = {} as any;
+    initializeStorySessionController(target);
+    registerStorySessionRuntime({}, { id: 'function-metadata--story', args: { handler } }, target);
+    snapshotStorySessionRuntime('function-metadata--story', target);
+    const protocol = target[STORYFREEZE_STORY_SESSION_GLOBAL]!;
+    await protocol.openSession({
+      sessionId: 'function-metadata',
+      storyId: 'function-metadata--story',
+      profileHash: 'desktop',
+    });
+    await protocol.applyVariant('changed');
+
+    Object.defineProperty(handler, 'name', { ...originalName, value: 'mutatedHandler' });
+    await protocol.resetVariant('changed');
+    let verification = await protocol.verifyReset();
+    expect(verification.argsHash).not.toBe(verification.baseArgsHash);
+
+    Object.defineProperty(handler, 'name', originalName);
+    verification = await protocol.verifyReset();
+    expect(verification.argsHash).toBe(verification.baseArgsHash);
+
+    Object.defineProperty(handler, 'length', { ...originalLength, value: originalLength.value + 1 });
+    verification = await protocol.verifyReset();
+    expect(verification.argsHash).not.toBe(verification.baseArgsHash);
+  });
+
   it('detects mutable prototype state retained by function-valued args after reset', async () => {
     const body = { innerHTML: '<button>Ready</button>' };
     Object.defineProperty(globalThis, 'document', {

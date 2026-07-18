@@ -55,7 +55,7 @@ const functionIds = new WeakMap<Function, number>();
 let nextFunctionId = 1;
 const symbolIds = new Map<symbol, number>();
 let nextSymbolId = 1;
-const ignoredFunctionStateKeys = new Set(['arguments', 'caller', 'length', 'name']);
+const ignoredFunctionStateKeys = new Set(['arguments', 'caller']);
 
 function functionIdentity(value: Function) {
   let id = functionIds.get(value);

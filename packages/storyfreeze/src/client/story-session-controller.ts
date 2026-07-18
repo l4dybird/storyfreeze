@@ -53,6 +53,8 @@ type StorySessionWindow = typeof window & {
 
 const functionIds = new WeakMap<Function, number>();
 let nextFunctionId = 1;
+const functionPrototypeIds = new WeakMap<object, number>();
+let nextFunctionPrototypeId = 1;
 const symbolIds = new Map<symbol, number>();
 let nextSymbolId = 1;
 const ignoredFunctionStateKeys = new Set(['arguments', 'caller']);
@@ -64,6 +66,32 @@ function functionIdentity(value: Function) {
     functionIds.set(value, id);
   }
   return id;
+}
+
+function functionPrototypeIdentity(value: Function) {
+  const prototype = Object.getPrototypeOf(value) as object | null;
+  if (prototype === null) return 'null';
+  let id = functionPrototypeIds.get(prototype);
+  if (id === undefined) {
+    id = nextFunctionPrototypeId++;
+    functionPrototypeIds.set(prototype, id);
+  }
+  return `prototype:${id}`;
+}
+
+function objectIntegrity(value: object) {
+  if (Object.isFrozen(value)) return 'frozen';
+  if (Object.isSealed(value)) return 'sealed';
+  if (!Object.isExtensible(value)) return 'non-extensible';
+  return 'extensible';
+}
+
+function applyObjectIntegrity<T extends object>(source: object, target: T): T {
+  const integrity = objectIntegrity(source);
+  if (integrity === 'frozen') Object.freeze(target);
+  else if (integrity === 'sealed') Object.seal(target);
+  else if (integrity === 'non-extensible') Object.preventExtensions(target);
+  return target;
 }
 
 function symbolIdentity(value: symbol) {
@@ -171,33 +199,33 @@ function cloneValue(value: unknown, seen = new Map<object, unknown>()): unknown 
     cloneOwnDataProperties(value, clone, seen, cloneValue, new Set(['length']));
     const lengthDescriptor = Object.getOwnPropertyDescriptor(value, 'length');
     if (lengthDescriptor) Object.defineProperty(clone, 'length', lengthDescriptor);
-    return clone;
+    return applyObjectIntegrity(value, clone);
   }
   if (value instanceof Date) {
     const clone = new Date(value.getTime());
     seen.set(value, clone);
     cloneOwnDataProperties(value, clone, seen, cloneValue);
-    return clone;
+    return applyObjectIntegrity(value, clone);
   }
   if (value instanceof RegExp) {
     const clone = new RegExp(value.source, value.flags);
     seen.set(value, clone);
     cloneOwnDataProperties(value, clone, seen, cloneValue);
-    return clone;
+    return applyObjectIntegrity(value, clone);
   }
   if (value instanceof Map) {
     const clone = new Map<unknown, unknown>();
     seen.set(value, clone);
     value.forEach((item, key) => clone.set(cloneValue(key, seen), cloneValue(item, seen)));
     cloneOwnDataProperties(value, clone, seen, cloneValue);
-    return clone;
+    return applyObjectIntegrity(value, clone);
   }
   if (value instanceof Set) {
     const clone = new Set<unknown>();
     seen.set(value, clone);
     value.forEach(item => clone.add(cloneValue(item, seen)));
     cloneOwnDataProperties(value, clone, seen, cloneValue);
-    return clone;
+    return applyObjectIntegrity(value, clone);
   }
 
   const prototype = Object.getPrototypeOf(value);
@@ -212,7 +240,7 @@ function cloneValue(value: unknown, seen = new Map<object, unknown>()): unknown 
   const clone = Object.create(prototype) as Record<PropertyKey, unknown>;
   seen.set(value, clone);
   cloneOwnDataProperties(value, clone, seen, cloneValue);
-  return clone;
+  return applyObjectIntegrity(value, clone);
 }
 
 function cloneState(value: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
@@ -297,16 +325,19 @@ function canonicalizeForSort(value: unknown, ancestors = new Set<object>()): unk
     return [
       'function',
       functionIdentity(value),
+      functionPrototypeIdentity(value),
+      objectIntegrity(value),
       functionStateEntries(value, child => canonicalizeForSort(child, descendants)),
     ];
   }
   if (Array.isArray(value)) {
-    return ['array', ownStateEntries(value, child => canonicalizeForSort(child, descendants))];
+    return ['array', objectIntegrity(value), ownStateEntries(value, child => canonicalizeForSort(child, descendants))];
   }
   if (value instanceof Date) {
     return [
       'date',
       Number.isNaN(value.getTime()) ? 'invalid' : value.toISOString(),
+      objectIntegrity(value),
       ownStateEntries(value, child => canonicalizeForSort(child, descendants)),
     ];
   }
@@ -315,6 +346,7 @@ function canonicalizeForSort(value: unknown, ancestors = new Set<object>()): unk
       'regexp',
       value.source,
       value.flags,
+      objectIntegrity(value),
       ownStateEntries(value, child => canonicalizeForSort(child, descendants)),
     ];
   }
@@ -324,14 +356,29 @@ function canonicalizeForSort(value: unknown, ancestors = new Set<object>()): unk
       canonicalizeForSort(child, descendants),
     ]);
     entries.sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
-    return ['map', entries, ownStateEntries(value, child => canonicalizeForSort(child, descendants))];
+    return [
+      'map',
+      entries,
+      objectIntegrity(value),
+      ownStateEntries(value, child => canonicalizeForSort(child, descendants)),
+    ];
   }
   if (value instanceof Set) {
     const entries = [...value].map(child => canonicalizeForSort(child, descendants));
     entries.sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
-    return ['set', entries, ownStateEntries(value, child => canonicalizeForSort(child, descendants))];
+    return [
+      'set',
+      entries,
+      objectIntegrity(value),
+      ownStateEntries(value, child => canonicalizeForSort(child, descendants)),
+    ];
   }
-  return ['object', plainObjectKind(value), ownStateEntries(value, child => canonicalizeForSort(child, descendants))];
+  return [
+    'object',
+    plainObjectKind(value),
+    objectIntegrity(value),
+    ownStateEntries(value, child => canonicalizeForSort(child, descendants)),
+  ];
 }
 
 function canonicalSortKey(value: unknown) {
@@ -353,19 +400,36 @@ function canonicalize(value: unknown, seen = new Map<object, number>()): unknown
   const id = seen.size;
   seen.set(value, id);
   if (typeof value === 'function') {
-    return ['function', id, functionIdentity(value), functionStateEntries(value, child => canonicalize(child, seen))];
+    return [
+      'function',
+      id,
+      functionIdentity(value),
+      functionPrototypeIdentity(value),
+      objectIntegrity(value),
+      functionStateEntries(value, child => canonicalize(child, seen)),
+    ];
   }
-  if (Array.isArray(value)) return ['array', id, ownStateEntries(value, child => canonicalize(child, seen))];
+  if (Array.isArray(value)) {
+    return ['array', id, objectIntegrity(value), ownStateEntries(value, child => canonicalize(child, seen))];
+  }
   if (value instanceof Date) {
     return [
       'date',
       id,
       Number.isNaN(value.getTime()) ? 'invalid' : value.toISOString(),
+      objectIntegrity(value),
       ownStateEntries(value, child => canonicalize(child, seen)),
     ];
   }
   if (value instanceof RegExp) {
-    return ['regexp', id, value.source, value.flags, ownStateEntries(value, child => canonicalize(child, seen))];
+    return [
+      'regexp',
+      id,
+      value.source,
+      value.flags,
+      objectIntegrity(value),
+      ownStateEntries(value, child => canonicalize(child, seen)),
+    ];
   }
   if (value instanceof Map) {
     const entries = [...value.entries()].sort((left, right) =>
@@ -375,6 +439,7 @@ function canonicalize(value: unknown, seen = new Map<object, number>()): unknown
       'map',
       id,
       entries.map(([key, child]) => [canonicalize(key, seen), canonicalize(child, seen)]),
+      objectIntegrity(value),
       ownStateEntries(value, child => canonicalize(child, seen)),
     ];
   }
@@ -384,10 +449,17 @@ function canonicalize(value: unknown, seen = new Map<object, number>()): unknown
       'set',
       id,
       entries.map(child => canonicalize(child, seen)),
+      objectIntegrity(value),
       ownStateEntries(value, child => canonicalize(child, seen)),
     ];
   }
-  return ['object', id, plainObjectKind(value), ownStateEntries(value, child => canonicalize(child, seen))];
+  return [
+    'object',
+    id,
+    plainObjectKind(value),
+    objectIntegrity(value),
+    ownStateEntries(value, child => canonicalize(child, seen)),
+  ];
 }
 
 function fingerprint(value: unknown): string {

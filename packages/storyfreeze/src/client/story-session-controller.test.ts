@@ -297,6 +297,62 @@ describe(initializeStorySessionController, () => {
     expect(handler.prototype.retained).toBe('clicked');
   });
 
+  it('detects replacement of a function object prototype link', async () => {
+    const body = { innerHTML: '<button>Ready</button>' };
+    Object.defineProperty(globalThis, 'document', {
+      configurable: true,
+      value: { activeElement: body, body, documentElement: {} },
+    });
+    const target = {} as any;
+    function handler() {}
+    const args = { handler };
+    initializeStorySessionController(target);
+    registerStorySessionRuntime({}, { id: 'function-prototype-link--story', args }, target);
+    snapshotStorySessionRuntime('function-prototype-link--story', target);
+    const protocol = target[STORYFREEZE_STORY_SESSION_GLOBAL]!;
+    await protocol.openSession({
+      sessionId: 'function-prototype-link',
+      storyId: 'function-prototype-link--story',
+      profileHash: 'desktop',
+    });
+    await protocol.applyVariant('changed');
+
+    Object.setPrototypeOf(handler, null);
+    await protocol.resetVariant('changed');
+
+    const verification = await protocol.verifyReset();
+    expect(verification.argsHash).not.toBe(verification.baseArgsHash);
+    expect(Object.getPrototypeOf(handler)).toBeNull();
+  });
+
+  it('detects irreversible integrity changes retained by function-valued args', async () => {
+    const body = { innerHTML: '<button>Ready</button>' };
+    Object.defineProperty(globalThis, 'document', {
+      configurable: true,
+      value: { activeElement: body, body, documentElement: {} },
+    });
+    const target = {} as any;
+    function handler() {}
+    const args = { handler };
+    initializeStorySessionController(target);
+    registerStorySessionRuntime({}, { id: 'function-integrity--story', args }, target);
+    snapshotStorySessionRuntime('function-integrity--story', target);
+    const protocol = target[STORYFREEZE_STORY_SESSION_GLOBAL]!;
+    await protocol.openSession({
+      sessionId: 'function-integrity',
+      storyId: 'function-integrity--story',
+      profileHash: 'desktop',
+    });
+    await protocol.applyVariant('changed');
+
+    Object.preventExtensions(handler);
+    await protocol.resetVariant('changed');
+
+    const verification = await protocol.verifyReset();
+    expect(verification.argsHash).not.toBe(verification.baseArgsHash);
+    expect(Object.isExtensible(handler)).toBe(false);
+  });
+
   it('detects replacement of a non-enumerable class prototype method', async () => {
     const body = { innerHTML: '<button>Ready</button>' };
     Object.defineProperty(globalThis, 'document', {
@@ -365,6 +421,38 @@ describe(initializeStorySessionController, () => {
     expect(restoredItems).toHaveLength(3);
     expect(0 in restoredItems).toBe(false);
     expect(restoredItems[2]).toBe('tail');
+    const verification = await protocol.verifyReset();
+    expect(verification.argsHash).toBe(verification.baseArgsHash);
+  });
+
+  it('preserves nested object integrity levels while restoring args', async () => {
+    const body = { innerHTML: '<button>Ready</button>' };
+    Object.defineProperty(globalThis, 'document', {
+      configurable: true,
+      value: { activeElement: body, body, documentElement: {} },
+    });
+    const frozen = Object.freeze({ value: 'frozen' });
+    const sealed = Object.seal({ value: 'sealed' });
+    const nonExtensible = Object.preventExtensions({ value: 'non-extensible' });
+    const args = { frozen, sealed, nonExtensible };
+    const target = {} as any;
+    initializeStorySessionController(target);
+    registerStorySessionRuntime({}, { id: 'integrity--story', args }, target);
+    snapshotStorySessionRuntime('integrity--story', target);
+    const protocol = target[STORYFREEZE_STORY_SESSION_GLOBAL]!;
+    await protocol.openSession({ sessionId: 'integrity', storyId: 'integrity--story', profileHash: 'desktop' });
+    await protocol.applyVariant('changed');
+
+    await protocol.resetVariant('changed');
+
+    expect(args.frozen).not.toBe(frozen);
+    expect(Object.isFrozen(args.frozen)).toBe(true);
+    expect(args.sealed).not.toBe(sealed);
+    expect(Object.isSealed(args.sealed)).toBe(true);
+    expect(Object.isFrozen(args.sealed)).toBe(false);
+    expect(args.nonExtensible).not.toBe(nonExtensible);
+    expect(Object.isExtensible(args.nonExtensible)).toBe(false);
+    expect(Object.isSealed(args.nonExtensible)).toBe(false);
     const verification = await protocol.verifyReset();
     expect(verification.argsHash).toBe(verification.baseArgsHash);
   });

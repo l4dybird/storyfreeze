@@ -16,10 +16,11 @@ import { captureDiagnosticsEnabled, emitCaptureDiagnostic, measureCaptureDiagnos
 import { createBaseScreenshotOptions } from '../shared/screenshot-options-helper.js';
 import { browserDeviceDescriptors } from './browser-device-registry.js';
 import { generateCaptureManifest } from './capture-manifest.js';
-import { assignCapturePlan, createCapturePlan } from './capture-plan.js';
+import { createCapturePlan } from './capture-plan.js';
 import { toViewport } from './emulation-profile.js';
 import { BrowserRuntimeOrchestrator, selectTopology } from './browser-topology.js';
 import { raceAgainstTimeout } from './async-utils.js';
+import { createExecutionWorkload, prepareExecutionPlan } from './execution-plan.js';
 
 const workerCloseTimeoutMs = 5_000;
 
@@ -287,13 +288,15 @@ export async function main(mainOptions: MainOptions, overrides: Partial<MainDepe
       freshContext: false,
     });
     const capturePlan = createCapturePlan(manifest);
+    const executionWorkload = createExecutionWorkload(capturePlan, mainOptions.captureProtocol ?? 'strict');
     const topologySelection = selectTopology(
-      capturePlan,
+      executionWorkload,
       { cpuCount: availableParallelism(), availableMemoryBytes: freemem() },
       Math.max(browserOptions.parallel, 1),
       browserIsolation,
     );
-    const workerPlans = assignCapturePlan(capturePlan, topologySelection.topology.workerCount);
+    const executionPlan = prepareExecutionPlan(executionWorkload, topologySelection.topology.workerCount);
+    const workerPlans = executionPlan.workers;
     browserRuntime = new BrowserRuntimeOrchestrator(
       browserBackend,
       browserOptions,
@@ -313,7 +316,7 @@ export async function main(mainOptions: MainOptions, overrides: Partial<MainDepe
     });
     logger.debug('Browser topology:', topologySelection.topology, topologySelection.reason);
     const initialSessionOptions = workerPlans.map(worker => {
-      const profile = worker.captures[0]?.profile;
+      const profile = worker.workItems[0]?.profile;
       return profile ? { viewport: toViewport(profile) } : undefined;
     });
 
@@ -349,8 +352,7 @@ export async function main(mainOptions: MainOptions, overrides: Partial<MainDepe
         logger,
         forwardConsoleLogs: mainOptions.forwardConsoleLogs,
         trace: mainOptions.trace,
-        capturePlan,
-        captureProtocol: mainOptions.captureProtocol ?? 'strict',
+        executionPlan,
         initialWorkerCount: topologySelection.initialWorkerCount,
         // This deadlock watchdog also covers cold browser boot and recovery, so
         // keep it deliberately looser than the per-attempt capture deadline.

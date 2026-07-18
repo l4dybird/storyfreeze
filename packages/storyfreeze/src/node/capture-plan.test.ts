@@ -58,6 +58,20 @@ describe(assignCapturePlan, () => {
     expect(workers.every(worker => worker.estimatedRemainingMs > 0)).toBe(true);
   });
 
+  it('charges transitions to the same order returned to the executor', () => {
+    const plan = {
+      captures: [
+        { captureId: 'alpha', storyId: 'alpha', profile: desktop, estimatedCostMs: 500 },
+        { captureId: 'beta', storyId: 'beta', profile: desktop, estimatedCostMs: 500 },
+      ],
+    } as unknown as Parameters<typeof assignCapturePlan>[0];
+
+    const [worker] = assignCapturePlan(plan, 1);
+
+    expect(worker.captures.map(capture => capture.captureId)).toEqual(['alpha', 'beta']);
+    expect(worker.estimatedRemainingMs).toBe(1025);
+  });
+
   it('includes affinity penalties in assignment cost', () => {
     const capture = { storyId: 'a', profile: mobile, estimatedCostMs: 500 } as PlannedCapture;
     const worker = {

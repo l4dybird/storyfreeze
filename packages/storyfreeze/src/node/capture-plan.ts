@@ -82,17 +82,6 @@ export function assignmentCost(worker: WorkerPlan, capture: PlannedCapture): num
   );
 }
 
-function compareWorkerCaptureOrder(left: PlannedCapture, right: PlannedCapture): number {
-  const profile = compareDeterministicStrings(emulationProfileKey(left.profile), emulationProfileKey(right.profile));
-  if (profile !== 0) return profile;
-  const story = compareDeterministicStrings(left.storyId, right.storyId);
-  if (story !== 0) return story;
-  const dependency = left.variantKey.length - right.variantKey.length;
-  if (dependency !== 0) return dependency;
-  const cost = right.estimatedCostMs - left.estimatedCostMs;
-  return cost !== 0 ? cost : compareDeterministicStrings(left.captureId, right.captureId);
-}
-
 /** Deterministically combines profile affinity with longest-processing-time load balancing. */
 export function assignCapturePlan(plan: CapturePlan, workerCount: number): WorkerPlan[] {
   if (!Number.isSafeInteger(workerCount) || workerCount < 1) throw new Error('workerCount must be at least one.');
@@ -107,15 +96,22 @@ export function assignCapturePlan(plan: CapturePlan, workerCount: number): Worke
   );
 
   for (const capture of captures) {
-    const worker = [...workers].sort(
-      (left, right) => assignmentCost(left, capture) - assignmentCost(right, capture) || left.workerId - right.workerId,
-    )[0];
+    let worker = workers[0];
+    let cost = assignmentCost(worker, capture);
+    for (let index = 1; index < workers.length; index += 1) {
+      const candidate = workers[index];
+      const candidateCost = assignmentCost(candidate, capture);
+      if (candidateCost < cost || (candidateCost === cost && candidate.workerId < worker.workerId)) {
+        worker = candidate;
+        cost = candidateCost;
+      }
+    }
+    const transitionCost =
+      profileSwitchCost(worker.lastProfile, capture.profile) + storySwitchCost(worker.lastStoryId, capture.storyId);
     worker.captures.push(capture);
-    worker.estimatedRemainingMs += capture.estimatedCostMs;
+    worker.estimatedRemainingMs += transitionCost + capture.estimatedCostMs;
     worker.lastProfile = capture.profile;
     worker.lastStoryId = capture.storyId;
   }
-
-  for (const worker of workers) worker.captures.sort(compareWorkerCaptureOrder);
   return workers;
 }

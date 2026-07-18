@@ -146,4 +146,22 @@ describe(BrowserRuntimeOrchestrator, () => {
     await runtime.close();
     expect(close).toHaveBeenCalledTimes(1);
   });
+
+  it('assigns worker zero to the retained story-index process', () => {
+    const capturePlan = plan(2);
+    const workers = assignCapturePlan(capturePlan, 2);
+    workers[0].captures[0].profile.width = 999;
+    workers[1].captures[0].profile.width = 100;
+    const retained = { close: vi.fn(async () => {}) } as never;
+    const runtime = new BrowserRuntimeOrchestrator(
+      { name: 'playwright' } as BrowserBackend,
+      {},
+      { browserProcessCount: 2, contextsPerBrowser: 1, workerCount: 2 },
+      workers,
+      retained,
+    );
+
+    expect(runtime.workerProcessIds[0]).toBe(0);
+    expect(runtime.sessionSourceForWorker(0)).toBe(retained);
+  });
 });

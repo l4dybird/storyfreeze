@@ -203,21 +203,32 @@ export async function main(mainOptions: MainOptions, overrides: Partial<MainDepe
     browserProcess = new BrowserProcessCoordinator(browserBackend, browserOptions);
     storiesBrowser = new BaseBrowser(browserOptions, browserBackend, { role: 'story-index' }, browserProcess);
     const storyIndexProvider = new StorybookStoryIndexProvider();
-    const connectionPromise = measureRuntimePhase('storybook-connect', () =>
-      abortable(connection!.connect(), mainOptions.signal),
+    const startupController = new AbortController();
+    const startupSignal = mainOptions.signal
+      ? AbortSignal.any([mainOptions.signal, startupController.signal])
+      : startupController.signal;
+    const connectionPromise = measureRuntimePhase('storybook-connect', () => connection!.connect(startupSignal));
+    const browserBootPromise = measureRuntimePhase('story-index-browser-boot', () =>
+      abortable(storiesBrowser!.boot(), startupSignal),
     );
-    const [, , allStories] = await Promise.all([
-      connectionPromise,
-      measureRuntimePhase('story-index-browser-boot', () => abortable(storiesBrowser!.boot(), mainOptions.signal)),
-      connectionPromise.then(() =>
-        measureRuntimePhase('story-index-load', () =>
-          abortable(
-            storyIndexProvider.load(new URL(mainOptions.serverOptions.storybookUrl), mainOptions.signal),
-            mainOptions.signal,
-          ),
+    const storyIndexPromise = connectionPromise.then(() => {
+      throwIfAborted(startupSignal);
+      return measureRuntimePhase('story-index-load', () =>
+        abortable(
+          storyIndexProvider.load(new URL(mainOptions.serverOptions.storybookUrl), startupSignal),
+          startupSignal,
         ),
-      ),
-    ]);
+      );
+    });
+    const startupTasks = [connectionPromise, browserBootPromise, storyIndexPromise] as const;
+    let allStories: readonly StoryDescriptor[];
+    try {
+      [, , allStories] = await Promise.all(startupTasks);
+    } catch (error) {
+      startupController.abort(error);
+      await Promise.allSettled(startupTasks);
+      throw error;
+    }
     throwIfAborted(mainOptions.signal);
     logger.debug('Created to connection.');
     logger.log('Executable Chromium path:', logger.color.magenta(storiesBrowser.executablePath));

@@ -810,6 +810,29 @@ describe(main, () => {
     expect(disconnect).toHaveBeenCalledTimes(1);
   });
 
+  it('cancels peer startup work without loading the story index after browser boot fails', async () => {
+    const failure = new Error('browser boot failed');
+    let connectionSignal: AbortSignal | undefined;
+    vi.spyOn(ManagedStorybookConnection.prototype, 'connect').mockImplementation(function (
+      this: ManagedStorybookConnection,
+      signal?: AbortSignal,
+    ) {
+      connectionSignal = signal;
+      return new Promise(resolve => setImmediate(() => resolve(this)));
+    });
+    const disconnect = vi.spyOn(ManagedStorybookConnection.prototype, 'disconnect').mockResolvedValue(undefined);
+    vi.spyOn(BaseBrowser.prototype, 'boot').mockRejectedValue(failure);
+    const fetch = vi.spyOn(globalThis, 'fetch');
+    const close = vi.spyOn(BaseBrowser.prototype, 'close').mockResolvedValue(undefined);
+
+    await expect(main(options)).rejects.toBe(failure);
+
+    expect(connectionSignal?.aborted).toBe(true);
+    expect(fetch).not.toHaveBeenCalled();
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(disconnect).toHaveBeenCalledTimes(1);
+  });
+
   it('disconnects after an early return when no stories match', async () => {
     vi.spyOn(ManagedStorybookConnection.prototype, 'connect').mockImplementation(
       async function (this: ManagedStorybookConnection) {

@@ -139,35 +139,25 @@ describe(bootCaptureWorkers, () => {
     return worker;
   }
 
-  it('waits for late workers and closes every worker when one boot fails', async () => {
-    let releaseLateWorker = () => {};
+  it('closes every worker without waiting for a hung peer when one boot fails', async () => {
     const failure = new Error('boot failed');
     const failedWorker = createWorker(async () => Promise.reject(failure));
-    const lateWorker = createWorker(() => new Promise<void>(resolve => (releaseLateWorker = resolve)));
+    const lateWorker = createWorker(() => new Promise<void>(() => {}));
 
     const booting = bootCaptureWorkers([failedWorker, lateWorker]);
-    await Promise.resolve();
 
-    expect(failedWorker.close).not.toHaveBeenCalled();
-    expect(lateWorker.close).not.toHaveBeenCalled();
-
-    releaseLateWorker();
     await expect(booting).rejects.toBe(failure);
     expect(failedWorker.close).toHaveBeenCalledTimes(1);
     expect(lateWorker.close).toHaveBeenCalledTimes(1);
   });
 
-  it('finishes in-flight boots before closing workers after an abort', async () => {
-    let releaseWorker = () => {};
+  it('closes workers without waiting for a hung boot after an abort', async () => {
     const controller = new AbortController();
-    const worker = createWorker(() => new Promise<void>(resolve => (releaseWorker = resolve)));
+    const worker = createWorker(() => new Promise<void>(() => {}));
 
     const booting = bootCaptureWorkers([worker], controller.signal);
     controller.abort(new Error('interrupted by test'));
-    await Promise.resolve();
 
-    expect(worker.close).not.toHaveBeenCalled();
-    releaseWorker();
     await expect(booting).rejects.toThrow('interrupted by test');
     expect(worker.close).toHaveBeenCalledTimes(1);
   });

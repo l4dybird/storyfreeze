@@ -260,6 +260,78 @@ describe(initializeStorySessionController, () => {
     expect(handler.prototype.retained).toBe('clicked');
   });
 
+  it('detects replacement of a non-enumerable class prototype method', async () => {
+    const body = { innerHTML: '<button>Ready</button>' };
+    Object.defineProperty(globalThis, 'document', {
+      configurable: true,
+      value: { activeElement: body, body, documentElement: {} },
+    });
+    class Formatter {
+      render() {
+        return 'before';
+      }
+    }
+    const target = {} as any;
+    initializeStorySessionController(target);
+    registerStorySessionRuntime({}, { id: 'class-prototype--story', args: { Formatter } }, target);
+    snapshotStorySessionRuntime('class-prototype--story', target);
+    const protocol = target[STORYFREEZE_STORY_SESSION_GLOBAL]!;
+    await protocol.openSession({
+      sessionId: 'class-prototype',
+      storyId: 'class-prototype--story',
+      profileHash: 'desktop',
+    });
+    await protocol.applyVariant('changed');
+
+    Formatter.prototype.render = function render() {
+      return 'after';
+    };
+    await protocol.resetVariant('changed');
+
+    const verification = await protocol.verifyReset();
+    expect(verification.argsHash).not.toBe(verification.baseArgsHash);
+    expect(new Formatter().render()).toBe('after');
+    expect(Object.getOwnPropertyDescriptor(Formatter.prototype, 'render')?.enumerable).toBe(false);
+  });
+
+  it('restores non-enumerable top-level state and sparse arrays without compacting them', async () => {
+    const body = { innerHTML: '<button>Ready</button>' };
+    Object.defineProperty(globalThis, 'document', {
+      configurable: true,
+      value: { activeElement: body, body, documentElement: {} },
+    });
+    const items = new Array<string>(3);
+    items[2] = 'tail';
+    const args: Record<string, unknown> = { items };
+    Object.defineProperty(args, 'hidden', {
+      configurable: true,
+      enumerable: false,
+      value: 'before',
+      writable: true,
+    });
+    const target = {} as any;
+    initializeStorySessionController(target);
+    registerStorySessionRuntime({}, { id: 'descriptor--story', args }, target);
+    snapshotStorySessionRuntime('descriptor--story', target);
+    const protocol = target[STORYFREEZE_STORY_SESSION_GLOBAL]!;
+    await protocol.openSession({ sessionId: 'descriptor', storyId: 'descriptor--story', profileHash: 'desktop' });
+    await protocol.applyVariant('changed');
+
+    args.hidden = 'after';
+    items[0] = 'head';
+    Object.defineProperty(args, 'retained', { configurable: true, enumerable: false, value: true });
+    await protocol.resetVariant('changed');
+
+    const restoredItems = args.items as string[];
+    expect(args.hidden).toBe('before');
+    expect(Object.hasOwn(args, 'retained')).toBe(false);
+    expect(restoredItems).toHaveLength(3);
+    expect(0 in restoredItems).toBe(false);
+    expect(restoredItems[2]).toBe('tail');
+    const verification = await protocol.verifyReset();
+    expect(verification.argsHash).toBe(verification.baseArgsHash);
+  });
+
   it('detects call history retained by Storybook-style mock args', async () => {
     const body = { innerHTML: '<button>Ready</button>' };
     Object.defineProperty(globalThis, 'document', {

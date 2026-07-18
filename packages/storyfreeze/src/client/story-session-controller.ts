@@ -53,6 +53,8 @@ type StorySessionWindow = typeof window & {
 
 const functionIds = new WeakMap<Function, number>();
 let nextFunctionId = 1;
+const symbolIds = new Map<symbol, number>();
+let nextSymbolId = 1;
 const ignoredFunctionStateKeys = new Set(['arguments', 'caller', 'length', 'name']);
 
 function functionIdentity(value: Function) {
@@ -64,10 +66,37 @@ function functionIdentity(value: Function) {
   return id;
 }
 
+function symbolIdentity(value: symbol) {
+  const globalKey = Symbol.keyFor(value);
+  if (globalKey !== undefined) return `global:${globalKey}`;
+  let id = symbolIds.get(value);
+  if (id === undefined) {
+    id = nextSymbolId++;
+    symbolIds.set(value, id);
+  }
+  return `local:${id}:${value.description ?? ''}`;
+}
+
 function functionStateKey(key: PropertyKey) {
   if (typeof key === 'string') return `string:${key}`;
-  if (typeof key === 'symbol') return `symbol:${Symbol.keyFor(key) ?? key.description ?? ''}`;
+  if (typeof key === 'symbol') return `symbol:${symbolIdentity(key)}`;
   return `number:${key}`;
+}
+
+function snapshotMockFunctionState(value: unknown) {
+  if ((typeof value !== 'object' && typeof value !== 'function') || value === null) return value;
+  const snapshot = Object.create(null) as Record<PropertyKey, unknown>;
+  for (const key of Reflect.ownKeys(value)) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor) continue;
+    if ('value' in descriptor) {
+      Object.defineProperty(snapshot, key, { ...descriptor, value: descriptor.value });
+      continue;
+    }
+    if (key === 'lastCall' && descriptor.get) continue;
+    throw new Error(`Story session cannot safely fingerprint mock accessor state at ${String(key)}.`);
+  }
+  return snapshot;
 }
 
 function functionStateEntries(value: Function, canonicalizeChild: (child: unknown) => unknown) {
@@ -78,11 +107,29 @@ function functionStateEntries(value: Function, canonicalizeChild: (child: unknow
       const descriptor = Object.getOwnPropertyDescriptor(value, key);
       if (!descriptor) return undefined;
       if ('value' in descriptor) {
-        return [functionStateKey(key), canonicalizeChild(descriptor.value)] as const;
+        const child = isMockFunction && key === 'mock' ? snapshotMockFunctionState(descriptor.value) : descriptor.value;
+        return [
+          functionStateKey(key),
+          [
+            'data',
+            descriptor.configurable ?? false,
+            descriptor.enumerable ?? false,
+            descriptor.writable ?? false,
+            canonicalizeChild(child),
+          ],
+        ] as const;
       }
       if (isMockFunction && key === 'mock' && descriptor.get) {
         try {
-          return [functionStateKey(key), canonicalizeChild(descriptor.get.call(value))] as const;
+          return [
+            functionStateKey(key),
+            [
+              'mock-accessor',
+              descriptor.configurable ?? false,
+              descriptor.enumerable ?? false,
+              canonicalizeChild(snapshotMockFunctionState(descriptor.get.call(value))),
+            ],
+          ] as const;
         } catch (error) {
           const reason = error instanceof Error ? error.message : String(error);
           throw new Error(`Story session cannot inspect mock function state: ${reason}`);
@@ -90,8 +137,26 @@ function functionStateEntries(value: Function, canonicalizeChild: (child: unknow
       }
       throw new Error(`Story session cannot safely fingerprint function accessor state at ${String(key)}.`);
     })
-    .filter((entry): entry is readonly [string, unknown] => entry !== undefined)
+    .filter(entry => entry !== undefined)
     .sort(([left], [right]) => left.localeCompare(right));
+}
+
+function cloneOwnDataProperties(
+  source: object,
+  target: object,
+  seen: Map<object, unknown>,
+  cloneChild: (value: unknown, seen: Map<object, unknown>) => unknown,
+  ignoredKeys = new Set<PropertyKey>(),
+) {
+  for (const key of Reflect.ownKeys(source)) {
+    if (ignoredKeys.has(key)) continue;
+    if (typeof key === 'symbol') throw new Error('Story session cannot safely clone symbol-keyed state.');
+    const descriptor = Object.getOwnPropertyDescriptor(source, key);
+    if (!descriptor) continue;
+    if (!('value' in descriptor)) throw new Error(`Story session cannot safely clone accessor state at ${key}.`);
+    descriptor.value = cloneChild(descriptor.value, seen);
+    Object.defineProperty(target, key, descriptor);
+  }
 }
 
 function cloneValue(value: unknown, seen = new Map<object, unknown>()): unknown {
@@ -101,32 +166,37 @@ function cloneValue(value: unknown, seen = new Map<object, unknown>()): unknown 
   if (seen.has(value)) return seen.get(value);
 
   if (Array.isArray(value)) {
-    const clone: unknown[] = [];
+    const clone: unknown[] = new Array(value.length);
     seen.set(value, clone);
-    value.forEach(item => clone.push(cloneValue(item, seen)));
+    cloneOwnDataProperties(value, clone, seen, cloneValue, new Set(['length']));
+    const lengthDescriptor = Object.getOwnPropertyDescriptor(value, 'length');
+    if (lengthDescriptor) Object.defineProperty(clone, 'length', lengthDescriptor);
     return clone;
   }
   if (value instanceof Date) {
     const clone = new Date(value.getTime());
     seen.set(value, clone);
+    cloneOwnDataProperties(value, clone, seen, cloneValue);
     return clone;
   }
   if (value instanceof RegExp) {
     const clone = new RegExp(value.source, value.flags);
-    clone.lastIndex = value.lastIndex;
     seen.set(value, clone);
+    cloneOwnDataProperties(value, clone, seen, cloneValue);
     return clone;
   }
   if (value instanceof Map) {
     const clone = new Map<unknown, unknown>();
     seen.set(value, clone);
     value.forEach((item, key) => clone.set(cloneValue(key, seen), cloneValue(item, seen)));
+    cloneOwnDataProperties(value, clone, seen, cloneValue);
     return clone;
   }
   if (value instanceof Set) {
     const clone = new Set<unknown>();
     seen.set(value, clone);
     value.forEach(item => clone.add(cloneValue(item, seen)));
+    cloneOwnDataProperties(value, clone, seen, cloneValue);
     return clone;
   }
 
@@ -141,14 +211,7 @@ function cloneValue(value: unknown, seen = new Map<object, unknown>()): unknown 
 
   const clone = Object.create(prototype) as Record<PropertyKey, unknown>;
   seen.set(value, clone);
-  for (const key of Reflect.ownKeys(value)) {
-    if (typeof key === 'symbol') throw new Error('Story session cannot safely clone symbol-keyed state.');
-    const descriptor = Object.getOwnPropertyDescriptor(value, key);
-    if (!descriptor) continue;
-    if (!('value' in descriptor)) throw new Error(`Story session cannot safely clone accessor state at ${key}.`);
-    if ('value' in descriptor) descriptor.value = cloneValue(descriptor.value, seen);
-    Object.defineProperty(clone, key, descriptor);
-  }
+  cloneOwnDataProperties(value, clone, seen, cloneValue);
   return clone;
 }
 
@@ -158,16 +221,69 @@ function cloneState(value: Record<string, unknown> | undefined): Record<string, 
 
 function restoreState(target: Record<string, unknown> | undefined, source: Record<string, unknown> | undefined) {
   if (!target || !source) return;
-  for (const key of Object.keys(target)) {
-    if (!Object.hasOwn(source, key)) delete target[key];
+  const restored = cloneState(source)!;
+  for (const key of Reflect.ownKeys(target)) {
+    if (!Object.hasOwn(restored, key) && !Reflect.deleteProperty(target, key)) {
+      throw new Error(`Story session cannot remove retained state at ${String(key)}.`);
+    }
   }
-  Object.assign(target, cloneState(source));
+  for (const key of Reflect.ownKeys(restored)) {
+    const descriptor = Object.getOwnPropertyDescriptor(restored, key);
+    if (!descriptor) continue;
+    const current = Object.getOwnPropertyDescriptor(target, key);
+    const sameDataShape =
+      current &&
+      'value' in current &&
+      'value' in descriptor &&
+      current.configurable === descriptor.configurable &&
+      current.enumerable === descriptor.enumerable &&
+      current.writable === descriptor.writable;
+    if (sameDataShape && descriptor.writable) {
+      if (!Reflect.set(target, key, descriptor.value, target)) {
+        throw new Error(`Story session cannot restore state at ${String(key)}.`);
+      }
+    } else {
+      Object.defineProperty(target, key, descriptor);
+    }
+  }
+}
+
+function ownStateEntries(value: object, canonicalizeChild: (child: unknown) => unknown) {
+  return Reflect.ownKeys(value)
+    .map(key => {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      if (!descriptor) return undefined;
+      if (!('value' in descriptor)) {
+        throw new Error(`Story session cannot safely fingerprint accessor state at ${String(key)}.`);
+      }
+      return [
+        functionStateKey(key),
+        [
+          'data',
+          descriptor.configurable ?? false,
+          descriptor.enumerable ?? false,
+          descriptor.writable ?? false,
+          canonicalizeChild(descriptor.value),
+        ],
+      ] as const;
+    })
+    .filter(entry => entry !== undefined)
+    .sort(([left], [right]) => left.localeCompare(right));
+}
+
+function plainObjectKind(value: object) {
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype === null) return 'null-prototype';
+  if (prototype === Object.prototype) return 'object-prototype';
+  const constructor = Object.getOwnPropertyDescriptor(prototype, 'constructor')?.value;
+  const constructorName = typeof constructor === 'function' && constructor.name ? constructor.name : 'non-plain object';
+  throw new Error(`Story session cannot safely fingerprint ${constructorName} state.`);
 }
 
 function canonicalizeForSort(value: unknown, ancestors = new Set<object>()): unknown {
   if (value === undefined) return ['undefined'];
   if (typeof value === 'bigint') return ['bigint', String(value)];
-  if (typeof value === 'symbol') return ['symbol', String(value.description ?? '')];
+  if (typeof value === 'symbol') return ['symbol', symbolIdentity(value)];
   if (typeof value === 'number') {
     if (Number.isNaN(value)) return ['number', 'NaN'];
     if (!Number.isFinite(value)) return ['number', String(value)];
@@ -184,33 +300,38 @@ function canonicalizeForSort(value: unknown, ancestors = new Set<object>()): unk
       functionStateEntries(value, child => canonicalizeForSort(child, descendants)),
     ];
   }
-  if (Array.isArray(value)) return ['array', value.map(child => canonicalizeForSort(child, descendants))];
-  if (value instanceof Date) {
-    return ['date', Number.isNaN(value.getTime()) ? 'invalid' : value.toISOString()];
+  if (Array.isArray(value)) {
+    return ['array', ownStateEntries(value, child => canonicalizeForSort(child, descendants))];
   }
-  if (value instanceof RegExp) return ['regexp', value.source, value.flags, value.lastIndex];
+  if (value instanceof Date) {
+    return [
+      'date',
+      Number.isNaN(value.getTime()) ? 'invalid' : value.toISOString(),
+      ownStateEntries(value, child => canonicalizeForSort(child, descendants)),
+    ];
+  }
+  if (value instanceof RegExp) {
+    return [
+      'regexp',
+      value.source,
+      value.flags,
+      ownStateEntries(value, child => canonicalizeForSort(child, descendants)),
+    ];
+  }
   if (value instanceof Map) {
     const entries = [...value.entries()].map(([key, child]) => [
       canonicalizeForSort(key, descendants),
       canonicalizeForSort(child, descendants),
     ]);
     entries.sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
-    return ['map', entries];
+    return ['map', entries, ownStateEntries(value, child => canonicalizeForSort(child, descendants))];
   }
   if (value instanceof Set) {
     const entries = [...value].map(child => canonicalizeForSort(child, descendants));
     entries.sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
-    return ['set', entries];
+    return ['set', entries, ownStateEntries(value, child => canonicalizeForSort(child, descendants))];
   }
-  const constructorName = Object.getPrototypeOf(value)?.constructor?.name ?? '';
-  return [
-    'object',
-    constructorName,
-    Object.entries(value as Record<string, unknown>)
-      .filter(([, child]) => typeof child !== 'symbol')
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, child]) => [key, canonicalizeForSort(child, descendants)]),
-  ];
+  return ['object', plainObjectKind(value), ownStateEntries(value, child => canonicalizeForSort(child, descendants))];
 }
 
 function canonicalSortKey(value: unknown) {
@@ -220,7 +341,7 @@ function canonicalSortKey(value: unknown) {
 function canonicalize(value: unknown, seen = new Map<object, number>()): unknown {
   if (value === undefined) return ['undefined'];
   if (typeof value === 'bigint') return ['bigint', String(value)];
-  if (typeof value === 'symbol') return ['symbol', String(value.description ?? '')];
+  if (typeof value === 'symbol') return ['symbol', symbolIdentity(value)];
   if (typeof value === 'number') {
     if (Number.isNaN(value)) return ['number', 'NaN'];
     if (!Number.isFinite(value)) return ['number', String(value)];
@@ -234,31 +355,39 @@ function canonicalize(value: unknown, seen = new Map<object, number>()): unknown
   if (typeof value === 'function') {
     return ['function', id, functionIdentity(value), functionStateEntries(value, child => canonicalize(child, seen))];
   }
-  if (Array.isArray(value)) return ['array', id, value.map(child => canonicalize(child, seen))];
+  if (Array.isArray(value)) return ['array', id, ownStateEntries(value, child => canonicalize(child, seen))];
   if (value instanceof Date) {
-    return ['date', id, Number.isNaN(value.getTime()) ? 'invalid' : value.toISOString()];
+    return [
+      'date',
+      id,
+      Number.isNaN(value.getTime()) ? 'invalid' : value.toISOString(),
+      ownStateEntries(value, child => canonicalize(child, seen)),
+    ];
   }
-  if (value instanceof RegExp) return ['regexp', id, value.source, value.flags, value.lastIndex];
+  if (value instanceof RegExp) {
+    return ['regexp', id, value.source, value.flags, ownStateEntries(value, child => canonicalize(child, seen))];
+  }
   if (value instanceof Map) {
     const entries = [...value.entries()].sort((left, right) =>
       canonicalSortKey(left).localeCompare(canonicalSortKey(right)),
     );
-    return ['map', id, entries.map(([key, child]) => [canonicalize(key, seen), canonicalize(child, seen)])];
+    return [
+      'map',
+      id,
+      entries.map(([key, child]) => [canonicalize(key, seen), canonicalize(child, seen)]),
+      ownStateEntries(value, child => canonicalize(child, seen)),
+    ];
   }
   if (value instanceof Set) {
     const entries = [...value].sort((left, right) => canonicalSortKey(left).localeCompare(canonicalSortKey(right)));
-    return ['set', id, entries.map(child => canonicalize(child, seen))];
+    return [
+      'set',
+      id,
+      entries.map(child => canonicalize(child, seen)),
+      ownStateEntries(value, child => canonicalize(child, seen)),
+    ];
   }
-  const constructorName = Object.getPrototypeOf(value)?.constructor?.name ?? '';
-  return [
-    'object',
-    id,
-    constructorName,
-    Object.entries(value as Record<string, unknown>)
-      .filter(([, child]) => typeof child !== 'symbol')
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, child]) => [key, canonicalize(child, seen)]),
-  ];
+  return ['object', id, plainObjectKind(value), ownStateEntries(value, child => canonicalize(child, seen))];
 }
 
 function fingerprint(value: unknown): string {

@@ -53,7 +53,7 @@ type StorySessionWindow = typeof window & {
 
 const functionIds = new WeakMap<Function, number>();
 let nextFunctionId = 1;
-const ignoredFunctionStateKeys = new Set(['arguments', 'caller', 'length', 'name', 'prototype']);
+const ignoredFunctionStateKeys = new Set(['arguments', 'caller', 'length', 'name']);
 
 function functionIdentity(value: Function) {
   let id = functionIds.get(value);

@@ -232,6 +232,34 @@ describe(initializeStorySessionController, () => {
     expect(handler.calls).toEqual(['clicked']);
   });
 
+  it('detects mutable prototype state retained by function-valued args after reset', async () => {
+    const body = { innerHTML: '<button>Ready</button>' };
+    Object.defineProperty(globalThis, 'document', {
+      configurable: true,
+      value: { activeElement: body, body, documentElement: {} },
+    });
+    const target = {} as any;
+    function handler() {}
+    const args = { handler };
+    initializeStorySessionController(target);
+    registerStorySessionRuntime({}, { id: 'function-prototype--story', args }, target);
+    snapshotStorySessionRuntime('function-prototype--story', target);
+    const protocol = target[STORYFREEZE_STORY_SESSION_GLOBAL]!;
+    await protocol.openSession({
+      sessionId: 'function-prototype',
+      storyId: 'function-prototype--story',
+      profileHash: 'desktop',
+    });
+    await protocol.applyVariant('clicked');
+
+    handler.prototype.retained = 'clicked';
+    await protocol.resetVariant('clicked');
+
+    const verification = await protocol.verifyReset();
+    expect(verification.argsHash).not.toBe(verification.baseArgsHash);
+    expect(handler.prototype.retained).toBe('clicked');
+  });
+
   it('detects call history retained by Storybook-style mock args', async () => {
     const body = { innerHTML: '<button>Ready</button>' };
     Object.defineProperty(globalThis, 'document', {

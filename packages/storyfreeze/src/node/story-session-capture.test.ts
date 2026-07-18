@@ -25,6 +25,7 @@ function resetVerification(session = { storyId: story.id, sessionGeneration: 1, 
     baseGlobalsHash: 'globals',
     documentFingerprint: 'baseline',
     scrollPositionMatchesBaseline: true,
+    selectionMatchesBaseline: true,
   };
 }
 
@@ -548,6 +549,20 @@ describe(CapturingBrowser.prototype.screenshotSessionVariants, () => {
 
     await expect((browser as any).verifyStorySessionState(protocol, 'hovered')).rejects.toThrow(
       '"requestActivityChanged":true',
+    );
+  });
+
+  it('rejects a document selection that differs from the session baseline', async () => {
+    const { browser } = createBrowserFixture();
+    Object.assign(browser, {
+      resourceWatcher: { generation: 0, pendingCount: 0 },
+    });
+    const protocol = {
+      verifyReset: vi.fn(async () => ({ ...resetVerification(), selectionMatchesBaseline: false })),
+    };
+
+    await expect((browser as any).verifyStorySessionState(protocol, 'focused')).rejects.toThrow(
+      '"selectionMatchesBaseline":false',
     );
   });
 

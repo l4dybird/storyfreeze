@@ -23,6 +23,7 @@ describe(StorySessionProtocolClient, () => {
     baseGlobalsHash: 'globals',
     documentFingerprint: 'document',
     scrollPositionMatchesBaseline: true,
+    selectionMatchesBaseline: true,
   });
 
   it('validates the same session generation across open/apply/reset/verify', async () => {
@@ -108,6 +109,17 @@ describe(StorySessionProtocolClient, () => {
     await client.openSession({ sessionId: 'session', storyId: 'button--primary', profile });
 
     await expect(client.verifyReset()).rejects.toThrow('activeElementMatchesBaseline must be a boolean');
+  });
+
+  it('rejects reset verification responses without selection status', async () => {
+    const base = { storyId: 'button--primary', sessionGeneration: 2, profileHash: '800:600:1:0:0:1' };
+    const incomplete = verification(base) as Record<string, unknown>;
+    delete incomplete.selectionMatchesBaseline;
+    const evaluate = vi.fn().mockResolvedValueOnce(base).mockResolvedValueOnce(incomplete);
+    const client = new StorySessionProtocolClient({ evaluate } as never);
+    await client.openSession({ sessionId: 'session', storyId: 'button--primary', profile });
+
+    await expect(client.verifyReset()).rejects.toThrow('selectionMatchesBaseline must be a boolean');
   });
 
   it('requires a reset before applying another variant', async () => {

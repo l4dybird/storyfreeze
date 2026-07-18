@@ -976,6 +976,7 @@ export class CapturingBrowser extends BaseBrowser {
       pendingRequestCount !== 0 ||
       requestActivityChanged ||
       !verification.scrollPositionMatchesBaseline ||
+      !verification.selectionMatchesBaseline ||
       verification.argsHash !== verification.baseArgsHash ||
       verification.globalsHash !== verification.baseGlobalsHash ||
       verification.documentFingerprint !== verification.baseDocumentFingerprint

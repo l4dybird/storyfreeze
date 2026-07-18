@@ -179,12 +179,64 @@ describe(BaseBrowser, () => {
     await browser.close();
   });
 
+  it('does not wait for a shared session that opens after close supersedes its boot', async () => {
+    const session = {
+      close: vi.fn(async () => {}),
+      isHealthy: vi.fn(() => true),
+      page: {},
+    } as unknown as BrowserSession;
+    let resolveSession!: (lease: { executablePath: string; generation: number; session: BrowserSession }) => void;
+    const source = {
+      close: vi.fn(async () => {}),
+      isCurrent: vi.fn(() => true),
+      openSession: vi.fn(
+        () =>
+          new Promise<{ executablePath: string; generation: number; session: BrowserSession }>(resolve => {
+            resolveSession = resolve;
+          }),
+      ),
+    } satisfies BrowserSessionSource;
+    const browser = new BaseBrowser({}, new TestBackend(), {}, source);
+
+    const booting = browser.boot();
+    await vi.waitFor(() => expect(source.openSession).toHaveBeenCalledOnce());
+
+    await expect(browser.close()).resolves.toBeUndefined();
+    resolveSession({ executablePath: '/shared/chromium', generation: 1, session });
+
+    await expect(booting).rejects.toThrow('Browser boot was superseded by a close request.');
+    expect(session.close).toHaveBeenCalledOnce();
+  });
+
   it('closes a partially launched browser when session creation fails', async () => {
     const { backend, browser } = createBrowser();
     backend.newPageError = new Error('new page failed');
 
     await expect(browser.boot()).rejects.toThrow('new page failed');
     expect(backend.closeBrowser).toHaveBeenCalledTimes(1);
+  });
+
+  it('closes a direct browser whose session creation never settles on its own', async () => {
+    const { backend, browser } = createBrowser();
+    let rejectSession = (_error: Error) => {};
+    const sessionOpening = new Promise<BrowserSession>((_resolve, reject) => {
+      rejectSession = reject;
+    });
+    const closeBrowser = vi.fn(async () => rejectSession(new Error('browser closed during session creation')));
+    const newSession = vi.fn(() => sessionOpening);
+    vi.spyOn(backend, 'launch').mockResolvedValue({
+      executablePath: '/test/chrome',
+      close: closeBrowser,
+      isHealthy: () => true,
+      newSession,
+    });
+
+    const booting = browser.boot();
+    await vi.waitFor(() => expect(newSession).toHaveBeenCalledOnce());
+
+    await expect(browser.close()).resolves.toBeUndefined();
+    await expect(booting).rejects.toThrow('browser closed during session creation');
+    expect(closeBrowser).toHaveBeenCalledOnce();
   });
 
   it('still closes the browser when closing the session fails', async () => {

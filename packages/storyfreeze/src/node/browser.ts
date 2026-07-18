@@ -1,4 +1,4 @@
-import { raceAgainstTimeout, sleep } from './async-utils.js';
+import { raceAgainstTimeout, sleep, type TimeoutRaceResult } from './async-utils.js';
 import {
   type BrowserBackend,
   type BrowserInstance,
@@ -28,11 +28,14 @@ const sessionCloseTimeoutMs = 1_000;
 const browserCloseTimeoutMs = 5_000;
 
 export class BaseBrowser {
+  private readonly instanceClosures = new WeakMap<BrowserInstance, Promise<TimeoutRaceResult<void>>>();
+  private readonly sessionClosures = new WeakMap<BrowserSession, Promise<TimeoutRaceResult<void>>>();
   private instance?: BrowserInstance;
   private session?: BrowserSession;
   private sessionGeneration?: number;
   private bootPromise?: Promise<this>;
   private closePromise?: Promise<void>;
+  private lifecycleGeneration = 0;
   private _executablePath = '';
   private debugInputResolver = () => {};
   private debugInputPromise?: Promise<void>;
@@ -71,7 +74,7 @@ export class BaseBrowser {
     if (this.bootPromise) return this.bootPromise;
 
     const preparedOptions = this.prepareSessionOptions(sessionOptions);
-    const boot = this.performBoot(preparedOptions);
+    const boot = this.performBoot(preparedOptions, this.lifecycleGeneration);
     this.bootPromise = boot;
     try {
       return await boot;
@@ -82,6 +85,7 @@ export class BaseBrowser {
 
   close(): Promise<void> {
     if (this.closePromise) return this.closePromise;
+    this.lifecycleGeneration += 1;
     const close = this.performClose();
     this.closePromise = close;
     const clear = () => {
@@ -99,7 +103,10 @@ export class BaseBrowser {
 
   protected async onClosing(): Promise<void> {}
 
-  private async performBoot(sessionOptions?: BrowserSessionOptions): Promise<this> {
+  private async performBoot(
+    sessionOptions: BrowserSessionOptions | undefined,
+    lifecycleGeneration: number,
+  ): Promise<this> {
     let instance: BrowserInstance | undefined;
     let session: BrowserSession | undefined;
     let sessionGeneration: number | undefined;
@@ -112,6 +119,12 @@ export class BaseBrowser {
         executablePath = lease.executablePath;
       } else {
         instance = await this.backend.launch(this.opt);
+        if (lifecycleGeneration !== this.lifecycleGeneration) {
+          throw new Error('Browser boot was superseded by a close request.');
+        }
+        // Publish a partially launched direct instance so close() can interrupt
+        // a backend whose new-session operation never settles.
+        this.instance = instance;
         executablePath = instance.executablePath;
         emitCaptureDiagnostic({
           type: 'browser-launch',
@@ -123,12 +136,18 @@ export class BaseBrowser {
         session = await instance.newSession(sessionOptions);
       }
 
+      if (lifecycleGeneration !== this.lifecycleGeneration) {
+        throw new Error('Browser boot was superseded by a close request.');
+      }
       this.instance = instance;
       this.session = session;
       this.sessionGeneration = sessionGeneration;
       this._executablePath = executablePath;
       await this.setupDebugInput();
       await this.onBooted(sessionOptions);
+      if (lifecycleGeneration !== this.lifecycleGeneration) {
+        throw new Error('Browser boot was superseded by a close request.');
+      }
       return this;
     } catch (error) {
       this.instance = undefined;
@@ -140,15 +159,33 @@ export class BaseBrowser {
       } catch {
         // Partial subclass setup must not prevent browser cleanup.
       }
-      await Promise.allSettled([session?.close(), instance?.close()]);
+      await Promise.allSettled([
+        session ? this.closeSession(session) : undefined,
+        instance ? this.closeInstance(instance) : undefined,
+      ]);
       throw error;
     }
   }
 
-  private async performClose() {
-    const pendingBoot = this.bootPromise;
-    if (pendingBoot) await pendingBoot.catch(() => {});
+  private closeSession(session: BrowserSession) {
+    let closing = this.sessionClosures.get(session);
+    if (!closing) {
+      closing = Promise.resolve().then(() => raceAgainstTimeout(session.close(), sessionCloseTimeoutMs));
+      this.sessionClosures.set(session, closing);
+    }
+    return closing;
+  }
 
+  private closeInstance(instance: BrowserInstance) {
+    let closing = this.instanceClosures.get(instance);
+    if (!closing) {
+      closing = Promise.resolve().then(() => raceAgainstTimeout(instance.close(), browserCloseTimeoutMs));
+      this.instanceClosures.set(instance, closing);
+    }
+    return closing;
+  }
+
+  private async performClose() {
     const session = this.session;
     const instance = this.instance;
     this.session = undefined;
@@ -171,7 +208,7 @@ export class BaseBrowser {
     let sessionCloseError: unknown;
     try {
       if (session) {
-        const result = await raceAgainstTimeout(session.close(), sessionCloseTimeoutMs);
+        const result = await this.closeSession(session);
         if (result.timedOut)
           sessionCloseError = new Error(`Browser session close exceeded ${sessionCloseTimeoutMs} msec.`);
       }
@@ -184,7 +221,7 @@ export class BaseBrowser {
     let browserCloseError: unknown;
     try {
       if (instance) {
-        const result = await raceAgainstTimeout(instance.close(), browserCloseTimeoutMs);
+        const result = await this.closeInstance(instance);
         if (result.timedOut) browserCloseError = new Error(`Browser close exceeded ${browserCloseTimeoutMs} msec.`);
       }
     } catch (error) {

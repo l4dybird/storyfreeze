@@ -242,10 +242,6 @@ export class BaseBrowser {
 
   protected async waitForDebugInput() {
     if (this.opt.launchOptions?.headless === false) {
-      // oxlint-disable-next-line no-console
-      console.log(
-        'StoryFreeze waits for your input. Open the browser developer console and execute nextStep() to continue.',
-      );
       this.debugInputPromise ??= new Promise<void>(resolve => {
         this.debugInputResolver = () => {
           this.debugInputResolver = () => {};
@@ -253,7 +249,18 @@ export class BaseBrowser {
           resolve();
         };
       });
-      await this.debugInputPromise;
+      const waitForInput = this.debugInputPromise;
+      try {
+        await this.page.activate();
+      } catch (error) {
+        this.debugInputResolver();
+        throw error;
+      }
+      // oxlint-disable-next-line no-console
+      console.log(
+        'StoryFreeze waits for your input. Open the browser developer console and execute nextStep() to continue.',
+      );
+      await waitForInput;
     }
   }
 

@@ -96,6 +96,10 @@ export class PlaywrightCapturePage implements CapturePage {
     this.cdp = asCdpClient(rawCdp);
   }
 
+  async activate() {
+    await this.rawPage.bringToFront();
+  }
+
   addStyleFile(path: string) {
     return this.rawPage.addStyleTag({ path }).then(() => {});
   }

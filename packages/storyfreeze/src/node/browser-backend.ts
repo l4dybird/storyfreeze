@@ -68,6 +68,7 @@ export interface TraceSink {
 }
 
 export interface CapturePage {
+  activate(): Promise<void>;
   addStyleFile(path: string): Promise<void>;
   click(selector: string): Promise<void>;
   currentUrl(): string;

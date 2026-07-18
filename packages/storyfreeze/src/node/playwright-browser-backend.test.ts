@@ -5,6 +5,7 @@ import { ChromiumNotFoundError, type BrowserRequest } from './browser-backend.js
 import { PlaywrightBrowserBackend, PlaywrightCapturePage } from './playwright-browser-backend.js';
 
 class FakePage extends EventEmitter {
+  readonly bringToFront = vi.fn(async () => {});
   readonly element = {
     click: vi.fn(async () => {}),
     dispose: vi.fn(async () => {}),
@@ -45,6 +46,9 @@ describe(PlaywrightCapturePage, () => {
     const unsubscribeRequests = page.subscribeRequests({ started, finished });
     const unsubscribeConsole = page.subscribeConsole(consoleListener);
     const rawRequest = request();
+
+    await page.activate();
+    expect(rawPage.bringToFront).toHaveBeenCalledTimes(1);
 
     rawPage.emit('request', rawRequest);
     rawPage.emit('requestfinished', rawRequest);

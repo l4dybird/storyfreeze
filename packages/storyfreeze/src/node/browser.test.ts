@@ -19,7 +19,11 @@ class TestBackend implements BrowserBackend {
   launchedWith?: BrowserLaunchOptions;
   readonly closePage = vi.fn(async () => {});
   readonly closeBrowser = vi.fn(async () => {});
-  readonly exposeFunction = vi.fn(async () => {});
+  readonly activate = vi.fn(async () => {});
+  readonly exposeFunction = vi.fn(async (_name: string, fn: () => void) => {
+    this.nextStep = fn;
+  });
+  nextStep?: () => void;
   launchCount = 0;
   newSessionCount = 0;
   newPageError?: Error;
@@ -43,7 +47,7 @@ class TestBackend implements BrowserBackend {
         return {
           close: this.closePage,
           isHealthy: () => true,
-          page: { exposeFunction: this.exposeFunction } as unknown as CapturePage,
+          page: { activate: this.activate, exposeFunction: this.exposeFunction } as unknown as CapturePage,
         };
       },
     };
@@ -102,6 +106,28 @@ describe(BaseBrowser, () => {
       headless: true,
     });
     expect(browser.executablePath).toBe('/test/chrome');
+  });
+
+  it('activates a headed page before waiting for debug input', async () => {
+    class DebugBrowser extends BaseBrowser {
+      waitForNextStep() {
+        return this.waitForDebugInput();
+      }
+    }
+    const backend = new TestBackend();
+    const browser = new DebugBrowser({ launchOptions: { headless: false } }, backend);
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    try {
+      await browser.boot();
+      const waiting = browser.waitForNextStep();
+      await vi.waitFor(() => expect(backend.activate).toHaveBeenCalledTimes(1));
+      backend.nextStep?.();
+      await waiting;
+    } finally {
+      await browser.close();
+      log.mockRestore();
+    }
   });
 
   it('keeps the Chromium sandbox enabled when launch options are omitted', async () => {

@@ -89,6 +89,53 @@ describe(FileSystem, () => {
     expect(mkdir).toHaveBeenCalledTimes(1);
   });
 
+  it('applies byte backpressure before pending screenshot buffers are created', async () => {
+    const fileSystem = new FileSystem({ outDir, flat: false, parallel: 8 } as MainOptions);
+    const bufferBytes = 16 * 1024 * 1024;
+    let produced = 0;
+    let retainedBytes = 0;
+    let peakRetainedBytes = 0;
+    let releaseWrites = () => {};
+    const writesBlocked = new Promise<void>(resolve => (releaseWrites = resolve));
+    vi.spyOn(fs, 'writeFile').mockImplementation(async () => writesBlocked);
+    vi.spyOn(fs, 'rename').mockImplementation(async () => {});
+
+    const operations = Array.from({ length: 8 }, async (_, index) => {
+      const buffer = await fileSystem.captureScreenshot(bufferBytes, async () => {
+        produced += 1;
+        retainedBytes += bufferBytes;
+        peakRetainedBytes = Math.max(peakRetainedBytes, retainedBytes);
+        return Buffer.alloc(bufferBytes);
+      });
+      try {
+        await fileSystem.saveScreenshot('Button', `Story ${index}`, [], buffer!);
+      } finally {
+        retainedBytes -= bufferBytes;
+      }
+    });
+
+    await vi.waitFor(() => expect(produced).toBe(4));
+    expect(peakRetainedBytes).toBe(64 * 1024 * 1024);
+    releaseWrites();
+    await Promise.all(operations);
+    expect(produced).toBe(8);
+    expect(retainedBytes).toBe(0);
+  });
+
+  it('removes an aborted producer from the screenshot reservation queue', async () => {
+    const fileSystem = new FileSystem({ outDir, flat: false, parallel: 2 } as MainOptions);
+    const held = await fileSystem.captureScreenshot(64 * 1024 * 1024, async () => Buffer.alloc(64 * 1024 * 1024));
+    const capture = vi.fn(async () => Buffer.from('cancelled'));
+    const controller = new AbortController();
+    const waiting = fileSystem.captureScreenshot(1, capture, controller.signal);
+
+    controller.abort(new Error('capture cancelled'));
+
+    await expect(waiting).rejects.toThrow('capture cancelled');
+    expect(capture).not.toHaveBeenCalled();
+    fileSystem.releaseScreenshotBuffer(held);
+  });
+
   it('closes the writer and flush fails after an output error', async () => {
     await fs.rm(outDir, { recursive: true, force: true });
     await fs.writeFile(outDir, 'not a directory');

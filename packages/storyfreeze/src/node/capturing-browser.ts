@@ -1,6 +1,11 @@
 import { fileURLToPath } from 'node:url';
 import { BaseBrowser, MetricsWatcher } from './browser.js';
-import type { BrowserBackend, BrowserConsoleMessage, BrowserSessionOptions } from './browser-backend.js';
+import type {
+  BrowserBackend,
+  BrowserConsoleMessage,
+  BrowserSessionOptions,
+  ScreenshotCaptureOptions,
+} from './browser-backend.js';
 import type { BrowserSessionSource } from './browser-process-coordinator.js';
 import type { Story } from './story.js';
 import type { ManagedStorybookConnection } from './managed-storybook-connection.js';
@@ -12,6 +17,7 @@ import type {
   StrictScreenshotOptions,
   Exposed,
   PreviewCaptureDiagnostic,
+  Viewport,
 } from '../shared/types.js';
 import { InvalidCurrentStoryStateError, PreviewReadyTimeoutError, SimplePreviewReadyTimeoutError } from './errors.js';
 import {
@@ -35,12 +41,53 @@ import {
   classifyBatchEligibility,
   type CaptureProtocolMode,
   type SessionVariantExecutionResult,
+  type SessionVariantOutput,
   type SessionVariantRequest,
 } from './story-session.js';
 import { StorySessionProtocolClient } from './story-session-protocol.js';
 import { raceAgainstTimeout } from './async-utils.js';
 
 const disableAnimationStylePath = fileURLToPath(new URL('../../assets/disable-animation.css', import.meta.url));
+
+function estimatePngBufferReservation(options: ScreenshotCaptureOptions, viewport: Viewport | undefined) {
+  if (options.fullPage) return undefined;
+  const dimensions = options.clip ?? viewport;
+  if (!dimensions) return undefined;
+  const scale = Math.max(1, viewport?.deviceScaleFactor ?? 1);
+  const width = Math.ceil(dimensions.width * scale);
+  const height = Math.ceil(dimensions.height * scale);
+  const rawBytes = width * height * 4 + height;
+  if (!Number.isSafeInteger(rawBytes) || rawBytes < 1) return undefined;
+  return rawBytes + Math.ceil(rawBytes * 0.02) + 1024 * 1024;
+}
+
+function captureScreenshotWithBudget(
+  fileSystem: FileSystem,
+  options: ScreenshotCaptureOptions,
+  viewport: Viewport | undefined,
+  capture: () => Promise<Buffer | null>,
+  signal?: AbortSignal,
+) {
+  if (typeof fileSystem.captureScreenshot !== 'function') return capture();
+  return fileSystem.captureScreenshot(estimatePngBufferReservation(options, viewport), capture, signal);
+}
+
+function releaseCapturedScreenshot(fileSystem: FileSystem, buffer: Buffer | null | undefined) {
+  fileSystem.releaseScreenshotBuffer?.(buffer);
+}
+
+async function releaseScreenshotIfCleanupFails(
+  fileSystem: FileSystem,
+  buffer: Buffer | null | undefined,
+  cleanup: () => Promise<void>,
+) {
+  try {
+    await cleanup();
+  } catch (error) {
+    releaseCapturedScreenshot(fileSystem, buffer);
+    throw error;
+  }
+}
 
 export { resolveViewport } from './emulation-profile.js';
 
@@ -677,6 +724,7 @@ export class CapturingBrowser extends BaseBrowser {
     const unsubscribeConsole = this.page.subscribeConsole(onConsoleLog);
     let traceStarted = false;
     let traceFile: TraceFile | undefined;
+    let buffer: Buffer | null = null;
     // Capture this outside so it can be used for the filePath generation for the trace.
     let defaultVariantSuffix: string | undefined;
 
@@ -781,13 +829,20 @@ export class CapturingBrowser extends BaseBrowser {
 
       // Get PNG image buffer
       const captureOptions = emittedScreenshotOptions;
-      const buffer = await this.measurePhase('screenshot', () =>
-        this.page.screenshot({
-          fullPage: captureOptions.fullPage,
-          omitBackground: captureOptions.omitBackground,
-          captureBeyondViewport: captureOptions.captureBeyondViewport,
-          clip: captureOptions.clip ?? undefined,
-        }),
+      const screenshotOptions = {
+        fullPage: captureOptions.fullPage,
+        omitBackground: captureOptions.omitBackground,
+        captureBeyondViewport: captureOptions.captureBeyondViewport,
+        clip: captureOptions.clip ?? undefined,
+      };
+      buffer = await this.measurePhase('screenshot', () =>
+        captureScreenshotWithBudget(
+          fileSystem,
+          screenshotOptions,
+          this.viewport,
+          () => this.page.screenshot(screenshotOptions),
+          deadline.signal,
+        ),
       );
 
       // We should reset elements state(e.g. focusing, hovering, clicking) for future screenshot for this story.
@@ -803,23 +858,28 @@ export class CapturingBrowser extends BaseBrowser {
         variantKeysToPush,
         defaultVariantSuffix,
       };
+    } catch (error) {
+      releaseCapturedScreenshot(fileSystem, buffer);
+      throw error;
     } finally {
-      try {
+      await releaseScreenshotIfCleanupFails(fileSystem, buffer, async () => {
         try {
-          unsubscribeConsole();
-        } finally {
-          if (traceStarted) {
-            await this.measurePhase('trace-flush', async () => {
-              await this.page.stopTrace();
-              const suffix = variantKey.isDefault && defaultVariantSuffix ? [defaultVariantSuffix] : variantKey.keys;
-              const logicalId = JSON.stringify({ storyId: story.id, variantKey });
-              await traceFile!.commit(story.kind, story.story, suffix, logicalId);
-            });
+          try {
+            unsubscribeConsole();
+          } finally {
+            if (traceStarted) {
+              await this.measurePhase('trace-flush', async () => {
+                await this.page.stopTrace();
+                const suffix = variantKey.isDefault && defaultVariantSuffix ? [defaultVariantSuffix] : variantKey.keys;
+                const logicalId = JSON.stringify({ storyId: story.id, variantKey });
+                await traceFile!.commit(story.kind, story.story, suffix, logicalId);
+              });
+            }
           }
+        } finally {
+          await traceFile?.discard();
         }
-      } finally {
-        await traceFile?.discard();
-      }
+      });
     }
   }
 
@@ -932,6 +992,7 @@ export class CapturingBrowser extends BaseBrowser {
       else if (message.type === 'error') logger.error(niceMessage);
       else logger.log(niceMessage);
     });
+    let retainedBuffer: Buffer | null = null;
 
     const attempt = (async () => {
       if (trace) {
@@ -985,13 +1046,20 @@ export class CapturingBrowser extends BaseBrowser {
           this.page.waitForVisualCommit({ paintFallbackMs: 250, timeoutMs: deadline.remaining(3000) }, deadline.signal),
         );
       }
-      const buffer = await this.measurePhase('screenshot', () =>
-        this.page.screenshot({
-          fullPage: options.fullPage,
-          omitBackground: options.omitBackground,
-          captureBeyondViewport: options.captureBeyondViewport,
-          clip: options.clip ?? undefined,
-        }),
+      const screenshotOptions = {
+        fullPage: options.fullPage,
+        omitBackground: options.omitBackground,
+        captureBeyondViewport: options.captureBeyondViewport,
+        clip: options.clip ?? undefined,
+      };
+      retainedBuffer = await this.measurePhase('screenshot', () =>
+        captureScreenshotWithBudget(
+          fileSystem,
+          screenshotOptions,
+          this.viewport,
+          () => this.page.screenshot(screenshotOptions),
+          deadline.signal,
+        ),
       );
       await this.measurePhase('reset', () =>
         this.resetStorySessionVariant(
@@ -1003,7 +1071,7 @@ export class CapturingBrowser extends BaseBrowser {
         ),
       );
       completed = true;
-      return buffer;
+      return retainedBuffer;
     })();
 
     let result: Buffer | null = null;
@@ -1059,10 +1127,14 @@ export class CapturingBrowser extends BaseBrowser {
     }
 
     if (captureFailed) {
+      releaseCapturedScreenshot(fileSystem, retainedBuffer);
       if (cleanupError !== undefined) throw new AggregateError([captureError, cleanupError]);
       throw captureError;
     }
-    if (cleanupError !== undefined) throw cleanupError;
+    if (cleanupError !== undefined) {
+      releaseCapturedScreenshot(fileSystem, retainedBuffer);
+      throw cleanupError;
+    }
     return result;
   }
 
@@ -1093,6 +1165,7 @@ export class CapturingBrowser extends BaseBrowser {
     trace: boolean,
     fileSystem: FileSystem,
     protocolMode: Exclude<CaptureProtocolMode, 'strict'>,
+    onOutput?: (output: SessionVariantOutput) => Promise<void>,
   ): Promise<SessionVariantExecutionResult> {
     if (requests.length === 0) return { outputs: [], strictFallbacks: [] };
     if (this.currentStory?.id !== story.id || !this.rootScreenshotOptions || !this.viewport) {
@@ -1182,6 +1255,7 @@ export class CapturingBrowser extends BaseBrowser {
     if (eligible.length === 0) return { outputs: [], strictFallbacks };
     const protocol = new StorySessionProtocolClient(this.page);
     const outputs: SessionVariantExecutionResult['outputs'] = [];
+    const completedIds = new Set<string>();
     try {
       const baselineDeadline = new CaptureDeadline(this.opt.captureTimeout, `${sessionId}:baseline`, this.opt.signal);
       this.activeDeadline = baselineDeadline;
@@ -1220,7 +1294,10 @@ export class CapturingBrowser extends BaseBrowser {
             fileSystem,
           );
           const durationMs = performance.now() - startedAt;
-          outputs.push({ variantKey: item.request.variantKey, buffer, durationMs });
+          const output = { variantKey: item.request.variantKey, buffer, durationMs };
+          if (onOutput) await onOutput(output);
+          else outputs.push(output);
+          completedIds.add(createCaptureId(story.id, item.request.variantKey.keys));
           emitCaptureDiagnostic({
             type: 'story-session-capture',
             durationMs,
@@ -1249,7 +1326,6 @@ export class CapturingBrowser extends BaseBrowser {
       }
       await this.restartCaptureSession(error);
       if (protocolMode === 'story-session') throw error;
-      const completedIds = new Set(outputs.map(output => createCaptureId(story.id, output.variantKey.keys)));
       return {
         outputs,
         strictFallbacks: [

@@ -24,9 +24,7 @@ describe('capture diagnostics', () => {
 
   it('does not write or add an asynchronous boundary when diagnostics are disabled', async () => {
     delete process.env.STORYFREEZE_CAPTURE_DIAGNOSTICS;
-    const write = vi.spyOn(fs, 'write').mockImplementation(((_fd, _data, callback) => {
-      callback?.(null, 0, '');
-    }) as never);
+    const write = vi.spyOn(fs, 'write').mockImplementation(completeStdoutWrite as never);
     let called = false;
 
     const result = await measureCaptureDiagnostic({ type: 'capture-phase', phase: 'test' }, async () => {
@@ -102,5 +100,24 @@ describe('capture diagnostics', () => {
 
     expect(() => emitCaptureDiagnostic({ type: 'write-failure' })).not.toThrow();
     expect(process.stdout.listenerCount('error')).toBe(listenersBefore);
+  });
+
+  it('retries short writes until the complete UTF-8 diagnostic line is emitted', async () => {
+    process.env.STORYFREEZE_CAPTURE_DIAGNOSTICS = '1';
+    const chunks: Buffer[] = [];
+    const write = vi.spyOn(fs, 'write').mockImplementation(((_fd, data, offset, length, _position, callback) => {
+      const buffer = data as Buffer;
+      const bytesWritten = Math.min(5, length as number);
+      chunks.push(buffer.subarray(offset as number, (offset as number) + bytesWritten));
+      callback?.(null, bytesWritten, buffer);
+    }) as never);
+    const event = { type: 'partial-write', detail: 'あ'.repeat(20) };
+    const expected = `${CAPTURE_DIAGNOSTIC_PREFIX}${JSON.stringify(event)}\n`;
+
+    emitCaptureDiagnostic(event);
+
+    await vi.waitFor(() => expect(Buffer.concat(chunks).byteLength).toBe(Buffer.byteLength(expected)));
+    expect(Buffer.concat(chunks).toString('utf8')).toBe(expected);
+    expect(write.mock.calls.length).toBeGreaterThan(1);
   });
 });

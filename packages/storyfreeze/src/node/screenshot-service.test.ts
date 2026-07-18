@@ -253,14 +253,24 @@ describe(createScreenshotService, () => {
       variantKeysToPush: [hovered],
       defaultVariantSuffix: '',
     }));
-    const screenshotSessionVariants = vi.fn(async (_sessionId, _story, requests) => ({
-      outputs: requests.map((request: { variantKey: VariantKey }) => ({
-        variantKey: request.variantKey,
-        buffer: Buffer.from('variant'),
-        durationMs: 25,
-      })),
-      strictFallbacks: [],
-    }));
+    const screenshotSessionVariants = vi.fn(
+      async (
+        _sessionId,
+        _story,
+        requests,
+        _logger,
+        _forwardConsoleLogs,
+        _trace,
+        _fileSystem,
+        _protocolMode,
+        onOutput: (output: { variantKey: VariantKey; buffer: Buffer; durationMs: number }) => Promise<void>,
+      ) => {
+        for (const request of requests as Array<{ variantKey: VariantKey }>) {
+          await onOutput({ variantKey: request.variantKey, buffer: Buffer.from('variant'), durationMs: 25 });
+        }
+        return { outputs: [], strictFallbacks: [] };
+      },
+    );
     const saveScreenshot = vi.fn(async () => 'screenshot.png');
     const logger = {
       log: vi.fn(),
@@ -299,6 +309,7 @@ describe(createScreenshotService, () => {
     expect(screenshot).toHaveBeenCalledTimes(1);
     expect(screenshotSessionVariants).toHaveBeenCalledTimes(1);
     expect(screenshotSessionVariants.mock.calls[0][2]).toEqual([expect.objectContaining({ variantKey: hovered })]);
+    expect(screenshotSessionVariants.mock.calls[0][8]).toEqual(expect.any(Function));
     expect(saveScreenshot).toHaveBeenCalledTimes(2);
   });
 

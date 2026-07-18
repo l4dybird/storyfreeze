@@ -4,6 +4,8 @@ import { randomBytes } from 'crypto';
 import type { MainOptions } from './types.js';
 import sanitize from 'sanitize-filename';
 
+export const MAXIMUM_RETAINED_SCREENSHOT_BYTES = 64 * 1024 * 1024;
+
 export interface TraceFile {
   write(chunk: Buffer): Promise<void>;
   commit(kind: string, story: string, suffix: string[], logicalId?: string): Promise<string>;
@@ -15,11 +17,19 @@ export class FileSystem {
   private readonly directoryPromises = new Map<string, Promise<void>>();
   private readonly outputRoot: string;
   private readonly maximumConcurrentWrites: number;
-  private readonly maximumBufferedBytes = 64 * 1024 * 1024;
+  private readonly maximumBufferedBytes = MAXIMUM_RETAINED_SCREENSHOT_BYTES;
   private readonly writeWaiters: Array<{ bytes: number; resolve: () => void; reject: (error: unknown) => void }> = [];
+  private readonly screenshotWaiters: Array<{
+    bytes: number;
+    resolve: () => void;
+    reject: (error: unknown) => void;
+  }> = [];
+  private readonly screenshotReservations = new WeakMap<Buffer, number>();
   private readonly pendingWrites = new Set<Promise<unknown>>();
   private activeWrites = 0;
   private activeWriteBytes = 0;
+  private activeScreenshotReservations = 0;
+  private retainedScreenshotBytes = 0;
   private writerError?: unknown;
 
   constructor(private opt: MainOptions) {
@@ -93,10 +103,110 @@ export class FileSystem {
     this.startWaitingWrites();
   }
 
+  private acquireScreenshotReservation(bytes: number, signal?: AbortSignal) {
+    if (this.writerError !== undefined) return Promise.reject(this.writerError);
+    if (signal?.aborted)
+      return Promise.reject(signal.reason ?? new Error('Screenshot output reservation was aborted.'));
+    return new Promise<void>((resolve, reject) => {
+      let onAbort = () => {};
+      const waiter = {
+        bytes,
+        resolve: () => {
+          signal?.removeEventListener('abort', onAbort);
+          resolve();
+        },
+        reject: (error: unknown) => {
+          signal?.removeEventListener('abort', onAbort);
+          reject(error);
+        },
+      };
+      onAbort = () => {
+        const index = this.screenshotWaiters.indexOf(waiter);
+        if (index < 0) return;
+        this.screenshotWaiters.splice(index, 1);
+        waiter.reject(signal?.reason ?? new Error('Screenshot output reservation was aborted.'));
+        this.startWaitingScreenshotCaptures();
+      };
+      signal?.addEventListener('abort', onAbort, { once: true });
+      this.screenshotWaiters.push(waiter);
+      this.startWaitingScreenshotCaptures();
+    });
+  }
+
+  private startWaitingScreenshotCaptures() {
+    while (this.screenshotWaiters.length > 0 && this.activeScreenshotReservations < this.maximumConcurrentWrites) {
+      const next = this.screenshotWaiters[0];
+      const fits = this.retainedScreenshotBytes + next.bytes <= this.maximumBufferedBytes;
+      if (!fits && this.activeScreenshotReservations > 0) return;
+      this.screenshotWaiters.shift();
+      this.activeScreenshotReservations += 1;
+      this.retainedScreenshotBytes += next.bytes;
+      next.resolve();
+    }
+  }
+
+  private releaseScreenshotReservation(bytes: number) {
+    this.activeScreenshotReservations -= 1;
+    this.retainedScreenshotBytes -= bytes;
+    this.startWaitingScreenshotCaptures();
+  }
+
   private closeWriter(error: unknown) {
     if (this.writerError !== undefined) return;
     this.writerError = error;
     for (const waiter of this.writeWaiters.splice(0)) waiter.reject(error);
+    for (const waiter of this.screenshotWaiters.splice(0)) waiter.reject(error);
+  }
+
+  /** Reserves retained-buffer capacity before Chromium creates a PNG. */
+  async captureScreenshot(
+    reservationBytes: number | undefined,
+    capture: () => Promise<Buffer | null>,
+    signal?: AbortSignal,
+  ) {
+    let reservedBytes =
+      reservationBytes === undefined || !Number.isFinite(reservationBytes)
+        ? this.maximumBufferedBytes
+        : Math.max(1, Math.ceil(reservationBytes));
+    await this.acquireScreenshotReservation(reservedBytes, signal);
+    try {
+      const buffer = await capture();
+      if (!buffer) {
+        this.releaseScreenshotReservation(reservedBytes);
+        return null;
+      }
+      if (this.writerError !== undefined) throw this.writerError;
+      if (this.screenshotReservations.has(buffer)) {
+        throw new Error('A captured screenshot buffer cannot hold more than one output reservation.');
+      }
+      const reservationDelta = buffer.byteLength - reservedBytes;
+      if (reservationDelta > 0) {
+        if (
+          this.activeScreenshotReservations > 1 &&
+          this.retainedScreenshotBytes + reservationDelta > this.maximumBufferedBytes
+        ) {
+          throw new Error(
+            `A screenshot used ${buffer.byteLength} bytes, exceeding its ${reservedBytes}-byte output reservation.`,
+          );
+        }
+      }
+      this.retainedScreenshotBytes += reservationDelta;
+      reservedBytes = buffer.byteLength;
+      this.screenshotReservations.set(buffer, reservedBytes);
+      if (reservationDelta < 0) this.startWaitingScreenshotCaptures();
+      return buffer;
+    } catch (error) {
+      this.releaseScreenshotReservation(reservedBytes);
+      throw error;
+    }
+  }
+
+  releaseScreenshotBuffer(buffer: Buffer | null | undefined) {
+    if (!buffer) return;
+    const reservedBytes = this.screenshotReservations.get(buffer);
+    if (reservedBytes === undefined) return;
+    this.screenshotReservations.delete(buffer);
+    this.releaseScreenshotReservation(reservedBytes);
   }
 
   private writeAtomic(filePath: string, buffer: Buffer) {
@@ -141,11 +251,13 @@ export class FileSystem {
    *
    **/
   async saveScreenshot(kind: string, story: string, suffix: string[], buffer: Buffer, logicalId?: string) {
-    const filePath = this.getPath(kind, story, suffix, '.png', logicalId);
-
-    await this.writeAtomic(filePath, buffer);
-
-    return filePath;
+    try {
+      const filePath = this.getPath(kind, story, suffix, '.png', logicalId);
+      await this.writeAtomic(filePath, buffer);
+      return filePath;
+    } finally {
+      this.releaseScreenshotBuffer(buffer);
+    }
   }
 
   async createTraceFile(): Promise<TraceFile> {

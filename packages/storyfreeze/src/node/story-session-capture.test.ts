@@ -204,6 +204,7 @@ describe(CapturingBrowser.prototype.screenshotSessionVariants, () => {
       rootScreenshotOptions: rootOptions,
       viewport: { width: 800, height: 600 },
     });
+    const onOutput = vi.fn(async () => {});
 
     await expect(
       browser.screenshotSessionVariants(
@@ -215,16 +216,16 @@ describe(CapturingBrowser.prototype.screenshotSessionVariants, () => {
         false,
         {} as never,
         'auto',
+        onOutput,
       ),
     ).resolves.toEqual({
-      outputs: [
-        {
-          variantKey: { isDefault: false, keys: ['hovered'] },
-          buffer: Buffer.from('png'),
-          durationMs: expect.any(Number),
-        },
-      ],
+      outputs: [],
       strictFallbacks: [],
+    });
+    expect(onOutput).toHaveBeenCalledWith({
+      variantKey: { isDefault: false, keys: ['hovered'] },
+      buffer: Buffer.from('png'),
+      durationMs: expect.any(Number),
     });
     expect(page.hover).toHaveBeenCalledWith('#button');
     expect(page.click).toHaveBeenCalledWith('#button');

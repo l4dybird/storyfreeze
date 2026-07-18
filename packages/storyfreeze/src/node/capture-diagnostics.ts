@@ -17,12 +17,12 @@ export type CaptureDiagnosticEvent = {
 const captureDiagnosticListeners = new Set<(event: CaptureDiagnosticEvent) => void>();
 
 class DiagnosticSink {
-  private readonly lines: string[] = [];
+  private readonly lines: Buffer[] = [];
   private head = 0;
   private writing = false;
 
   write(line: string) {
-    this.lines.push(line);
+    this.lines.push(Buffer.from(line));
     this.flushNext();
   }
 
@@ -30,6 +30,7 @@ class DiagnosticSink {
     if (this.writing || this.head >= this.lines.length) return;
     this.writing = true;
     const line = this.lines[this.head++];
+    let offset = 0;
     const complete = () => {
       this.writing = false;
       if (this.head === this.lines.length) {
@@ -38,11 +39,28 @@ class DiagnosticSink {
       }
       this.flushNext();
     };
-    try {
-      fs.write(process.stdout.fd, line, complete);
-    } catch {
-      complete();
-    }
+    const writeRemaining = () => {
+      const remaining = line.byteLength - offset;
+      try {
+        fs.write(process.stdout.fd, line, offset, remaining, null, (error, bytesWritten) => {
+          if (error) {
+            complete();
+            return;
+          }
+          const written = typeof bytesWritten === 'number' ? bytesWritten : remaining;
+          if (!Number.isSafeInteger(written) || written <= 0) {
+            complete();
+            return;
+          }
+          offset += Math.min(written, remaining);
+          if (offset >= line.byteLength) complete();
+          else queueMicrotask(writeRemaining);
+        });
+      } catch {
+        complete();
+      }
+    };
+    writeRemaining();
   }
 }
 

@@ -16,6 +16,7 @@ import { sameEmulationProfile, type EmulationProfile } from './emulation-profile
 import {
   type CaptureProtocolMode,
   type SessionVariantExecutionResult,
+  type SessionVariantOutput,
   type SessionVariantRequest,
 } from './story-session.js';
 import type { PreparedExecutionPlan } from './execution-plan.js';
@@ -147,6 +148,7 @@ export interface ScreenshotWorker {
     trace: boolean,
     fileSystem: FileSystem,
     protocolMode: Exclude<CaptureProtocolMode, 'strict'>,
+    onOutput?: (output: SessionVariantOutput) => Promise<void>,
   ): Promise<SessionVariantExecutionResult>;
 }
 
@@ -377,7 +379,10 @@ export function createScreenshotService({
       ) => {
         if (!buffer) return;
         const captureId = createCaptureId(story.id, variantKey.keys);
-        if (outputCaptureIds.has(captureId)) return;
+        if (outputCaptureIds.has(captureId)) {
+          fileSystem.releaseScreenshotBuffer?.(buffer);
+          return;
+        }
         outputCaptureIds.add(captureId);
         const suffix = variantKey.isDefault && defaultVariantSuffix ? [defaultVariantSuffix] : variantKey.keys;
         const logicalId = JSON.stringify({ storyId: story.id, variantKey });
@@ -527,6 +532,7 @@ export function createScreenshotService({
                   trace,
                   fileSystem,
                   captureProtocol,
+                  output => saveCaptureOutput(request.story, output.variantKey, output.buffer, output.durationMs, 0),
                 ),
                 operationTimeoutMs * Math.max(1, sessionCandidates.size),
                 `Story session ${request.sessionId}`,

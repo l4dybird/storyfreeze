@@ -83,14 +83,14 @@ describe(BaseBrowser, () => {
 
       expect(write).toHaveBeenCalledWith(
         process.stdout.fd,
-        expect.stringContaining('"type":"browser-launch"'),
+        expect.any(Buffer),
+        0,
+        expect.any(Number),
+        null,
         expect.any(Function),
       );
-      expect(write).toHaveBeenCalledWith(
-        process.stdout.fd,
-        expect.stringContaining('"source":"direct"'),
-        expect.any(Function),
-      );
+      expect(String(write.mock.calls[0][1])).toContain('"type":"browser-launch"');
+      expect(String(write.mock.calls[0][1])).toContain('"source":"direct"');
     } finally {
       await browser.close();
       write.mockRestore();

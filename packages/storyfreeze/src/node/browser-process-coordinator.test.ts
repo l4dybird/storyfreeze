@@ -60,14 +60,14 @@ describe(BrowserProcessCoordinator, () => {
 
       expect(write).toHaveBeenCalledWith(
         process.stdout.fd,
-        expect.stringContaining('"type":"browser-launch"'),
+        expect.any(Buffer),
+        0,
+        expect.any(Number),
+        null,
         expect.any(Function),
       );
-      expect(write).toHaveBeenCalledWith(
-        process.stdout.fd,
-        expect.stringContaining('"source":"coordinator"'),
-        expect.any(Function),
-      );
+      expect(String(write.mock.calls[0][1])).toContain('"type":"browser-launch"');
+      expect(String(write.mock.calls[0][1])).toContain('"source":"coordinator"');
     } finally {
       await coordinator.close();
       write.mockRestore();

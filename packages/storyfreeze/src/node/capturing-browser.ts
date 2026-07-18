@@ -832,11 +832,14 @@ export class CapturingBrowser extends BaseBrowser {
   }
 
   private async verifyStorySessionState(protocol: StorySessionProtocolClient, variantId: string) {
-    const pendingRequestCount = this.resourceWatcher!.pendingCount;
+    const resourceGeneration = this.resourceWatcher!.generation;
     const verification = await protocol.verifyReset();
+    const pendingRequestCount = this.resourceWatcher!.pendingCount;
+    const requestActivityChanged = this.resourceWatcher!.generation !== resourceGeneration;
     if (
       !verification.activeElementMatchesBaseline ||
       pendingRequestCount !== 0 ||
+      requestActivityChanged ||
       !verification.scrollPositionMatchesBaseline ||
       verification.argsHash !== verification.baseArgsHash ||
       verification.globalsHash !== verification.baseGlobalsHash ||
@@ -846,6 +849,7 @@ export class CapturingBrowser extends BaseBrowser {
         `Story session reset verification failed for ${variantId}: ${JSON.stringify({
           ...verification,
           pendingRequestCount,
+          requestActivityChanged,
         })}.`,
       );
     }
@@ -1100,6 +1104,9 @@ export class CapturingBrowser extends BaseBrowser {
       this.rootScreenshotOptions,
     ) as StrictScreenshotOptions;
     const normalizedRootOptions = normalizeCaptureOptions(rootOptions, this.getDeviceDescriptors());
+    const baseResetMayMutate = Boolean(
+      this.previewRuntimeMetadata?.hasCustomReset || rootOptions.hover || rootOptions.focus || rootOptions.click,
+    );
     const baseEligibility = normalizedRootOptions
       ? classifyBatchEligibility(
           { options: normalizedRootOptions },
@@ -1178,7 +1185,11 @@ export class CapturingBrowser extends BaseBrowser {
       this.activeDeadline = baselineDeadline;
       const baselineAttempt = (async () => {
         await protocol.openSession({ sessionId, storyId: story.id, profile: baseProfile });
-        await this.verifyStorySessionState(protocol, 'baseline');
+        if (baseResetMayMutate) {
+          await this.resetStorySessionVariant(protocol, '__base__', baseProfile, baselineDeadline, true);
+        } else {
+          await this.verifyStorySessionState(protocol, 'baseline');
+        }
       })();
       try {
         await Promise.race([baselineAttempt, baselineDeadline.interruption]);

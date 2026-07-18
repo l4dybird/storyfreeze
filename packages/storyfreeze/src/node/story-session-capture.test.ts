@@ -158,6 +158,7 @@ describe(CapturingBrowser.prototype.screenshotSessionVariants, () => {
     const evaluate = vi
       .fn()
       .mockResolvedValueOnce(session)
+      .mockResolvedValueOnce(session)
       .mockResolvedValueOnce(reset)
       .mockResolvedValueOnce({ ...session, variantId: 'hovered', variantGeneration: 1 })
       .mockResolvedValueOnce(session)
@@ -230,7 +231,15 @@ describe(CapturingBrowser.prototype.screenshotSessionVariants, () => {
     expect(page.screenshot).toHaveBeenCalledTimes(1);
     expect(page.resetPointer).toHaveBeenCalledTimes(1);
     expect(page.setViewport).not.toHaveBeenCalled();
-    expect(evaluate).toHaveBeenCalledTimes(6);
+    expect(evaluate.mock.calls.map(([, payload]) => payload.method)).toEqual([
+      'openSession',
+      'resetVariant',
+      'verifyReset',
+      'applyVariant',
+      'resetVariant',
+      'verifyReset',
+      'closeSession',
+    ]);
     expect(unsubscribe).toHaveBeenCalledTimes(1);
     expect((browser as unknown as { capturesInContext: number }).capturesInContext).toBe(1);
   });
@@ -387,6 +396,29 @@ describe(CapturingBrowser.prototype.screenshotSessionVariants, () => {
     expect(page.screenshot).toHaveBeenCalledOnce();
   });
 
+  it('rejects request activity that starts and finishes while the reset fingerprint is verified', async () => {
+    const { browser } = createBrowserFixture();
+    let generation = 0;
+    Object.assign(browser, {
+      resourceWatcher: {
+        get generation() {
+          return generation;
+        },
+        pendingCount: 0,
+      },
+    });
+    const protocol = {
+      verifyReset: vi.fn(async () => {
+        generation += 1;
+        return resetVerification();
+      }),
+    };
+
+    await expect((browser as any).verifyStorySessionState(protocol, 'hovered')).rejects.toThrow(
+      '"requestActivityChanged":true',
+    );
+  });
+
   it('throws in forced story-session mode when the prepared story state is missing', async () => {
     const { browser, logger } = createBrowserFixture();
     const request = { variantKey: { isDefault: false, keys: ['hovered'] } };
@@ -495,6 +527,7 @@ describe(CapturingBrowser.prototype.screenshotSessionVariants, () => {
     const evaluate = vi
       .fn()
       .mockResolvedValueOnce(session)
+      .mockResolvedValueOnce(session)
       .mockResolvedValueOnce(validReset)
       .mockResolvedValueOnce({ ...session, variantId: 'hovered', variantGeneration: 1 })
       .mockImplementationOnce(() => new Promise(() => {}));
@@ -541,7 +574,7 @@ describe(CapturingBrowser.prototype.screenshotSessionVariants, () => {
       browser.screenshotSessionVariants('button-desktop', story, [request], logger, false, false, {} as never, 'auto'),
     ).resolves.toEqual({ outputs: [], strictFallbacks: [request] });
     expect(restart).toHaveBeenCalledOnce();
-    expect(evaluate).toHaveBeenCalledTimes(4);
+    expect(evaluate).toHaveBeenCalledTimes(5);
     expect(page.screenshot).toHaveBeenCalledOnce();
     expect(page.resetPointer).toHaveBeenCalledOnce();
   });

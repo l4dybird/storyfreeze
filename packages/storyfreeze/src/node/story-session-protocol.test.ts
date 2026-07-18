@@ -30,6 +30,7 @@ describe(StorySessionProtocolClient, () => {
     const evaluate = vi
       .fn()
       .mockResolvedValueOnce(base)
+      .mockResolvedValueOnce(base)
       .mockResolvedValueOnce({ ...base, variantId: 'hovered', variantGeneration: 1 })
       .mockResolvedValueOnce(base)
       .mockResolvedValueOnce(verification(base))
@@ -39,10 +40,19 @@ describe(StorySessionProtocolClient, () => {
     await expect(client.openSession({ sessionId: 'session', storyId: 'button--primary', profile })).resolves.toEqual(
       base,
     );
+    await expect(client.resetVariant('__base__')).resolves.toEqual(base);
     await expect(client.applyVariant('hovered')).resolves.toMatchObject({ variantGeneration: 1 });
     await expect(client.resetVariant('hovered')).resolves.toEqual(base);
     await expect(client.verifyReset()).resolves.toMatchObject({ activeElement: null });
     await expect(client.closeSession()).resolves.toBeUndefined();
+    expect(evaluate.mock.calls.map(([, payload]) => payload.method)).toEqual([
+      'openSession',
+      'resetVariant',
+      'applyVariant',
+      'resetVariant',
+      'verifyReset',
+      'closeSession',
+    ]);
   });
 
   it('rejects stale preview generations', async () => {

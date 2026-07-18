@@ -704,8 +704,8 @@ export function initializeStorySessionController(
       return { ...baseReady(session), variantId, variantGeneration: session.variantGeneration };
     },
     async resetVariant(variantId): Promise<SessionReady> {
-      const session = requireActive('applied');
-      if (session.activeVariantId !== variantId) {
+      const session = requireActive(variantId === '__base__' ? 'ready' : 'applied');
+      if (variantId !== '__base__' && session.activeVariantId !== variantId) {
         throw new Error(
           `Story session reset expected ${session.activeVariantId ?? 'no active variant'}, received ${variantId}.`,
         );

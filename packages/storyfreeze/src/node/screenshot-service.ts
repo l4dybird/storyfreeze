@@ -11,14 +11,14 @@ import {
 } from './capture-diagnostics.js';
 import { createCaptureId } from './capture-manifest.js';
 import { CaptureLeaseQueue } from './capture-lease-queue.js';
-import { assignCapturePlan, profileSwitchCost, type CapturePlan, type PlannedCapture } from './capture-plan.js';
+import { profileSwitchCost, type PlannedCapture } from './capture-plan.js';
 import { sameEmulationProfile, type EmulationProfile } from './emulation-profile.js';
 import {
-  createStorySessionPlans,
   type CaptureProtocolMode,
   type SessionVariantExecutionResult,
   type SessionVariantRequest,
 } from './story-session.js';
+import type { PreparedExecutionPlan } from './execution-plan.js';
 
 interface CaptureRequest {
   captureId: string;
@@ -157,8 +157,7 @@ export type ScreenshotServiceOptions = {
   stories: Story[];
   forwardConsoleLogs: boolean;
   trace: boolean;
-  capturePlan?: CapturePlan;
-  captureProtocol?: CaptureProtocolMode;
+  executionPlan?: PreparedExecutionPlan;
   initialWorkerCount?: number;
   bootWorker?: (workerId: number) => Promise<void>;
   operationTimeoutMs?: number;
@@ -167,47 +166,47 @@ export type ScreenshotServiceOptions = {
 function initialAssignments(
   stories: Story[],
   workers: ScreenshotWorker[],
-  capturePlan?: CapturePlan,
-  captureProtocol: CaptureProtocolMode = 'strict',
+  executionPlan?: PreparedExecutionPlan,
 ): { assignments: CaptureRequest[][]; plannedWorkerCostMs: number[] } {
   const assignments = Array.from({ length: workers.length }, () => [] as CaptureRequest[]);
-  if (!capturePlan) {
+  if (!executionPlan) {
     stories.forEach((story, index) => assignments[index % workers.length].push(createRequest({ story })));
     return { assignments, plannedWorkerCostMs: assignments.map(queue => queue.length * 500) };
   }
+  if (executionPlan.workers.length !== workers.length) {
+    throw new Error(`Execution plan has ${executionPlan.workers.length} workers, but ${workers.length} are available.`);
+  }
 
   const storiesById = new Map(stories.map(story => [story.id, story]));
-  const workerPlans = assignCapturePlan(capturePlan, workers.length);
-  const workerByCaptureId = new Map(
-    workerPlans.flatMap(workerPlan =>
-      workerPlan.captures.map(capture => [capture.captureId, workerPlan.workerId] as const),
-    ),
-  );
-  const sessionPlanning = createStorySessionPlans(capturePlan, captureProtocol);
-  for (const capture of sessionPlanning.strictCaptures) {
-    const story = storiesById.get(capture.storyId);
-    if (!story) throw new Error(`Capture plan refers to unknown story ${capture.storyId}.`);
-    assignments[workerByCaptureId.get(capture.captureId)!].push(createRequest({ story, plannedCapture: capture }));
+  for (const workerPlan of executionPlan.workers) {
+    for (const item of workerPlan.workItems) {
+      const story = storiesById.get(item.storyId);
+      if (!story) throw new Error(`Execution plan refers to unknown story ${item.storyId}.`);
+      const session = item.session;
+      assignments[workerPlan.workerId].push(
+        createRequest({
+          story,
+          plannedCapture: item.primaryCapture,
+          ...(session
+            ? {
+                sessionId: session.sessionId,
+                sessionVariants: session.variants.map(variant => ({
+                  variantKey: {
+                    isDefault: variant.capture.variantKey.length === 0,
+                    keys: [...variant.capture.variantKey],
+                  },
+                  plannedCapture: variant.capture,
+                })),
+              }
+            : {}),
+        }),
+      );
+    }
   }
-  for (const session of sessionPlanning.sessions) {
-    const story = storiesById.get(session.storyId);
-    if (!story) throw new Error(`Capture plan refers to unknown story ${session.storyId}.`);
-    assignments[workerByCaptureId.get(session.baseCapture.captureId)!].push(
-      createRequest({
-        story,
-        plannedCapture: session.baseCapture,
-        sessionId: session.sessionId,
-        sessionVariants: session.variants.map(variant => ({
-          variantKey: {
-            isDefault: variant.capture.variantKey.length === 0,
-            keys: [...variant.capture.variantKey],
-          },
-          plannedCapture: variant.capture,
-        })),
-      }),
-    );
-  }
-  return { assignments, plannedWorkerCostMs: workerPlans.map(worker => worker.estimatedRemainingMs) };
+  return {
+    assignments,
+    plannedWorkerCostMs: executionPlan.workers.map(worker => worker.estimatedRemainingMs),
+  };
 }
 
 /** Create an affinity-aware, duplicate-safe screenshot service. */
@@ -218,8 +217,7 @@ export function createScreenshotService({
   workers,
   forwardConsoleLogs,
   trace,
-  capturePlan,
-  captureProtocol = 'strict',
+  executionPlan,
   initialWorkerCount = workers.length,
   bootWorker,
   operationTimeoutMs = 60_000,
@@ -234,7 +232,9 @@ export function createScreenshotService({
   if (!Number.isFinite(operationTimeoutMs) || operationTimeoutMs < 1) {
     throw new Error('operationTimeoutMs must be a positive finite number.');
   }
-  const { assignments, plannedWorkerCostMs } = initialAssignments(stories, workers, capturePlan, captureProtocol);
+  const capturePlan = executionPlan?.capturePlan;
+  const captureProtocol = executionPlan?.captureProtocol ?? 'strict';
+  const { assignments, plannedWorkerCostMs } = initialAssignments(stories, workers, executionPlan);
   const queue = new CaptureLeaseQueue(assignments);
   const diagnosticsEnabled = captureDiagnosticsEnabled();
   const initialCaptureCount = assignments.reduce((total, requests) => total + requests.length, 0);

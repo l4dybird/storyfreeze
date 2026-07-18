@@ -10,6 +10,7 @@ import {
   validateBrowserTopology,
 } from './browser-topology.js';
 import type { BrowserBackend } from './browser-backend.js';
+import { createExecutionWorkload } from './execution-plan.js';
 
 function plan(captureCount: number, viewports = ['800x600']) {
   const stories = Array.from({ length: captureCount }, (_, index) => ({
@@ -43,6 +44,27 @@ function runtimeDiscoveryPlan(captureCount: number) {
       mode: 'managed',
     }),
   );
+}
+
+function runtimeValidationSessionWorkload(captureProtocol: 'auto' | 'story-session') {
+  const capturePlan = createCapturePlan(
+    generateCaptureManifest({
+      stories: [
+        {
+          id: 'session--story',
+          title: 'Session',
+          name: 'Story',
+          eligibility: 'runtime-validation',
+          screenshotOptions: { variants: { hovered: { hover: '#target' } } },
+        },
+      ],
+      baseOptions: createBaseScreenshotOptions({ delay: 0, disableWaitAssets: false, viewports: ['800x600'] }),
+      deviceDescriptors: [],
+      generatedAt: '2026-07-17T00:00:00.000Z',
+      mode: 'managed',
+    }),
+  );
+  return createExecutionWorkload(capturePlan, captureProtocol);
 }
 
 describe(selectTopology, () => {
@@ -92,6 +114,17 @@ describe(selectTopology, () => {
 
   it('reserves dormant workers for runtime-discovered variants without booting them initially', () => {
     expect(selectWorkerCount(runtimeDiscoveryPlan(1), 4)).toEqual({ initialWorkerCount: 1, workerCount: 4 });
+  });
+
+  it('reserves dormant workers for strict fallbacks from an auto story session', () => {
+    expect(selectWorkerCount(runtimeValidationSessionWorkload('auto'), 8)).toEqual({
+      initialWorkerCount: 1,
+      workerCount: 8,
+    });
+    expect(selectWorkerCount(runtimeValidationSessionWorkload('story-session'), 8)).toEqual({
+      initialWorkerCount: 1,
+      workerCount: 1,
+    });
   });
 
   it('uses the high-cost ratio to select consolidated, hybrid, or separate-process auto topologies', () => {
@@ -145,5 +178,23 @@ describe(BrowserRuntimeOrchestrator, () => {
     vi.spyOn(runtime.coordinators[1], 'close').mockResolvedValue(undefined);
     await runtime.close();
     expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it('assigns worker zero to the retained story-index process', () => {
+    const capturePlan = plan(2);
+    const workers = assignCapturePlan(capturePlan, 2);
+    workers[0].captures[0].profile.width = 999;
+    workers[1].captures[0].profile.width = 100;
+    const retained = { close: vi.fn(async () => {}) } as never;
+    const runtime = new BrowserRuntimeOrchestrator(
+      { name: 'playwright' } as BrowserBackend,
+      {},
+      { browserProcessCount: 2, contextsPerBrowser: 1, workerCount: 2 },
+      workers,
+      retained,
+    );
+
+    expect(runtime.workerProcessIds[0]).toBe(0);
+    expect(runtime.sessionSourceForWorker(0)).toBe(retained);
   });
 });

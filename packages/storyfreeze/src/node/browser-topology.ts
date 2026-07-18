@@ -1,6 +1,7 @@
 import type { BrowserBackend, BrowserRuntimeOptions } from './browser-backend.js';
 import { BrowserProcessCoordinator, type BrowserSessionSource } from './browser-process-coordinator.js';
 import type { CapturePlan, WorkerPlan } from './capture-plan.js';
+import type { ExecutionWorkerPlan, ExecutionWorkload } from './execution-plan.js';
 import { emulationProfileKey } from './emulation-profile.js';
 import { compareDeterministicStrings } from './capture-manifest.js';
 
@@ -23,6 +24,13 @@ export interface TopologySelection {
   reason: string;
 }
 
+type SchedulablePlan = CapturePlan | ExecutionWorkload;
+type SchedulableWorkerPlan = WorkerPlan | ExecutionWorkerPlan;
+
+function plannedItems(plan: SchedulablePlan) {
+  return 'workItems' in plan ? plan.workItems : plan.captures;
+}
+
 function assertPositiveInteger(value: number, name: string) {
   if (!Number.isSafeInteger(value) || value < 1) throw new Error(`${name} must be a positive safe integer.`);
 }
@@ -36,21 +44,27 @@ export function validateBrowserTopology(topology: BrowserTopology): void {
   }
 }
 
-export function selectWorkerCount(plan: CapturePlan, maximumParallel: number) {
+export function selectWorkerCount(plan: SchedulablePlan, maximumParallel: number) {
   assertPositiveInteger(maximumParallel, 'maximumParallel');
-  const captureCount = plan.captures.length;
+  const items = plannedItems(plan);
+  const captureCount = items.length;
   if (captureCount === 0) return { initialWorkerCount: 0, workerCount: 0 };
   const runnableProfileGroupCount = Math.max(1, plan.profileCount);
   const initialWorkerCount = Math.min(maximumParallel, captureCount, runnableProfileGroupCount);
-  const hasRuntimeDiscovery = plan.captures.some(capture => capture.executionMode === 'runtime-discovery');
-  // Runtime-discovery plans reserve dormant slots because variants can expand the queue after the default capture.
-  // Known plans preserve the configured compatibility capacity while still booting workers lazily.
-  const workerCount = hasRuntimeDiscovery ? maximumParallel : Math.min(maximumParallel, captureCount);
+  const hasRuntimeDiscovery = items.some(item => item.executionMode === 'runtime-discovery');
+  const hasAutoSessionFallback =
+    'workItems' in plan &&
+    plan.captureProtocol === 'auto' &&
+    plan.workItems.some(item => item.kind === 'story-session');
+  // Runtime discovery and auto-session validation can both expand one planned item into many strict captures.
+  // Keep those slots dormant until queue depth requires them instead of permanently serializing the fallback.
+  const workerCount =
+    hasRuntimeDiscovery || hasAutoSessionFallback ? maximumParallel : Math.min(maximumParallel, captureCount);
   return { initialWorkerCount, workerCount };
 }
 
 export function selectTopology(
-  plan: CapturePlan,
+  plan: SchedulablePlan,
   capacity: RuntimeCapacity,
   maximumParallel: number,
   mode: BrowserTopologyMode,
@@ -78,9 +92,11 @@ export function selectTopology(
   } else {
     const memoryConstrained =
       capacity.availableMemoryBytes !== undefined && capacity.availableMemoryBytes < 2 * 1024 ** 3;
+    const items = plannedItems(plan);
     const highCostRatio =
-      plan.captures.filter(capture => capture.options.fullPage || capture.profile.deviceScaleFactor > 1).length /
-      plan.captures.length;
+      items.filter(item =>
+        'highCost' in item ? item.highCost : item.options.fullPage || item.profile.deviceScaleFactor > 1,
+      ).length / items.length;
     if (workerCount <= 2 || memoryConstrained) {
       topology = { browserProcessCount: 1, contextsPerBrowser: workerCount, workerCount };
       reason = memoryConstrained ? 'auto: available memory favors process consolidation' : 'auto: small plan';
@@ -104,7 +120,7 @@ export function selectTopology(
 
 /** Assigns profile-adjacent workers to the same process without exceeding context capacity. */
 export function assignWorkersToBrowserProcesses(
-  workerPlans: readonly WorkerPlan[],
+  workerPlans: readonly SchedulableWorkerPlan[],
   topology: BrowserTopology,
 ): number[] {
   validateBrowserTopology(topology);
@@ -112,8 +128,8 @@ export function assignWorkersToBrowserProcesses(
     throw new Error(`Expected ${topology.workerCount} worker plans, received ${workerPlans.length}.`);
   }
   const ordered = [...workerPlans].sort((left, right) => {
-    const leftProfile = left.captures[0]?.profile;
-    const rightProfile = right.captures[0]?.profile;
+    const leftProfile = 'workItems' in left ? left.workItems[0]?.profile : left.captures[0]?.profile;
+    const rightProfile = 'workItems' in right ? right.workItems[0]?.profile : right.captures[0]?.profile;
     const profile = compareDeterministicStrings(
       leftProfile ? emulationProfileKey(leftProfile) : '\uffff',
       rightProfile ? emulationProfileKey(rightProfile) : '\uffff',
@@ -140,14 +156,23 @@ export class BrowserRuntimeOrchestrator {
     backend: BrowserBackend,
     runtimeOptions: BrowserRuntimeOptions,
     readonly topology: BrowserTopology,
-    workerPlans: readonly WorkerPlan[],
+    workerPlans: readonly SchedulableWorkerPlan[],
     initialCoordinator?: BrowserProcessCoordinator,
   ) {
     validateBrowserTopology(topology);
+    this.workerProcessIds = assignWorkersToBrowserProcesses(workerPlans, topology);
+    if (initialCoordinator) {
+      const retainedProcessId = this.workerProcessIds[0];
+      if (retainedProcessId !== 0) {
+        for (let index = 0; index < this.workerProcessIds.length; index += 1) {
+          if (this.workerProcessIds[index] === 0) this.workerProcessIds[index] = retainedProcessId;
+          else if (this.workerProcessIds[index] === retainedProcessId) this.workerProcessIds[index] = 0;
+        }
+      }
+    }
     this.coordinators = Array.from({ length: topology.browserProcessCount }, (_, index) =>
       index === 0 && initialCoordinator ? initialCoordinator : new BrowserProcessCoordinator(backend, runtimeOptions),
     );
-    this.workerProcessIds = assignWorkersToBrowserProcesses(workerPlans, topology);
   }
 
   sessionSourceForWorker(workerId: number): BrowserSessionSource {

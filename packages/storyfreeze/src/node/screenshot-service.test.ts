@@ -8,6 +8,7 @@ import { CAPTURE_DIAGNOSTIC_PREFIX } from './capture-diagnostics.js';
 import { createBaseScreenshotOptions } from '../shared/screenshot-options-helper.js';
 import { generateCaptureManifest } from './capture-manifest.js';
 import { createCapturePlan } from './capture-plan.js';
+import { createExecutionWorkload, prepareExecutionPlan } from './execution-plan.js';
 
 function completeStdoutWrite(...args: unknown[]) {
   const callback = args.find(value => typeof value === 'function') as (() => void) | undefined;
@@ -288,8 +289,7 @@ describe(createScreenshotService, () => {
       logger,
       forwardConsoleLogs: false,
       trace: false,
-      capturePlan,
-      captureProtocol: 'auto',
+      executionPlan: prepareExecutionPlan(createExecutionWorkload(capturePlan, 'auto'), 1),
     });
 
     await expect(service.execute()).resolves.toBe(2);
@@ -335,8 +335,7 @@ describe(createScreenshotService, () => {
       logger,
       forwardConsoleLogs: false,
       trace: false,
-      capturePlan,
-      captureProtocol: 'auto',
+      executionPlan: prepareExecutionPlan(createExecutionWorkload(capturePlan, 'auto'), 1),
     });
 
     await expect(service.execute()).resolves.toBe(3);

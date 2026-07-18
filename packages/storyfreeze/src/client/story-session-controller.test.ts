@@ -208,6 +208,277 @@ describe(initializeStorySessionController, () => {
     expect(verification.argsHash).toBe(verification.baseArgsHash);
   });
 
+  it('detects mutable state retained by function-valued args after reset', async () => {
+    const body = { innerHTML: '<button>Ready</button>' };
+    Object.defineProperty(globalThis, 'document', {
+      configurable: true,
+      value: { activeElement: body, body, documentElement: {} },
+    });
+    const target = {} as any;
+    const handler = Object.assign(() => {}, { calls: [] as string[] });
+    const args = { handler };
+    initializeStorySessionController(target);
+    registerStorySessionRuntime({}, { id: 'functions--story', args }, target);
+    snapshotStorySessionRuntime('functions--story', target);
+    const protocol = target[STORYFREEZE_STORY_SESSION_GLOBAL]!;
+    await protocol.openSession({ sessionId: 'functions', storyId: 'functions--story', profileHash: 'desktop' });
+    await protocol.applyVariant('clicked');
+
+    handler.calls.push('clicked');
+    await protocol.resetVariant('clicked');
+
+    const verification = await protocol.verifyReset();
+    expect(verification.argsHash).not.toBe(verification.baseArgsHash);
+    expect(handler.calls).toEqual(['clicked']);
+  });
+
+  it('detects mutable name and length metadata retained by function-valued args', async () => {
+    const body = { innerHTML: '<button>Ready</button>' };
+    Object.defineProperty(globalThis, 'document', {
+      configurable: true,
+      value: { activeElement: body, body, documentElement: {} },
+    });
+    function handler(value: unknown) {
+      return value;
+    }
+    const originalName = Object.getOwnPropertyDescriptor(handler, 'name')!;
+    const originalLength = Object.getOwnPropertyDescriptor(handler, 'length')!;
+    const target = {} as any;
+    initializeStorySessionController(target);
+    registerStorySessionRuntime({}, { id: 'function-metadata--story', args: { handler } }, target);
+    snapshotStorySessionRuntime('function-metadata--story', target);
+    const protocol = target[STORYFREEZE_STORY_SESSION_GLOBAL]!;
+    await protocol.openSession({
+      sessionId: 'function-metadata',
+      storyId: 'function-metadata--story',
+      profileHash: 'desktop',
+    });
+    await protocol.applyVariant('changed');
+
+    Object.defineProperty(handler, 'name', { ...originalName, value: 'mutatedHandler' });
+    await protocol.resetVariant('changed');
+    let verification = await protocol.verifyReset();
+    expect(verification.argsHash).not.toBe(verification.baseArgsHash);
+
+    Object.defineProperty(handler, 'name', originalName);
+    verification = await protocol.verifyReset();
+    expect(verification.argsHash).toBe(verification.baseArgsHash);
+
+    Object.defineProperty(handler, 'length', { ...originalLength, value: originalLength.value + 1 });
+    verification = await protocol.verifyReset();
+    expect(verification.argsHash).not.toBe(verification.baseArgsHash);
+  });
+
+  it('detects mutable prototype state retained by function-valued args after reset', async () => {
+    const body = { innerHTML: '<button>Ready</button>' };
+    Object.defineProperty(globalThis, 'document', {
+      configurable: true,
+      value: { activeElement: body, body, documentElement: {} },
+    });
+    const target = {} as any;
+    function handler() {}
+    const args = { handler };
+    initializeStorySessionController(target);
+    registerStorySessionRuntime({}, { id: 'function-prototype--story', args }, target);
+    snapshotStorySessionRuntime('function-prototype--story', target);
+    const protocol = target[STORYFREEZE_STORY_SESSION_GLOBAL]!;
+    await protocol.openSession({
+      sessionId: 'function-prototype',
+      storyId: 'function-prototype--story',
+      profileHash: 'desktop',
+    });
+    await protocol.applyVariant('clicked');
+
+    handler.prototype.retained = 'clicked';
+    await protocol.resetVariant('clicked');
+
+    const verification = await protocol.verifyReset();
+    expect(verification.argsHash).not.toBe(verification.baseArgsHash);
+    expect(handler.prototype.retained).toBe('clicked');
+  });
+
+  it('detects replacement of a function object prototype link', async () => {
+    const body = { innerHTML: '<button>Ready</button>' };
+    Object.defineProperty(globalThis, 'document', {
+      configurable: true,
+      value: { activeElement: body, body, documentElement: {} },
+    });
+    const target = {} as any;
+    function handler() {}
+    const args = { handler };
+    initializeStorySessionController(target);
+    registerStorySessionRuntime({}, { id: 'function-prototype-link--story', args }, target);
+    snapshotStorySessionRuntime('function-prototype-link--story', target);
+    const protocol = target[STORYFREEZE_STORY_SESSION_GLOBAL]!;
+    await protocol.openSession({
+      sessionId: 'function-prototype-link',
+      storyId: 'function-prototype-link--story',
+      profileHash: 'desktop',
+    });
+    await protocol.applyVariant('changed');
+
+    Object.setPrototypeOf(handler, null);
+    await protocol.resetVariant('changed');
+
+    const verification = await protocol.verifyReset();
+    expect(verification.argsHash).not.toBe(verification.baseArgsHash);
+    expect(Object.getPrototypeOf(handler)).toBeNull();
+  });
+
+  it('detects irreversible integrity changes retained by function-valued args', async () => {
+    const body = { innerHTML: '<button>Ready</button>' };
+    Object.defineProperty(globalThis, 'document', {
+      configurable: true,
+      value: { activeElement: body, body, documentElement: {} },
+    });
+    const target = {} as any;
+    function handler() {}
+    const args = { handler };
+    initializeStorySessionController(target);
+    registerStorySessionRuntime({}, { id: 'function-integrity--story', args }, target);
+    snapshotStorySessionRuntime('function-integrity--story', target);
+    const protocol = target[STORYFREEZE_STORY_SESSION_GLOBAL]!;
+    await protocol.openSession({
+      sessionId: 'function-integrity',
+      storyId: 'function-integrity--story',
+      profileHash: 'desktop',
+    });
+    await protocol.applyVariant('changed');
+
+    Object.preventExtensions(handler);
+    await protocol.resetVariant('changed');
+
+    const verification = await protocol.verifyReset();
+    expect(verification.argsHash).not.toBe(verification.baseArgsHash);
+    expect(Object.isExtensible(handler)).toBe(false);
+  });
+
+  it('detects replacement of a non-enumerable class prototype method', async () => {
+    const body = { innerHTML: '<button>Ready</button>' };
+    Object.defineProperty(globalThis, 'document', {
+      configurable: true,
+      value: { activeElement: body, body, documentElement: {} },
+    });
+    class Formatter {
+      render() {
+        return 'before';
+      }
+    }
+    const target = {} as any;
+    initializeStorySessionController(target);
+    registerStorySessionRuntime({}, { id: 'class-prototype--story', args: { Formatter } }, target);
+    snapshotStorySessionRuntime('class-prototype--story', target);
+    const protocol = target[STORYFREEZE_STORY_SESSION_GLOBAL]!;
+    await protocol.openSession({
+      sessionId: 'class-prototype',
+      storyId: 'class-prototype--story',
+      profileHash: 'desktop',
+    });
+    await protocol.applyVariant('changed');
+
+    Formatter.prototype.render = function render() {
+      return 'after';
+    };
+    await protocol.resetVariant('changed');
+
+    const verification = await protocol.verifyReset();
+    expect(verification.argsHash).not.toBe(verification.baseArgsHash);
+    expect(new Formatter().render()).toBe('after');
+    expect(Object.getOwnPropertyDescriptor(Formatter.prototype, 'render')?.enumerable).toBe(false);
+  });
+
+  it('restores non-enumerable top-level state and sparse arrays without compacting them', async () => {
+    const body = { innerHTML: '<button>Ready</button>' };
+    Object.defineProperty(globalThis, 'document', {
+      configurable: true,
+      value: { activeElement: body, body, documentElement: {} },
+    });
+    const items = new Array<string>(3);
+    items[2] = 'tail';
+    const args: Record<string, unknown> = { items };
+    Object.defineProperty(args, 'hidden', {
+      configurable: true,
+      enumerable: false,
+      value: 'before',
+      writable: true,
+    });
+    const target = {} as any;
+    initializeStorySessionController(target);
+    registerStorySessionRuntime({}, { id: 'descriptor--story', args }, target);
+    snapshotStorySessionRuntime('descriptor--story', target);
+    const protocol = target[STORYFREEZE_STORY_SESSION_GLOBAL]!;
+    await protocol.openSession({ sessionId: 'descriptor', storyId: 'descriptor--story', profileHash: 'desktop' });
+    await protocol.applyVariant('changed');
+
+    args.hidden = 'after';
+    items[0] = 'head';
+    Object.defineProperty(args, 'retained', { configurable: true, enumerable: false, value: true });
+    await protocol.resetVariant('changed');
+
+    const restoredItems = args.items as string[];
+    expect(args.hidden).toBe('before');
+    expect(Object.hasOwn(args, 'retained')).toBe(false);
+    expect(restoredItems).toHaveLength(3);
+    expect(0 in restoredItems).toBe(false);
+    expect(restoredItems[2]).toBe('tail');
+    const verification = await protocol.verifyReset();
+    expect(verification.argsHash).toBe(verification.baseArgsHash);
+  });
+
+  it('preserves nested object integrity levels while restoring args', async () => {
+    const body = { innerHTML: '<button>Ready</button>' };
+    Object.defineProperty(globalThis, 'document', {
+      configurable: true,
+      value: { activeElement: body, body, documentElement: {} },
+    });
+    const frozen = Object.freeze({ value: 'frozen' });
+    const sealed = Object.seal({ value: 'sealed' });
+    const nonExtensible = Object.preventExtensions({ value: 'non-extensible' });
+    const args = { frozen, sealed, nonExtensible };
+    const target = {} as any;
+    initializeStorySessionController(target);
+    registerStorySessionRuntime({}, { id: 'integrity--story', args }, target);
+    snapshotStorySessionRuntime('integrity--story', target);
+    const protocol = target[STORYFREEZE_STORY_SESSION_GLOBAL]!;
+    await protocol.openSession({ sessionId: 'integrity', storyId: 'integrity--story', profileHash: 'desktop' });
+    await protocol.applyVariant('changed');
+
+    await protocol.resetVariant('changed');
+
+    expect(args.frozen).not.toBe(frozen);
+    expect(Object.isFrozen(args.frozen)).toBe(true);
+    expect(args.sealed).not.toBe(sealed);
+    expect(Object.isSealed(args.sealed)).toBe(true);
+    expect(Object.isFrozen(args.sealed)).toBe(false);
+    expect(args.nonExtensible).not.toBe(nonExtensible);
+    expect(Object.isExtensible(args.nonExtensible)).toBe(false);
+    expect(Object.isSealed(args.nonExtensible)).toBe(false);
+    const verification = await protocol.verifyReset();
+    expect(verification.argsHash).toBe(verification.baseArgsHash);
+  });
+
+  it('detects call history retained by Storybook-style mock args', async () => {
+    const body = { innerHTML: '<button>Ready</button>' };
+    Object.defineProperty(globalThis, 'document', {
+      configurable: true,
+      value: { activeElement: body, body, documentElement: {} },
+    });
+    const target = {} as any;
+    const onClick = vi.fn();
+    initializeStorySessionController(target);
+    registerStorySessionRuntime({}, { id: 'mock--story', args: { onClick } }, target);
+    snapshotStorySessionRuntime('mock--story', target);
+    const protocol = target[STORYFREEZE_STORY_SESSION_GLOBAL]!;
+    await protocol.openSession({ sessionId: 'mock', storyId: 'mock--story', profileHash: 'desktop' });
+    await protocol.applyVariant('clicked');
+
+    onClick('clicked');
+    await protocol.resetVariant('clicked');
+
+    const verification = await protocol.verifyReset();
+    expect(verification.argsHash).not.toBe(verification.baseArgsHash);
+  });
+
   it('fails closed for class instances with private state without corrupting strict capture args', async () => {
     class Model {
       #value: string;
@@ -236,5 +507,42 @@ describe(initializeStorySessionController, () => {
       protocol.openSession({ sessionId: 'model', storyId: 'model--story', profileHash: 'desktop' }),
     ).rejects.toThrow('Story session baseline is unsafe: Story session cannot safely clone Model state.');
     expect(model.label()).toBe('model:before');
+  });
+
+  it('fails closed for native objects whose hidden state cannot be fingerprinted', async () => {
+    const body = { innerHTML: '<button>Ready</button>' };
+    Object.defineProperty(globalThis, 'document', {
+      configurable: true,
+      value: { activeElement: body, body, documentElement: {} },
+    });
+    const target = {} as any;
+    initializeStorySessionController(target);
+    registerStorySessionRuntime({}, { id: 'error--story', args: { error: new Error('before') } }, target);
+    snapshotStorySessionRuntime('error--story', target);
+    const protocol = target[STORYFREEZE_STORY_SESSION_GLOBAL]!;
+
+    await expect(
+      protocol.openSession({ sessionId: 'error', storyId: 'error--story', profileHash: 'desktop' }),
+    ).rejects.toThrow('Story session cannot safely clone Error state');
+  });
+
+  it('fails closed for accessor state instead of sharing its closure with the baseline', async () => {
+    const body = { innerHTML: '<button>Ready</button>' };
+    Object.defineProperty(globalThis, 'document', {
+      configurable: true,
+      value: { activeElement: body, body, documentElement: {} },
+    });
+    let shared = 'before';
+    const accessor = Object.defineProperty({}, 'value', { enumerable: true, get: () => shared });
+    const target = {} as any;
+    initializeStorySessionController(target);
+    registerStorySessionRuntime({}, { id: 'accessor--story', args: { accessor } }, target);
+    snapshotStorySessionRuntime('accessor--story', target);
+    shared = 'after';
+    const protocol = target[STORYFREEZE_STORY_SESSION_GLOBAL]!;
+
+    await expect(
+      protocol.openSession({ sessionId: 'accessor', storyId: 'accessor--story', profileHash: 'desktop' }),
+    ).rejects.toThrow('Story session cannot safely clone accessor state');
   });
 });

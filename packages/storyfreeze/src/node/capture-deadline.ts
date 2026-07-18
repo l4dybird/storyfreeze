@@ -1,4 +1,3 @@
-import { sleep } from './async-utils.js';
 import { CaptureAttemptTimeoutError } from './errors.js';
 
 function abortReason(signal: AbortSignal) {
@@ -52,6 +51,12 @@ export class CaptureDeadline {
     return this.timedOut;
   }
 
+  abort(reason: unknown = new Error('Capture attempt was aborted.')) {
+    if (!this.controller.signal.aborted) {
+      this.controller.abort(reason instanceof Error ? reason : new Error(String(reason)));
+    }
+  }
+
   remaining(maximum = Number.POSITIVE_INFINITY) {
     this.throwIfAborted();
     const remaining = this.expiresAt - Date.now();
@@ -70,7 +75,23 @@ export class CaptureDeadline {
   async wait(milliseconds: number) {
     this.throwIfAborted();
     if (milliseconds <= 0) return;
-    await Promise.race([sleep(milliseconds), this.interruption]);
+    await new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const cleanup: { timer?: ReturnType<typeof setTimeout>; onAbort?: () => void } = {};
+      const finish = (action: () => void) => {
+        if (settled) return;
+        settled = true;
+        if (cleanup.timer) clearTimeout(cleanup.timer);
+        if (cleanup.onAbort) this.signal.removeEventListener('abort', cleanup.onAbort);
+        action();
+      };
+      const onAbort = () => finish(() => reject(abortReason(this.signal)));
+      const timer = setTimeout(() => finish(resolve), milliseconds);
+      cleanup.onAbort = onAbort;
+      cleanup.timer = timer;
+      this.signal.addEventListener('abort', onAbort, { once: true });
+      if (this.signal.aborted) onAbort();
+    });
   }
 
   dispose() {

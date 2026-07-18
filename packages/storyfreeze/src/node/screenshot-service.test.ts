@@ -365,8 +365,9 @@ describe(createScreenshotService, () => {
   });
 
   it('times out a screenshot operation that never settles', async () => {
+    const close = vi.fn(async () => {});
     const service = createScreenshotService({
-      workers: [{ screenshot: vi.fn(() => new Promise(() => {})) }],
+      workers: [{ close, screenshot: vi.fn(() => new Promise(() => {})) }],
       stories: [story],
       fileSystem: { saveScreenshot: vi.fn() } as unknown as FileSystem,
       logger: {
@@ -379,6 +380,7 @@ describe(createScreenshotService, () => {
     });
 
     await expect(service.execute()).rejects.toThrow('did not settle within 25 msec');
+    expect(close).toHaveBeenCalledOnce();
   });
 
   it.each([

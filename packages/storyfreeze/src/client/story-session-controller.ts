@@ -31,13 +31,18 @@ type RuntimeRegistration = {
   baseArgs?: Record<string, unknown>;
   baseGlobals?: Record<string, unknown>;
   baseActiveElement?: Element | null;
+  baseArgsHash?: string;
   baseDocumentFingerprint?: string;
+  baseGlobalsHash?: string;
   baseScrollSnapshot?: ScrollSnapshot;
+  baselineCaptured?: boolean;
 };
 
 type ActiveSession = OpenStorySessionRequest & {
   sessionGeneration: number;
   variantGeneration: number;
+  runtime: RuntimeRegistration;
+  state: 'ready' | 'applied' | 'poisoned';
   activeVariantId?: string;
 };
 
@@ -46,51 +51,185 @@ type StorySessionWindow = typeof window & {
   __STORYFREEZE_STORY_SESSION_RUNTIME__?: RuntimeRegistration;
 };
 
+const functionIds = new WeakMap<Function, number>();
+let nextFunctionId = 1;
+const functionPrototypeIds = new WeakMap<object, number>();
+let nextFunctionPrototypeId = 1;
+const symbolIds = new Map<symbol, number>();
+let nextSymbolId = 1;
+const ignoredFunctionStateKeys = new Set(['arguments', 'caller']);
+
+function functionIdentity(value: Function) {
+  let id = functionIds.get(value);
+  if (id === undefined) {
+    id = nextFunctionId++;
+    functionIds.set(value, id);
+  }
+  return id;
+}
+
+function functionPrototypeIdentity(value: Function) {
+  const prototype = Object.getPrototypeOf(value) as object | null;
+  if (prototype === null) return 'null';
+  let id = functionPrototypeIds.get(prototype);
+  if (id === undefined) {
+    id = nextFunctionPrototypeId++;
+    functionPrototypeIds.set(prototype, id);
+  }
+  return `prototype:${id}`;
+}
+
+function objectIntegrity(value: object) {
+  if (Object.isFrozen(value)) return 'frozen';
+  if (Object.isSealed(value)) return 'sealed';
+  if (!Object.isExtensible(value)) return 'non-extensible';
+  return 'extensible';
+}
+
+function applyObjectIntegrity<T extends object>(source: object, target: T): T {
+  const integrity = objectIntegrity(source);
+  if (integrity === 'frozen') Object.freeze(target);
+  else if (integrity === 'sealed') Object.seal(target);
+  else if (integrity === 'non-extensible') Object.preventExtensions(target);
+  return target;
+}
+
+function symbolIdentity(value: symbol) {
+  const globalKey = Symbol.keyFor(value);
+  if (globalKey !== undefined) return `global:${globalKey}`;
+  let id = symbolIds.get(value);
+  if (id === undefined) {
+    id = nextSymbolId++;
+    symbolIds.set(value, id);
+  }
+  return `local:${id}:${value.description ?? ''}`;
+}
+
+function functionStateKey(key: PropertyKey) {
+  if (typeof key === 'string') return `string:${key}`;
+  if (typeof key === 'symbol') return `symbol:${symbolIdentity(key)}`;
+  return `number:${key}`;
+}
+
+function snapshotMockFunctionState(value: unknown) {
+  if ((typeof value !== 'object' && typeof value !== 'function') || value === null) return value;
+  const snapshot = Object.create(null) as Record<PropertyKey, unknown>;
+  for (const key of Reflect.ownKeys(value)) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor) continue;
+    if ('value' in descriptor) {
+      Object.defineProperty(snapshot, key, { ...descriptor, value: descriptor.value });
+      continue;
+    }
+    if (key === 'lastCall' && descriptor.get) continue;
+    throw new Error(`Story session cannot safely fingerprint mock accessor state at ${String(key)}.`);
+  }
+  return snapshot;
+}
+
+function functionStateEntries(value: Function, canonicalizeChild: (child: unknown) => unknown) {
+  const isMockFunction = Object.getOwnPropertyDescriptor(value, '_isMockFunction')?.value === true;
+  return Reflect.ownKeys(value)
+    .filter(key => typeof key !== 'string' || !ignoredFunctionStateKeys.has(key))
+    .map(key => {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      if (!descriptor) return undefined;
+      if ('value' in descriptor) {
+        const child = isMockFunction && key === 'mock' ? snapshotMockFunctionState(descriptor.value) : descriptor.value;
+        return [
+          functionStateKey(key),
+          [
+            'data',
+            descriptor.configurable ?? false,
+            descriptor.enumerable ?? false,
+            descriptor.writable ?? false,
+            canonicalizeChild(child),
+          ],
+        ] as const;
+      }
+      if (isMockFunction && key === 'mock' && descriptor.get) {
+        try {
+          return [
+            functionStateKey(key),
+            [
+              'mock-accessor',
+              descriptor.configurable ?? false,
+              descriptor.enumerable ?? false,
+              canonicalizeChild(snapshotMockFunctionState(descriptor.get.call(value))),
+            ],
+          ] as const;
+        } catch (error) {
+          const reason = error instanceof Error ? error.message : String(error);
+          throw new Error(`Story session cannot inspect mock function state: ${reason}`);
+        }
+      }
+      throw new Error(`Story session cannot safely fingerprint function accessor state at ${String(key)}.`);
+    })
+    .filter(entry => entry !== undefined)
+    .sort(([left], [right]) => left.localeCompare(right));
+}
+
+function cloneOwnDataProperties(
+  source: object,
+  target: object,
+  seen: Map<object, unknown>,
+  cloneChild: (value: unknown, seen: Map<object, unknown>) => unknown,
+  ignoredKeys = new Set<PropertyKey>(),
+) {
+  for (const key of Reflect.ownKeys(source)) {
+    if (ignoredKeys.has(key)) continue;
+    if (typeof key === 'symbol') throw new Error('Story session cannot safely clone symbol-keyed state.');
+    const descriptor = Object.getOwnPropertyDescriptor(source, key);
+    if (!descriptor) continue;
+    if (!('value' in descriptor)) throw new Error(`Story session cannot safely clone accessor state at ${key}.`);
+    descriptor.value = cloneChild(descriptor.value, seen);
+    Object.defineProperty(target, key, descriptor);
+  }
+}
+
 function cloneValue(value: unknown, seen = new Map<object, unknown>()): unknown {
+  if (typeof value === 'symbol') throw new Error('Story session cannot safely clone symbol state.');
   if ((typeof value !== 'object' && typeof value !== 'function') || value === null) return value;
   if (typeof value === 'function') return value;
   if (seen.has(value)) return seen.get(value);
 
   if (Array.isArray(value)) {
-    const clone: unknown[] = [];
+    const clone: unknown[] = new Array(value.length);
     seen.set(value, clone);
-    value.forEach(item => clone.push(cloneValue(item, seen)));
-    return clone;
+    cloneOwnDataProperties(value, clone, seen, cloneValue, new Set(['length']));
+    const lengthDescriptor = Object.getOwnPropertyDescriptor(value, 'length');
+    if (lengthDescriptor) Object.defineProperty(clone, 'length', lengthDescriptor);
+    return applyObjectIntegrity(value, clone);
   }
   if (value instanceof Date) {
     const clone = new Date(value.getTime());
     seen.set(value, clone);
-    return clone;
+    cloneOwnDataProperties(value, clone, seen, cloneValue);
+    return applyObjectIntegrity(value, clone);
   }
   if (value instanceof RegExp) {
     const clone = new RegExp(value.source, value.flags);
     seen.set(value, clone);
-    return clone;
+    cloneOwnDataProperties(value, clone, seen, cloneValue);
+    return applyObjectIntegrity(value, clone);
   }
   if (value instanceof Map) {
     const clone = new Map<unknown, unknown>();
     seen.set(value, clone);
     value.forEach((item, key) => clone.set(cloneValue(key, seen), cloneValue(item, seen)));
-    return clone;
+    cloneOwnDataProperties(value, clone, seen, cloneValue);
+    return applyObjectIntegrity(value, clone);
   }
   if (value instanceof Set) {
     const clone = new Set<unknown>();
     seen.set(value, clone);
     value.forEach(item => clone.add(cloneValue(item, seen)));
-    return clone;
+    cloneOwnDataProperties(value, clone, seen, cloneValue);
+    return applyObjectIntegrity(value, clone);
   }
 
   const prototype = Object.getPrototypeOf(value);
   if (prototype !== Object.prototype && prototype !== null) {
-    try {
-      const clone = structuredClone(value);
-      if (Object.getPrototypeOf(clone) === prototype) {
-        seen.set(value, clone);
-        return clone;
-      }
-    } catch {
-      // Report unsupported state below without changing strict capture behavior.
-    }
     const constructorName =
       typeof prototype.constructor === 'function' && prototype.constructor.name
         ? prototype.constructor.name
@@ -100,13 +239,8 @@ function cloneValue(value: unknown, seen = new Map<object, unknown>()): unknown 
 
   const clone = Object.create(prototype) as Record<PropertyKey, unknown>;
   seen.set(value, clone);
-  for (const key of Reflect.ownKeys(value)) {
-    const descriptor = Object.getOwnPropertyDescriptor(value, key);
-    if (!descriptor) continue;
-    if ('value' in descriptor) descriptor.value = cloneValue(descriptor.value, seen);
-    Object.defineProperty(clone, key, descriptor);
-  }
-  return clone;
+  cloneOwnDataProperties(value, clone, seen, cloneValue);
+  return applyObjectIntegrity(value, clone);
 }
 
 function cloneState(value: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
@@ -115,51 +249,135 @@ function cloneState(value: Record<string, unknown> | undefined): Record<string, 
 
 function restoreState(target: Record<string, unknown> | undefined, source: Record<string, unknown> | undefined) {
   if (!target || !source) return;
-  for (const key of Object.keys(target)) {
-    if (!Object.hasOwn(source, key)) delete target[key];
+  const restored = cloneState(source)!;
+  for (const key of Reflect.ownKeys(target)) {
+    if (!Object.hasOwn(restored, key) && !Reflect.deleteProperty(target, key)) {
+      throw new Error(`Story session cannot remove retained state at ${String(key)}.`);
+    }
   }
-  Object.assign(target, cloneState(source));
+  for (const key of Reflect.ownKeys(restored)) {
+    const descriptor = Object.getOwnPropertyDescriptor(restored, key);
+    if (!descriptor) continue;
+    const current = Object.getOwnPropertyDescriptor(target, key);
+    const sameDataShape =
+      current &&
+      'value' in current &&
+      'value' in descriptor &&
+      current.configurable === descriptor.configurable &&
+      current.enumerable === descriptor.enumerable &&
+      current.writable === descriptor.writable;
+    if (sameDataShape && descriptor.writable) {
+      if (!Reflect.set(target, key, descriptor.value, target)) {
+        throw new Error(`Story session cannot restore state at ${String(key)}.`);
+      }
+    } else {
+      Object.defineProperty(target, key, descriptor);
+    }
+  }
+}
+
+function ownStateEntries(value: object, canonicalizeChild: (child: unknown) => unknown) {
+  return Reflect.ownKeys(value)
+    .map(key => {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      if (!descriptor) return undefined;
+      if (!('value' in descriptor)) {
+        throw new Error(`Story session cannot safely fingerprint accessor state at ${String(key)}.`);
+      }
+      return [
+        functionStateKey(key),
+        [
+          'data',
+          descriptor.configurable ?? false,
+          descriptor.enumerable ?? false,
+          descriptor.writable ?? false,
+          canonicalizeChild(descriptor.value),
+        ],
+      ] as const;
+    })
+    .filter(entry => entry !== undefined)
+    .sort(([left], [right]) => left.localeCompare(right));
+}
+
+function plainObjectKind(value: object) {
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype === null) return 'null-prototype';
+  if (prototype === Object.prototype) return 'object-prototype';
+  const constructor = Object.getOwnPropertyDescriptor(prototype, 'constructor')?.value;
+  const constructorName = typeof constructor === 'function' && constructor.name ? constructor.name : 'non-plain object';
+  throw new Error(`Story session cannot safely fingerprint ${constructorName} state.`);
 }
 
 function canonicalizeForSort(value: unknown, ancestors = new Set<object>()): unknown {
   if (value === undefined) return ['undefined'];
   if (typeof value === 'bigint') return ['bigint', String(value)];
-  if (typeof value === 'function' || typeof value === 'symbol') return ['ignored', typeof value];
+  if (typeof value === 'symbol') return ['symbol', symbolIdentity(value)];
   if (typeof value === 'number') {
     if (Number.isNaN(value)) return ['number', 'NaN'];
     if (!Number.isFinite(value)) return ['number', String(value)];
     if (Object.is(value, -0)) return ['number', '-0'];
   }
-  if (typeof value !== 'object' || value === null) return value;
+  if ((typeof value !== 'object' && typeof value !== 'function') || value === null) return value;
   if (ancestors.has(value)) return ['cycle'];
   const descendants = new Set(ancestors);
   descendants.add(value);
-  if (Array.isArray(value)) return ['array', value.map(child => canonicalizeForSort(child, descendants))];
-  if (value instanceof Date) {
-    return ['date', Number.isNaN(value.getTime()) ? 'invalid' : value.toISOString()];
+  if (typeof value === 'function') {
+    return [
+      'function',
+      functionIdentity(value),
+      functionPrototypeIdentity(value),
+      objectIntegrity(value),
+      functionStateEntries(value, child => canonicalizeForSort(child, descendants)),
+    ];
   }
-  if (value instanceof RegExp) return ['regexp', value.source, value.flags];
+  if (Array.isArray(value)) {
+    return ['array', objectIntegrity(value), ownStateEntries(value, child => canonicalizeForSort(child, descendants))];
+  }
+  if (value instanceof Date) {
+    return [
+      'date',
+      Number.isNaN(value.getTime()) ? 'invalid' : value.toISOString(),
+      objectIntegrity(value),
+      ownStateEntries(value, child => canonicalizeForSort(child, descendants)),
+    ];
+  }
+  if (value instanceof RegExp) {
+    return [
+      'regexp',
+      value.source,
+      value.flags,
+      objectIntegrity(value),
+      ownStateEntries(value, child => canonicalizeForSort(child, descendants)),
+    ];
+  }
   if (value instanceof Map) {
     const entries = [...value.entries()].map(([key, child]) => [
       canonicalizeForSort(key, descendants),
       canonicalizeForSort(child, descendants),
     ]);
     entries.sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
-    return ['map', entries];
+    return [
+      'map',
+      entries,
+      objectIntegrity(value),
+      ownStateEntries(value, child => canonicalizeForSort(child, descendants)),
+    ];
   }
   if (value instanceof Set) {
     const entries = [...value].map(child => canonicalizeForSort(child, descendants));
     entries.sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
-    return ['set', entries];
+    return [
+      'set',
+      entries,
+      objectIntegrity(value),
+      ownStateEntries(value, child => canonicalizeForSort(child, descendants)),
+    ];
   }
-  const constructorName = Object.getPrototypeOf(value)?.constructor?.name ?? '';
   return [
     'object',
-    constructorName,
-    Object.entries(value as Record<string, unknown>)
-      .filter(([, child]) => typeof child !== 'function' && typeof child !== 'symbol')
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, child]) => [key, canonicalizeForSort(child, descendants)]),
+    plainObjectKind(value),
+    objectIntegrity(value),
+    ownStateEntries(value, child => canonicalizeForSort(child, descendants)),
   ];
 }
 
@@ -170,41 +388,77 @@ function canonicalSortKey(value: unknown) {
 function canonicalize(value: unknown, seen = new Map<object, number>()): unknown {
   if (value === undefined) return ['undefined'];
   if (typeof value === 'bigint') return ['bigint', String(value)];
-  if (typeof value === 'function' || typeof value === 'symbol') return ['ignored', typeof value];
+  if (typeof value === 'symbol') return ['symbol', symbolIdentity(value)];
   if (typeof value === 'number') {
     if (Number.isNaN(value)) return ['number', 'NaN'];
     if (!Number.isFinite(value)) return ['number', String(value)];
     if (Object.is(value, -0)) return ['number', '-0'];
   }
-  if (typeof value !== 'object' || value === null) return value;
+  if ((typeof value !== 'object' && typeof value !== 'function') || value === null) return value;
   const existing = seen.get(value);
   if (existing !== undefined) return ['reference', existing];
   const id = seen.size;
   seen.set(value, id);
-  if (Array.isArray(value)) return ['array', id, value.map(child => canonicalize(child, seen))];
-  if (value instanceof Date) {
-    return ['date', id, Number.isNaN(value.getTime()) ? 'invalid' : value.toISOString()];
+  if (typeof value === 'function') {
+    return [
+      'function',
+      id,
+      functionIdentity(value),
+      functionPrototypeIdentity(value),
+      objectIntegrity(value),
+      functionStateEntries(value, child => canonicalize(child, seen)),
+    ];
   }
-  if (value instanceof RegExp) return ['regexp', id, value.source, value.flags];
+  if (Array.isArray(value)) {
+    return ['array', id, objectIntegrity(value), ownStateEntries(value, child => canonicalize(child, seen))];
+  }
+  if (value instanceof Date) {
+    return [
+      'date',
+      id,
+      Number.isNaN(value.getTime()) ? 'invalid' : value.toISOString(),
+      objectIntegrity(value),
+      ownStateEntries(value, child => canonicalize(child, seen)),
+    ];
+  }
+  if (value instanceof RegExp) {
+    return [
+      'regexp',
+      id,
+      value.source,
+      value.flags,
+      objectIntegrity(value),
+      ownStateEntries(value, child => canonicalize(child, seen)),
+    ];
+  }
   if (value instanceof Map) {
     const entries = [...value.entries()].sort((left, right) =>
       canonicalSortKey(left).localeCompare(canonicalSortKey(right)),
     );
-    return ['map', id, entries.map(([key, child]) => [canonicalize(key, seen), canonicalize(child, seen)])];
+    return [
+      'map',
+      id,
+      entries.map(([key, child]) => [canonicalize(key, seen), canonicalize(child, seen)]),
+      objectIntegrity(value),
+      ownStateEntries(value, child => canonicalize(child, seen)),
+    ];
   }
   if (value instanceof Set) {
     const entries = [...value].sort((left, right) => canonicalSortKey(left).localeCompare(canonicalSortKey(right)));
-    return ['set', id, entries.map(child => canonicalize(child, seen))];
+    return [
+      'set',
+      id,
+      entries.map(child => canonicalize(child, seen)),
+      objectIntegrity(value),
+      ownStateEntries(value, child => canonicalize(child, seen)),
+    ];
   }
-  const constructorName = Object.getPrototypeOf(value)?.constructor?.name ?? '';
   return [
     'object',
     id,
-    constructorName,
-    Object.entries(value as Record<string, unknown>)
-      .filter(([, child]) => typeof child !== 'function' && typeof child !== 'symbol')
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, child]) => [key, canonicalize(child, seen)]),
+    plainObjectKind(value),
+    objectIntegrity(value),
+    ownStateEntries(value, child => canonicalize(child, seen)),
   ];
 }
 
@@ -322,16 +576,22 @@ function snapshotBaseline(runtime: RuntimeRegistration) {
     const baseScrollSnapshot = captureScrollSnapshot();
     runtime.baseArgs = baseArgs;
     runtime.baseGlobals = baseGlobals;
+    runtime.baseArgsHash = fingerprint(baseArgs);
+    runtime.baseGlobalsHash = fingerprint(baseGlobals);
     runtime.baseActiveElement = baseActiveElement;
     runtime.baseDocumentFingerprint = baseDocumentFingerprint;
     runtime.baseScrollSnapshot = baseScrollSnapshot;
+    runtime.baselineCaptured = true;
     delete runtime.baselineError;
   } catch (error) {
     runtime.baseArgs = undefined;
     runtime.baseGlobals = undefined;
+    runtime.baseArgsHash = undefined;
+    runtime.baseGlobalsHash = undefined;
     runtime.baseActiveElement = undefined;
     runtime.baseDocumentFingerprint = undefined;
     runtime.baseScrollSnapshot = undefined;
+    runtime.baselineCaptured = false;
     const reason = error instanceof Error ? error.message : String(error);
     runtime.baselineError = `Story session baseline is unsafe: ${reason}`;
   }
@@ -375,8 +635,16 @@ export function initializeStorySessionController(
   let generation = 0;
   let active: ActiveSession | undefined;
 
-  const requireActive = () => {
+  const requireActive = (...states: ActiveSession['state'][]) => {
     if (!active) throw new Error('No StoryFreeze story session is open.');
+    if (target.__STORYFREEZE_STORY_SESSION_RUNTIME__ !== active.runtime) {
+      active.state = 'poisoned';
+      throw new Error('The StoryFreeze story runtime changed during an active session.');
+    }
+    if (active.state === 'poisoned') throw new Error('The StoryFreeze story session is poisoned.');
+    if (states.length > 0 && !states.includes(active.state)) {
+      throw new Error(`StoryFreeze story session expected state ${states.join(' or ')}, received ${active.state}.`);
+    }
     return active;
   };
   const baseReady = (session: ActiveSession) => ({
@@ -388,6 +656,7 @@ export function initializeStorySessionController(
   target[STORYFREEZE_STORY_SESSION_GLOBAL] = {
     protocolVersion: STORYFREEZE_STORY_SESSION_PROTOCOL_VERSION,
     async openSession(request) {
+      if (active) throw new Error('A StoryFreeze story session is already open.');
       const runtime = target.__STORYFREEZE_STORY_SESSION_RUNTIME__;
       if (!runtime || runtime.storyId !== request.storyId) {
         throw new Error(
@@ -395,68 +664,74 @@ export function initializeStorySessionController(
         );
       }
       if (runtime.baselineError) throw new Error(runtime.baselineError);
-      if (
-        (runtime.args !== undefined && runtime.baseArgs === undefined) ||
-        (runtime.globals !== undefined && runtime.baseGlobals === undefined) ||
-        runtime.baseActiveElement === undefined ||
-        runtime.baseScrollSnapshot === undefined
-      ) {
-        snapshotBaseline(runtime);
-      }
+      if (!runtime.baselineCaptured) snapshotBaseline(runtime);
       if (runtime.baselineError) throw new Error(runtime.baselineError);
       if (runtime.baseDocumentFingerprint === undefined) {
         throw new Error('Story session cannot validate the preview document state.');
       }
-      active = { ...request, sessionGeneration: ++generation, variantGeneration: 0 };
+      active = { ...request, sessionGeneration: ++generation, variantGeneration: 0, runtime, state: 'ready' };
       return baseReady(active);
     },
     async applyVariant(variantId): Promise<VariantReady> {
-      const session = requireActive();
+      const session = requireActive('ready');
       session.variantGeneration += 1;
       session.activeVariantId = variantId;
+      session.state = 'applied';
       return { ...baseReady(session), variantId, variantGeneration: session.variantGeneration };
     },
     async resetVariant(variantId): Promise<SessionReady> {
-      const session = requireActive();
+      const session = requireActive(variantId === '__base__' ? 'ready' : 'applied');
       if (variantId !== '__base__' && session.activeVariantId !== variantId) {
         throw new Error(
           `Story session reset expected ${session.activeVariantId ?? 'no active variant'}, received ${variantId}.`,
         );
       }
-      const runtime = target.__STORYFREEZE_STORY_SESSION_RUNTIME__!;
+      const runtime = session.runtime;
       const baseActiveElement = runtime.baseActiveElement ?? null;
-      if (currentActiveElement() !== baseActiveElement) blurActiveElement();
-      await runtime.reset?.({ storyId: session.storyId, variantId });
-      restoreState(runtime.args, runtime.baseArgs);
-      restoreState(runtime.globals, runtime.baseGlobals);
-      if (baseActiveElement === null) {
-        blurActiveElement();
-      } else if (currentActiveElement() !== baseActiveElement && baseActiveElement.isConnected !== false) {
-        (baseActiveElement as HTMLElement).focus?.({ preventScroll: true });
+      try {
+        if (currentActiveElement() !== baseActiveElement) blurActiveElement();
+        await runtime.reset?.({ storyId: session.storyId, variantId });
+        restoreState(runtime.args, runtime.baseArgs);
+        restoreState(runtime.globals, runtime.baseGlobals);
+        if (baseActiveElement === null) {
+          blurActiveElement();
+        } else if (currentActiveElement() !== baseActiveElement && baseActiveElement.isConnected !== false) {
+          (baseActiveElement as HTMLElement).focus?.({ preventScroll: true });
+        }
+        restoreScrollSnapshot(runtime.baseScrollSnapshot);
+        session.activeVariantId = undefined;
+        session.state = 'ready';
+        return baseReady(session);
+      } catch (error) {
+        session.state = 'poisoned';
+        throw error;
       }
-      restoreScrollSnapshot(runtime.baseScrollSnapshot);
-      session.activeVariantId = undefined;
-      return baseReady(session);
     },
     async verifyReset(): Promise<ResetVerification> {
-      const session = requireActive();
-      if (session.activeVariantId !== undefined) {
-        throw new Error(`Story session variant ${session.activeVariantId} has not been reset.`);
-      }
-      const runtime = target.__STORYFREEZE_STORY_SESSION_RUNTIME__!;
+      const session = requireActive('ready');
+      const runtime = session.runtime;
       const restoredActiveElement = currentActiveElement();
       const currentDocumentFingerprint = documentFingerprint();
+      if (
+        !runtime.baseArgsHash ||
+        !runtime.baseGlobalsHash ||
+        !runtime.baseDocumentFingerprint ||
+        !currentDocumentFingerprint
+      ) {
+        session.state = 'poisoned';
+        throw new Error('Story session baseline verification is incomplete.');
+      }
       return {
         ...baseReady(session),
         activeElement: activeElementIdentity(restoredActiveElement),
         activeElementMatchesBaseline: restoredActiveElement === (runtime.baseActiveElement ?? null),
         baseActiveElement: activeElementIdentity(runtime.baseActiveElement ?? null),
-        ...(runtime.args ? { argsHash: fingerprint(runtime.args) } : {}),
-        ...(runtime.baseArgs ? { baseArgsHash: fingerprint(runtime.baseArgs) } : {}),
-        ...(runtime.globals ? { globalsHash: fingerprint(runtime.globals) } : {}),
-        ...(runtime.baseGlobals ? { baseGlobalsHash: fingerprint(runtime.baseGlobals) } : {}),
-        ...(runtime.baseDocumentFingerprint ? { baseDocumentFingerprint: runtime.baseDocumentFingerprint } : {}),
-        ...(currentDocumentFingerprint ? { documentFingerprint: currentDocumentFingerprint } : {}),
+        argsHash: fingerprint(runtime.args),
+        baseArgsHash: runtime.baseArgsHash,
+        globalsHash: fingerprint(runtime.globals),
+        baseGlobalsHash: runtime.baseGlobalsHash,
+        baseDocumentFingerprint: runtime.baseDocumentFingerprint,
+        documentFingerprint: currentDocumentFingerprint,
         scrollPositionMatchesBaseline: scrollSnapshotMatches(runtime.baseScrollSnapshot),
       };
     },

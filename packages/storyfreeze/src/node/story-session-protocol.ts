@@ -9,19 +9,92 @@ import {
   type VariantReady,
 } from '../shared/preview-protocol.js';
 
-function assertSessionReady(
-  value: SessionReady,
+type ProtocolMethod = 'openSession' | 'applyVariant' | 'resetVariant' | 'verifyReset' | 'closeSession';
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function requireString(record: Record<string, unknown>, key: string): string {
+  const value = record[key];
+  if (typeof value !== 'string') throw new Error(`Story session response.${key} must be a string.`);
+  return value;
+}
+
+function requirePositiveInteger(record: Record<string, unknown>, key: string): number {
+  const value = record[key];
+  if (!Number.isSafeInteger(value) || Number(value) < 1) {
+    throw new Error(`Story session response.${key} must be a positive safe integer.`);
+  }
+  return Number(value);
+}
+
+function validateSessionReady(
+  value: unknown,
   expected: { storyId: string; profileHash: string; sessionGeneration?: number },
 ) {
+  if (!isRecord(value)) throw new Error('Story session response must be an object.');
+  const ready: SessionReady = {
+    storyId: requireString(value, 'storyId'),
+    profileHash: requireString(value, 'profileHash'),
+    sessionGeneration: requirePositiveInteger(value, 'sessionGeneration'),
+  };
   if (
-    value.storyId !== expected.storyId ||
-    value.profileHash !== expected.profileHash ||
-    (expected.sessionGeneration !== undefined && value.sessionGeneration !== expected.sessionGeneration)
+    ready.storyId !== expected.storyId ||
+    ready.profileHash !== expected.profileHash ||
+    (expected.sessionGeneration !== undefined && ready.sessionGeneration !== expected.sessionGeneration)
   ) {
     throw new Error(
-      `Story session generation mismatch: expected ${JSON.stringify(expected)}, received ${JSON.stringify(value)}.`,
+      `Story session generation mismatch: expected ${JSON.stringify(expected)}, received ${JSON.stringify(ready)}.`,
     );
   }
+  return ready;
+}
+
+function validateVariantReady(
+  value: unknown,
+  expected: SessionReady & { variantId: string; variantGeneration: number },
+) {
+  const ready = validateSessionReady(value, expected);
+  const record = value as Record<string, unknown>;
+  const variantId = requireString(record, 'variantId');
+  const variantGeneration = requirePositiveInteger(record, 'variantGeneration');
+  if (variantId !== expected.variantId || variantGeneration !== expected.variantGeneration) {
+    throw new Error(`Invalid story-session variant generation for ${expected.variantId}.`);
+  }
+  return { ...ready, variantId, variantGeneration } satisfies VariantReady;
+}
+
+function requireNullableString(record: Record<string, unknown>, key: string): string | null {
+  const value = record[key];
+  if (value !== null && typeof value !== 'string') {
+    throw new Error(`Story session response.${key} must be a string or null.`);
+  }
+  return value as string | null;
+}
+
+function requireBoolean(record: Record<string, unknown>, key: string): boolean {
+  const value = record[key];
+  if (typeof value !== 'boolean') throw new Error(`Story session response.${key} must be a boolean.`);
+  return value;
+}
+
+function validateResetVerification(value: unknown, expected: SessionReady): ResetVerification {
+  const ready = validateSessionReady(value, expected);
+  const record = value as Record<string, unknown>;
+  return {
+    ...ready,
+    activeElement: requireNullableString(record, 'activeElement'),
+    activeElementMatchesBaseline: requireBoolean(record, 'activeElementMatchesBaseline'),
+    baseActiveElement: requireNullableString(record, 'baseActiveElement'),
+    argsHash: requireString(record, 'argsHash'),
+    baseArgsHash: requireString(record, 'baseArgsHash'),
+    baseDocumentFingerprint: requireString(record, 'baseDocumentFingerprint'),
+    globalsHash: requireString(record, 'globalsHash'),
+    baseGlobalsHash: requireString(record, 'baseGlobalsHash'),
+    documentFingerprint: requireString(record, 'documentFingerprint'),
+    scrollPositionMatchesBaseline: requireBoolean(record, 'scrollPositionMatchesBaseline'),
+  };
 }
 
 export function storySessionProfileHash(profile: EmulationProfile): string {
@@ -30,92 +103,113 @@ export function storySessionProfileHash(profile: EmulationProfile): string {
 
 export class StorySessionProtocolClient {
   private current?: SessionReady;
+  private state: 'closed' | 'ready' | 'applied' | 'poisoned' = 'closed';
   private variantGeneration = 0;
+  private activeVariantId?: string;
 
   constructor(private readonly page: Pick<CapturePage, 'evaluate'>) {}
 
   async openSession(request: Omit<OpenStorySessionRequest, 'profileHash'> & { profile: EmulationProfile }) {
+    if (this.state !== 'closed') throw new Error(`Cannot open a story session from state ${this.state}.`);
     const payload: OpenStorySessionRequest = {
       sessionId: request.sessionId,
       storyId: request.storyId,
       profileHash: storySessionProfileHash(request.profile),
     };
-    const ready = await this.page.evaluate(
-      async ({ globalName, protocolVersion, payload }) => {
-        const protocol = (window as unknown as Record<string, any>)[globalName];
-        if (!protocol || protocol.protocolVersion !== protocolVersion) {
-          throw new Error('StoryFreeze story-session preview protocol is unavailable or incompatible.');
-        }
-        return protocol.openSession(payload) as Promise<SessionReady>;
-      },
-      {
-        globalName: STORYFREEZE_STORY_SESSION_GLOBAL,
-        protocolVersion: STORYFREEZE_STORY_SESSION_PROTOCOL_VERSION,
-        payload,
-      },
-    );
-    assertSessionReady(ready, payload);
-    this.current = ready;
-    this.variantGeneration = 0;
-    return ready;
+    try {
+      const ready = validateSessionReady(await this.invoke('openSession', payload), payload);
+      this.current = ready;
+      this.variantGeneration = 0;
+      this.state = 'ready';
+      return ready;
+    } catch (error) {
+      this.state = 'poisoned';
+      throw error;
+    }
   }
 
   async applyVariant(variantId: string): Promise<VariantReady> {
-    const current = this.requireCurrent();
-    const ready = await this.page.evaluate(
-      async ({ globalName, variantId }) => {
-        const protocol = (window as unknown as Record<string, any>)[globalName];
-        return protocol.applyVariant(variantId) as Promise<VariantReady>;
-      },
-      { globalName: STORYFREEZE_STORY_SESSION_GLOBAL, variantId },
-    );
-    assertSessionReady(ready, current);
-    if (
-      ready.variantId !== variantId ||
-      !Number.isSafeInteger(ready.variantGeneration) ||
-      ready.variantGeneration !== this.variantGeneration + 1
-    ) {
-      throw new Error(`Invalid story-session variant generation for ${variantId}.`);
+    const current = this.requireState('ready');
+    try {
+      const ready = validateVariantReady(await this.invoke('applyVariant', variantId), {
+        ...current,
+        variantId,
+        variantGeneration: this.variantGeneration + 1,
+      });
+      this.variantGeneration = ready.variantGeneration;
+      this.activeVariantId = variantId;
+      this.state = 'applied';
+      return ready;
+    } catch (error) {
+      this.state = 'poisoned';
+      throw error;
     }
-    this.variantGeneration = ready.variantGeneration;
-    return ready;
   }
 
   async resetVariant(variantId: string): Promise<SessionReady> {
-    const current = this.requireCurrent();
-    const ready = await this.page.evaluate(
-      async ({ globalName, variantId }) => {
-        const protocol = (window as unknown as Record<string, any>)[globalName];
-        return protocol.resetVariant(variantId) as Promise<SessionReady>;
-      },
-      { globalName: STORYFREEZE_STORY_SESSION_GLOBAL, variantId },
-    );
-    assertSessionReady(ready, current);
-    return ready;
+    const expectedState = variantId === '__base__' ? 'ready' : 'applied';
+    const current = this.requireState(expectedState);
+    if (variantId !== '__base__' && variantId !== this.activeVariantId) {
+      this.state = 'poisoned';
+      throw new Error(
+        `Story session reset expected ${this.activeVariantId ?? 'no active variant'}, received ${variantId}.`,
+      );
+    }
+    try {
+      const ready = validateSessionReady(await this.invoke('resetVariant', variantId), current);
+      this.activeVariantId = undefined;
+      this.state = 'ready';
+      return ready;
+    } catch (error) {
+      this.state = 'poisoned';
+      throw error;
+    }
   }
 
   async verifyReset(): Promise<ResetVerification> {
-    const current = this.requireCurrent();
-    const verification = await this.page.evaluate(async globalName => {
-      const protocol = (window as unknown as Record<string, any>)[globalName];
-      return protocol.verifyReset() as Promise<ResetVerification>;
-    }, STORYFREEZE_STORY_SESSION_GLOBAL);
-    assertSessionReady(verification, current);
-    return verification;
+    const current = this.requireState('ready');
+    try {
+      return validateResetVerification(await this.invoke('verifyReset'), current);
+    } catch (error) {
+      this.state = 'poisoned';
+      throw error;
+    }
   }
 
   async closeSession(): Promise<void> {
-    if (!this.current) return;
-    this.current = undefined;
-    this.variantGeneration = 0;
-    await this.page.evaluate(async globalName => {
-      const protocol = (window as unknown as Record<string, any>)[globalName];
-      await protocol?.closeSession();
-    }, STORYFREEZE_STORY_SESSION_GLOBAL);
+    if (this.state === 'closed') return;
+    try {
+      await this.invoke('closeSession');
+    } finally {
+      this.current = undefined;
+      this.variantGeneration = 0;
+      this.activeVariantId = undefined;
+      this.state = 'closed';
+    }
   }
 
-  private requireCurrent() {
-    if (!this.current) throw new Error('Story session has not been opened.');
+  private requireState(expected: 'ready' | 'applied') {
+    if (!this.current || this.state !== expected) {
+      throw new Error(`Story session expected state ${expected}, received ${this.state}.`);
+    }
     return this.current;
+  }
+
+  private invoke(method: ProtocolMethod, argument?: unknown): Promise<unknown> {
+    return this.page.evaluate(
+      async ({ argument, globalName, method, protocolVersion }) => {
+        const protocol = (window as unknown as Record<string, any>)[globalName];
+        if (!protocol || protocol.protocolVersion !== protocolVersion || typeof protocol[method] !== 'function') {
+          throw new Error('StoryFreeze story-session preview protocol is unavailable or incompatible.');
+        }
+        return argument === undefined ? protocol[method]() : protocol[method](argument);
+      },
+      {
+        argument,
+        globalName: STORYFREEZE_STORY_SESSION_GLOBAL,
+        method,
+        protocolVersion: STORYFREEZE_STORY_SESSION_PROTOCOL_VERSION,
+      },
+    );
   }
 }

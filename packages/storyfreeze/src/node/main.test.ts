@@ -139,35 +139,25 @@ describe(bootCaptureWorkers, () => {
     return worker;
   }
 
-  it('waits for late workers and closes every worker when one boot fails', async () => {
-    let releaseLateWorker = () => {};
+  it('closes every worker without waiting for a hung peer when one boot fails', async () => {
     const failure = new Error('boot failed');
     const failedWorker = createWorker(async () => Promise.reject(failure));
-    const lateWorker = createWorker(() => new Promise<void>(resolve => (releaseLateWorker = resolve)));
+    const lateWorker = createWorker(() => new Promise<void>(() => {}));
 
     const booting = bootCaptureWorkers([failedWorker, lateWorker]);
-    await Promise.resolve();
 
-    expect(failedWorker.close).not.toHaveBeenCalled();
-    expect(lateWorker.close).not.toHaveBeenCalled();
-
-    releaseLateWorker();
     await expect(booting).rejects.toBe(failure);
     expect(failedWorker.close).toHaveBeenCalledTimes(1);
     expect(lateWorker.close).toHaveBeenCalledTimes(1);
   });
 
-  it('finishes in-flight boots before closing workers after an abort', async () => {
-    let releaseWorker = () => {};
+  it('closes workers without waiting for a hung boot after an abort', async () => {
     const controller = new AbortController();
-    const worker = createWorker(() => new Promise<void>(resolve => (releaseWorker = resolve)));
+    const worker = createWorker(() => new Promise<void>(() => {}));
 
     const booting = bootCaptureWorkers([worker], controller.signal);
     controller.abort(new Error('interrupted by test'));
-    await Promise.resolve();
 
-    expect(worker.close).not.toHaveBeenCalled();
-    releaseWorker();
     await expect(booting).rejects.toThrow('interrupted by test');
     expect(worker.close).toHaveBeenCalledTimes(1);
   });
@@ -288,27 +278,39 @@ describe(CapturingBrowser, () => {
       logger: new Logger('silent'),
       viewports: ['1024x768'],
     } as MainOptions;
+    const unsubscribe = vi.fn();
+    const sessionClose = vi.fn(async () => {});
+    const browserClose = vi.fn(async () => {});
+    const newSession = vi.fn(async () => ({
+      close: sessionClose,
+      isHealthy: () => true,
+      page: {
+        exposeFunction: vi.fn(async () => {}),
+        subscribeRequests: vi.fn(() => unsubscribe),
+      },
+    }));
+    const backend = {
+      launch: vi.fn(async () => ({ executablePath: 'chromium', newSession, close: browserClose })),
+      name: 'test',
+    };
     const browser = new CapturingBrowser(
       { url: 'https://example.test' } as ManagedStorybookConnection,
       options,
       'managed',
       0,
+      backend as never,
     );
-    const unsubscribe = vi.fn();
-    vi.spyOn(BaseBrowser.prototype, 'page', 'get').mockReturnValue({
-      exposeFunction: vi.fn(async () => {}),
-      subscribeRequests: vi.fn(() => unsubscribe),
-    } as never);
-    const baseBoot = vi.spyOn(BaseBrowser.prototype, 'boot').mockResolvedValue(browser);
 
     await expect(browser.boot()).resolves.toBe(browser);
 
-    expect(baseBoot).toHaveBeenCalledWith({ viewport: { height: 768, width: 1024 } });
+    expect(newSession).toHaveBeenCalledWith({ viewport: { height: 768, width: 1024 } });
     expect(browser as unknown as { viewport: unknown }).toMatchObject({
       viewport: { height: 768, width: 1024 },
     });
     await browser.close();
     expect(unsubscribe).toHaveBeenCalledTimes(1);
+    expect(sessionClose).toHaveBeenCalledTimes(1);
+    expect(browserClose).toHaveBeenCalledTimes(1);
   });
 
   it('keeps a captured PNG successful when best-effort input reset fails', async () => {
@@ -452,19 +454,33 @@ describe(CapturingBrowser, () => {
       disableWaitAssets: false,
       viewports: ['800x600'],
     } as unknown as MainOptions;
-    const browser = new CapturingBrowser({ url: 'invalid' } as ManagedStorybookConnection, options, 'managed', 0);
     const unsubscribe = vi.fn();
+    const sessionClose = vi.fn(async () => {});
+    const browserClose = vi.fn(async () => {});
     const page = {
       exposeFunction: vi.fn(async () => {}),
       subscribeRequests: vi.fn(() => unsubscribe),
     };
-    vi.spyOn(BaseBrowser.prototype, 'boot').mockResolvedValue(browser);
-    vi.spyOn(BaseBrowser.prototype, 'page', 'get').mockReturnValue(page as never);
-    const close = vi.spyOn(BaseBrowser.prototype, 'close').mockResolvedValue(undefined);
+    const backend = {
+      launch: vi.fn(async () => ({
+        executablePath: 'chromium',
+        newSession: vi.fn(async () => ({ close: sessionClose, isHealthy: () => true, page })),
+        close: browserClose,
+      })),
+      name: 'test',
+    };
+    const browser = new CapturingBrowser(
+      { url: 'invalid' } as ManagedStorybookConnection,
+      options,
+      'managed',
+      0,
+      backend as never,
+    );
 
     await expect(browser.boot()).rejects.toThrow('Invalid URL');
-    expect(close).toHaveBeenCalledTimes(1);
     expect(unsubscribe).toHaveBeenCalledTimes(1);
+    expect(sessionClose).toHaveBeenCalledTimes(1);
+    expect(browserClose).toHaveBeenCalledTimes(1);
   });
 
   it('removes the console listener and retries when a Playwright trace fails to start', async () => {
@@ -790,6 +806,29 @@ describe(main, () => {
 
     await expect(main(options)).rejects.toThrow('enumeration failed');
 
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(disconnect).toHaveBeenCalledTimes(1);
+  });
+
+  it('cancels peer startup work without loading the story index after browser boot fails', async () => {
+    const failure = new Error('browser boot failed');
+    let connectionSignal: AbortSignal | undefined;
+    vi.spyOn(ManagedStorybookConnection.prototype, 'connect').mockImplementation(function (
+      this: ManagedStorybookConnection,
+      signal?: AbortSignal,
+    ) {
+      connectionSignal = signal;
+      return new Promise(resolve => setImmediate(() => resolve(this)));
+    });
+    const disconnect = vi.spyOn(ManagedStorybookConnection.prototype, 'disconnect').mockResolvedValue(undefined);
+    vi.spyOn(BaseBrowser.prototype, 'boot').mockRejectedValue(failure);
+    const fetch = vi.spyOn(globalThis, 'fetch');
+    const close = vi.spyOn(BaseBrowser.prototype, 'close').mockResolvedValue(undefined);
+
+    await expect(main(options)).rejects.toBe(failure);
+
+    expect(connectionSignal?.aborted).toBe(true);
+    expect(fetch).not.toHaveBeenCalled();
     expect(close).toHaveBeenCalledTimes(1);
     expect(disconnect).toHaveBeenCalledTimes(1);
   });

@@ -19,6 +19,9 @@ import { generateCaptureManifest } from './capture-manifest.js';
 import { assignCapturePlan, createCapturePlan } from './capture-plan.js';
 import { toViewport } from './emulation-profile.js';
 import { BrowserRuntimeOrchestrator, selectTopology } from './browser-topology.js';
+import { raceAgainstTimeout } from './async-utils.js';
+
+const workerCloseTimeoutMs = 5_000;
 
 async function abortable<T>(operation: Promise<T>, signal?: AbortSignal): Promise<T> {
   if (!signal) return operation;
@@ -68,26 +71,27 @@ export async function bootCaptureWorkers<T extends BootableCaptureWorker<T>>(
   sessionOptions: Array<BrowserSessionOptions | undefined> = [],
 ): Promise<T[]> {
   throwIfAborted(signal);
-  const results = await Promise.allSettled(
-    workers.map((worker, workerId) =>
-      measureCaptureDiagnostic({ type: 'runtime-phase', phase: 'capture-worker-boot', workerId }, () =>
-        worker.boot(sessionOptions[workerId]),
-      ),
+  const boots = workers.map((worker, workerId) =>
+    measureCaptureDiagnostic({ type: 'runtime-phase', phase: 'capture-worker-boot', workerId }, () =>
+      worker.boot(sessionOptions[workerId]),
     ),
   );
-  const failure = results.find((result): result is PromiseRejectedResult => result.status === 'rejected');
-  const interrupted = signal?.aborted
-    ? signal.reason instanceof Error
-      ? signal.reason
-      : new Error('StoryFreeze was interrupted.')
-    : undefined;
-
-  if (failure || interrupted) {
-    await Promise.allSettled(workers.map(worker => worker.close()));
-    throw interrupted ?? failure!.reason;
+  try {
+    return await abortable(Promise.all(boots), signal);
+  } catch (error) {
+    await Promise.allSettled(
+      workers.map(worker =>
+        raceAgainstTimeout(
+          Promise.resolve().then(() => worker.close()),
+          workerCloseTimeoutMs,
+        ).catch(() => undefined),
+      ),
+    );
+    if (signal?.aborted) {
+      throw signal.reason instanceof Error ? signal.reason : new Error('StoryFreeze was interrupted.');
+    }
+    throw error;
   }
-
-  return results.map(result => (result as PromiseFulfilledResult<T>).value);
 }
 
 async function bootCapturingBrowserAsWorkers(
@@ -199,28 +203,35 @@ export async function main(mainOptions: MainOptions, overrides: Partial<MainDepe
     browserProcess = new BrowserProcessCoordinator(browserBackend, browserOptions);
     storiesBrowser = new BaseBrowser(browserOptions, browserBackend, { role: 'story-index' }, browserProcess);
     const storyIndexProvider = new StorybookStoryIndexProvider();
-    const connectionPromise = measureRuntimePhase('storybook-connect', () =>
-      abortable(connection!.connect(), mainOptions.signal),
+    const startupController = new AbortController();
+    const startupSignal = mainOptions.signal
+      ? AbortSignal.any([mainOptions.signal, startupController.signal])
+      : startupController.signal;
+    const connectionPromise = measureRuntimePhase('storybook-connect', () => connection!.connect(startupSignal));
+    const browserBootPromise = measureRuntimePhase('story-index-browser-boot', () =>
+      abortable(storiesBrowser!.boot(), startupSignal),
     );
-    const [connectionResult, browserBootResult, storyIndexResult] = await Promise.allSettled([
-      connectionPromise,
-      measureRuntimePhase('story-index-browser-boot', () => storiesBrowser!.boot()),
-      connectionPromise.then(() =>
-        measureRuntimePhase('story-index-load', () =>
-          abortable(
-            storyIndexProvider.load(new URL(mainOptions.serverOptions.storybookUrl), mainOptions.signal),
-            mainOptions.signal,
-          ),
+    const storyIndexPromise = connectionPromise.then(() => {
+      throwIfAborted(startupSignal);
+      return measureRuntimePhase('story-index-load', () =>
+        abortable(
+          storyIndexProvider.load(new URL(mainOptions.serverOptions.storybookUrl), startupSignal),
+          startupSignal,
         ),
-      ),
-    ]);
-    if (connectionResult.status === 'rejected') throw connectionResult.reason;
-    if (browserBootResult.status === 'rejected') throw browserBootResult.reason;
-    if (storyIndexResult.status === 'rejected') throw storyIndexResult.reason;
+      );
+    });
+    const startupTasks = [connectionPromise, browserBootPromise, storyIndexPromise] as const;
+    let allStories: readonly StoryDescriptor[];
+    try {
+      [, , allStories] = await Promise.all(startupTasks);
+    } catch (error) {
+      startupController.abort(error);
+      await Promise.allSettled(startupTasks);
+      throw error;
+    }
     throwIfAborted(mainOptions.signal);
     logger.debug('Created to connection.');
     logger.log('Executable Chromium path:', logger.color.magenta(storiesBrowser.executablePath));
-    const allStories = storyIndexResult.value;
     logger.debug('Ended to fetch stories metadata.');
 
     const stories = filterStories(allStories, mainOptions.include, mainOptions.exclude);

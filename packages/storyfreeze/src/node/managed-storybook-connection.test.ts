@@ -30,6 +30,56 @@ function createServerCommand(port: number, ignoreSigterm = false) {
 }
 
 describe(ManagedStorybookConnection, { timeout: 15_000 }, () => {
+  it('does not start connecting when already cancelled', async () => {
+    const controller = new AbortController();
+    const reason = new Error('already cancelled');
+    controller.abort(reason);
+    const connection = new ManagedStorybookConnection(
+      { storybookUrl: 'http://127.0.0.1:1', serverTimeout: 5_000 },
+      new Logger('silent'),
+    );
+
+    await expect(connection.connect(controller.signal)).rejects.toBe(reason);
+    expect(connection.status).toBe('DISCONNECTED');
+  });
+
+  it('cancels an in-flight server wait without leaving the connection active', async () => {
+    const port = await getAvailablePort();
+    const connection = new ManagedStorybookConnection(
+      {
+        storybookUrl: `http://127.0.0.1:${port}`,
+        serverTimeout: 5_000,
+      },
+      new Logger('silent'),
+    );
+    const controller = new AbortController();
+    const reason = new Error('cancelled by peer startup failure');
+
+    const connecting = connection.connect(controller.signal);
+    controller.abort(reason);
+
+    await expect(connecting).rejects.toBe(reason);
+    expect(connection.status).toBe('DISCONNECTED');
+  });
+
+  it('cancels an in-flight server wait when disconnected', async () => {
+    const port = await getAvailablePort();
+    const connection = new ManagedStorybookConnection(
+      {
+        storybookUrl: `http://127.0.0.1:${port}`,
+        serverTimeout: 5_000,
+      },
+      new Logger('silent'),
+    );
+
+    const connecting = connection.connect();
+    const rejection = expect(connecting).rejects.toThrow('Storybook connection was disconnected.');
+    await connection.disconnect();
+
+    await rejection;
+    expect(connection.status).toBe('DISCONNECTED');
+  });
+
   it('waits until the Storybook process tree has exited', async () => {
     const port = await getAvailablePort();
     const logger = new Logger('silent');

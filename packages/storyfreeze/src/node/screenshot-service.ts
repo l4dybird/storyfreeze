@@ -83,14 +83,28 @@ function percentile(values: number[], rank: number) {
   return sorted[Math.max(0, Math.ceil(rank * sorted.length) - 1)];
 }
 
-async function withOperationTimeout<T>(operation: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+async function withOperationTimeout<T>(
+  operation: Promise<T>,
+  timeoutMs: number,
+  label: string,
+  onTimeout: () => Promise<unknown> = async () => {},
+): Promise<T> {
   const effectiveTimeout = Math.min(2_147_483_647, Math.max(1, Math.floor(timeoutMs)));
   let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_resolve, reject) => {
-    timeoutHandle = setTimeout(
-      () => reject(new Error(`${label} did not settle within ${effectiveTimeout} msec.`)),
-      effectiveTimeout,
-    );
+    timeoutHandle = setTimeout(() => {
+      try {
+        void Promise.resolve(onTimeout()).catch(() => {});
+        reject(new Error(`${label} did not settle within ${effectiveTimeout} msec.`));
+      } catch (error) {
+        reject(
+          new AggregateError(
+            [error],
+            `${label} did not settle within ${effectiveTimeout} msec and its worker could not be closed.`,
+          ),
+        );
+      }
+    }, effectiveTimeout);
   });
   try {
     return await Promise.race([operation, timeout]);
@@ -106,6 +120,7 @@ export interface ScreenshotService {
 }
 
 export interface ScreenshotWorker {
+  close?(): Promise<void>;
   screenshot(
     requestId: string,
     story: Story,
@@ -306,7 +321,12 @@ export function createScreenshotService({
           lazyWorkerBootCount += 1;
           availableWorkerCount += 1;
           void measureCaptureDiagnostic({ type: 'runtime-phase', phase: 'lazy-worker-boot', workerId }, () =>
-            withOperationTimeout(bootWorker!(workerId), operationTimeoutMs, `Capture worker ${workerId} boot`),
+            withOperationTimeout(
+              bootWorker!(workerId),
+              operationTimeoutMs,
+              `Capture worker ${workerId} boot`,
+              () => workers[workerId].close?.() ?? Promise.resolve(),
+            ),
           ).then(
             () => {
               workerStates[workerId] = 'ready';
@@ -439,6 +459,7 @@ export function createScreenshotService({
                 ),
                 operationTimeoutMs,
                 `Capture ${request.captureId}`,
+                () => worker.close?.() ?? Promise.resolve(),
               ),
             );
             const { succeeded, buffer, variantKeysToPush, defaultVariantSuffix } = result;
@@ -500,6 +521,7 @@ export function createScreenshotService({
                 ),
                 operationTimeoutMs * Math.max(1, sessionCandidates.size),
                 `Story session ${request.sessionId}`,
+                () => worker.close?.() ?? Promise.resolve(),
               );
               for (const output of sessionResult.outputs) {
                 await saveCaptureOutput(request.story, output.variantKey, output.buffer, output.durationMs, 0);

@@ -11,6 +11,22 @@ import type { MainOptions } from './types.js';
 const story: Story = { id: 'button--primary', kind: 'Button', story: 'Primary', version: 'v5' };
 const profileHash = '800:600:1:0:0:1';
 
+function resetVerification(session = { storyId: story.id, sessionGeneration: 1, profileHash }) {
+  return {
+    ...session,
+    activeElement: null,
+    activeElementMatchesBaseline: true,
+    baseActiveElement: null,
+    argsHash: 'args',
+    baseArgsHash: 'args',
+    baseDocumentFingerprint: 'baseline',
+    globalsHash: 'globals',
+    baseGlobalsHash: 'globals',
+    documentFingerprint: 'baseline',
+    scrollPositionMatchesBaseline: true,
+  };
+}
+
 function createBrowserFixture(captureTimeout = 5000) {
   const logger = new Logger('silent');
   const options = {
@@ -66,13 +82,7 @@ describe(CapturingBrowser.prototype.screenshotSessionVariants, () => {
         return { didTimeout: false, elapsedMs: 0, pending: [], requestedUrls: [] };
       }),
     };
-    const verification = {
-      activeElement: null,
-      activeElementMatchesBaseline: true,
-      baseDocumentFingerprint: 'baseline',
-      documentFingerprint: 'baseline',
-      scrollPositionMatchesBaseline: true,
-    };
+    const verification = resetVerification();
     const protocol = {
       resetVariant: vi.fn(async () => order.push('reset')),
       verifyReset: vi.fn(async () => {
@@ -121,14 +131,7 @@ describe(CapturingBrowser.prototype.screenshotSessionVariants, () => {
       { name: 'playwright' } as never,
     );
     const session = { storyId: story.id, sessionGeneration: 1, profileHash };
-    const reset = {
-      ...session,
-      activeElement: null,
-      activeElementMatchesBaseline: true,
-      baseDocumentFingerprint: 'baseline',
-      documentFingerprint: 'baseline',
-      scrollPositionMatchesBaseline: true,
-    };
+    const reset = resetVerification(session);
     const evaluate = vi
       .fn()
       .mockResolvedValueOnce(session)
@@ -227,14 +230,7 @@ describe(CapturingBrowser.prototype.screenshotSessionVariants, () => {
       { name: 'playwright' } as never,
     );
     const session = { storyId: story.id, sessionGeneration: 1, profileHash };
-    const validReset = {
-      ...session,
-      activeElement: null,
-      activeElementMatchesBaseline: true,
-      baseDocumentFingerprint: 'baseline',
-      documentFingerprint: 'baseline',
-      scrollPositionMatchesBaseline: true,
-    };
+    const validReset = resetVerification(session);
     const invalidReset = { ...validReset, documentFingerprint: 'mutated' };
     const evaluate = vi
       .fn()
@@ -348,14 +344,7 @@ describe(CapturingBrowser.prototype.screenshotSessionVariants, () => {
     const { browser, logger } = createBrowserFixture();
     const request = { variantKey: { isDefault: false, keys: ['hovered'] } };
     const session = { storyId: story.id, sessionGeneration: 1, profileHash };
-    const validReset = {
-      ...session,
-      activeElement: null,
-      activeElementMatchesBaseline: true,
-      baseDocumentFingerprint: 'baseline',
-      documentFingerprint: 'baseline',
-      scrollPositionMatchesBaseline: true,
-    };
+    const validReset = resetVerification(session);
     const evaluate = vi
       .fn()
       .mockResolvedValueOnce(session)
@@ -415,14 +404,7 @@ describe(CapturingBrowser.prototype.screenshotSessionVariants, () => {
     const { browser, logger } = createBrowserFixture(25);
     const request = { variantKey: { isDefault: false, keys: ['hovered'] } };
     const session = { storyId: story.id, sessionGeneration: 1, profileHash };
-    const validReset = {
-      ...session,
-      activeElement: null,
-      activeElementMatchesBaseline: true,
-      baseDocumentFingerprint: 'baseline',
-      documentFingerprint: 'baseline',
-      scrollPositionMatchesBaseline: true,
-    };
+    const validReset = resetVerification(session);
     const evaluate = vi
       .fn()
       .mockResolvedValueOnce(session)

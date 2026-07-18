@@ -51,9 +51,13 @@ export class ResourceWatcher {
   }
 
   dispose() {
-    this.unsubscribe?.();
+    const unsubscribe = this.unsubscribe;
     this.unsubscribe = undefined;
-    this.clear();
+    try {
+      unsubscribe?.();
+    } finally {
+      this.clear();
+    }
   }
 
   clear() {

@@ -70,15 +70,15 @@ export interface VariantReady extends SessionReady {
 
 export interface ResetVerification extends SessionReady {
   activeElement: string | null;
-  activeElementMatchesBaseline?: boolean;
-  baseActiveElement?: string | null;
-  argsHash?: string;
-  baseArgsHash?: string;
-  baseDocumentFingerprint?: string;
-  globalsHash?: string;
-  baseGlobalsHash?: string;
-  documentFingerprint?: string;
-  scrollPositionMatchesBaseline?: boolean;
+  activeElementMatchesBaseline: boolean;
+  baseActiveElement: string | null;
+  argsHash: string;
+  baseArgsHash: string;
+  baseDocumentFingerprint: string;
+  globalsHash: string;
+  baseGlobalsHash: string;
+  documentFingerprint: string;
+  scrollPositionMatchesBaseline: boolean;
 }
 
 export interface StorySessionPreviewProtocol {

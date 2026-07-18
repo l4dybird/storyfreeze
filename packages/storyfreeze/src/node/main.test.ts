@@ -683,6 +683,59 @@ describe(CapturingBrowser, () => {
     expect(unsubscribe).toHaveBeenCalledTimes(1);
   });
 
+  it('releases a capture result that completes after its deadline', async () => {
+    const options = {
+      captureMaxRetryCount: 0,
+      captureTimeout: 5,
+      delay: 0,
+      disableWaitAssets: false,
+      logger: new Logger('silent'),
+      viewports: ['800x600'],
+    } as MainOptions;
+    const browser = new CapturingBrowser(
+      { url: 'https://example.test' } as ManagedStorybookConnection,
+      options,
+      'managed',
+      0,
+    );
+    const buffer = Buffer.from('late capture');
+    let resolveAttempt!: (result: {
+      buffer: Buffer;
+      succeeded: boolean;
+      variantKeysToPush: never[];
+      defaultVariantSuffix: string;
+    }) => void;
+    const lateAttempt = new Promise<{
+      buffer: Buffer;
+      succeeded: boolean;
+      variantKeysToPush: never[];
+      defaultVariantSuffix: string;
+    }>(resolve => {
+      resolveAttempt = resolve;
+    });
+    vi.spyOn(browser as never, 'screenshotAttempt').mockReturnValue(lateAttempt);
+    vi.spyOn(browser, 'close').mockImplementation(async () => {
+      resolveAttempt({ buffer, succeeded: true, variantKeysToPush: [], defaultVariantSuffix: '' });
+    });
+    const releaseScreenshotBuffer = vi.fn();
+
+    await expect(
+      browser.screenshot(
+        'fixture--default',
+        { id: 'fixture--default', kind: 'Fixture', story: 'Default', version: 'v5' },
+        { isDefault: true, keys: [] },
+        0,
+        options.logger,
+        false,
+        false,
+        { releaseScreenshotBuffer } as never,
+      ),
+    ).rejects.toBeInstanceOf(CaptureAttemptTimeoutError);
+
+    expect(releaseScreenshotBuffer).toHaveBeenCalledTimes(1);
+    expect(releaseScreenshotBuffer).toHaveBeenCalledWith(buffer);
+  });
+
   it('applies the attempt deadline to simple mode and preserves the timeout after the final retry', async () => {
     const { boot, capture, close } = createStalledCapture({
       captureTimeout: 20,

@@ -605,6 +605,14 @@ export class CapturingBrowser extends BaseBrowser {
     const deadline = new CaptureDeadline(this.opt.captureTimeout, requestId, this.opt.signal);
     this.activeDeadline = deadline;
     let attemptContextGeneration: number | undefined;
+    let completedAttempt: ScreenshotResult | undefined;
+    let attemptAbandoned = false;
+    let completedAttemptReleased = false;
+    const releaseAbandonedAttempt = () => {
+      if (!attemptAbandoned || !completedAttempt || completedAttemptReleased) return;
+      completedAttemptReleased = true;
+      releaseCapturedScreenshot(fileSystem, completedAttempt.buffer);
+    };
     const attempt = (async () => {
       await this.recycleContextIfNeeded();
       attemptContextGeneration = this.contextGeneration;
@@ -619,11 +627,17 @@ export class CapturingBrowser extends BaseBrowser {
         deadline,
         plannedCapture,
       );
-    })();
+    })().then(result => {
+      completedAttempt = result;
+      releaseAbandonedAttempt();
+      return result;
+    });
 
     try {
       return await Promise.race([attempt, deadline.interruption]);
     } catch (error) {
+      attemptAbandoned = true;
+      releaseAbandonedAttempt();
       const captureError = error instanceof Error ? error : new Error(String(error));
       const previewTimedOut =
         error instanceof PreviewReadyTimeoutError || error instanceof SimplePreviewReadyTimeoutError;

@@ -472,36 +472,60 @@ function fingerprint(value: unknown): string {
   return (hash >>> 0).toString(16).padStart(8, '0');
 }
 
-function serializeDomNode(node: unknown): unknown {
-  if (!node || typeof node !== 'object') return null;
+function createStreamingFingerprint() {
+  let hash = 2166136261;
+  const write = (value: unknown) => {
+    const source = String(value ?? '');
+    const token = `${source.length}:${source};`;
+    for (let index = 0; index < token.length; index += 1) {
+      hash ^= token.charCodeAt(index);
+      hash = Math.imul(hash, 16777619);
+    }
+  };
+  return { write, digest: () => (hash >>> 0).toString(16).padStart(8, '0') };
+}
+
+function hashDomNode(node: unknown, write: (value: unknown) => void): void {
+  if (!node || typeof node !== 'object') {
+    write('null');
+    return;
+  }
   const record = node as Record<string, any>;
   const nodeType = Number(record.nodeType);
-  if (nodeType === 3) return ['text', String(record.nodeValue ?? '')];
-  if (nodeType === 8) return ['comment', String(record.nodeValue ?? '')];
-
-  const children = Array.from((record.childNodes ?? []) as ArrayLike<unknown>).map(serializeDomNode);
-  if (nodeType !== 1) return ['node', nodeType, children];
+  write(nodeType === 3 ? 'text' : nodeType === 8 ? 'comment' : nodeType === 1 ? 'element' : 'node');
+  write(nodeType);
+  if (nodeType === 3 || nodeType === 8) {
+    write(record.nodeValue);
+    return;
+  }
+  if (nodeType === 1) write(String(record.tagName ?? '').toLowerCase());
   const attributes = Array.from((record.attributes ?? []) as ArrayLike<{ name: string; value: string }>)
     .map(attribute => [attribute.name, attribute.value])
     .sort(([left], [right]) => left.localeCompare(right));
-  const liveState: Record<string, unknown> = {};
-  for (const key of ['value', 'checked', 'selectedIndex', 'selected', 'open'] as const) {
-    if (key in record && typeof record[key] !== 'function') liveState[key] = record[key];
+  write(attributes.length);
+  for (const [name, value] of attributes) {
+    write(name);
+    write(value);
   }
-  return [
-    'element',
-    String(record.tagName ?? '').toLowerCase(),
-    attributes,
-    liveState,
-    children,
-    record.shadowRoot ? serializeDomNode(record.shadowRoot) : null,
-  ];
+  for (const key of ['value', 'checked', 'selectedIndex', 'selected', 'open'] as const) {
+    if (key in record && typeof record[key] !== 'function') {
+      write(key);
+      write(record[key]);
+    }
+  }
+  const children = Array.from((record.childNodes ?? []) as ArrayLike<unknown>);
+  write(children.length);
+  for (const child of children) hashDomNode(child, write);
+  write(record.shadowRoot ? 'shadow' : 'no-shadow');
+  if (record.shadowRoot) hashDomNode(record.shadowRoot, write);
 }
 
 function documentFingerprint(): string | undefined {
   const documentElement = document.documentElement as unknown as Record<string, unknown> | undefined;
   if (documentElement && typeof documentElement.nodeType === 'number') {
-    return fingerprint(serializeDomNode(documentElement));
+    const stream = createStreamingFingerprint();
+    hashDomNode(documentElement, stream.write);
+    return stream.digest();
   }
   const body = document.body as unknown as { innerHTML?: string } | undefined;
   if (typeof body?.innerHTML === 'string') return fingerprint(body.innerHTML);
@@ -680,8 +704,8 @@ export function initializeStorySessionController(
       return { ...baseReady(session), variantId, variantGeneration: session.variantGeneration };
     },
     async resetVariant(variantId): Promise<SessionReady> {
-      const session = requireActive(variantId === '__base__' ? 'ready' : 'applied');
-      if (variantId !== '__base__' && session.activeVariantId !== variantId) {
+      const session = requireActive('applied');
+      if (session.activeVariantId !== variantId) {
         throw new Error(
           `Story session reset expected ${session.activeVariantId ?? 'no active variant'}, received ${variantId}.`,
         );

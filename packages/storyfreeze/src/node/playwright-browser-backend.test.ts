@@ -155,6 +155,7 @@ describe(PlaywrightCapturePage, () => {
     await expect(
       page.screenshot({ fullPage: true, omitBackground: true, captureBeyondViewport: false }),
     ).resolves.toEqual(png);
+    expect(rawPage.bringToFront).not.toHaveBeenCalled();
     expect(rawCdp.send).toHaveBeenCalledWith('Page.captureScreenshot', {
       format: 'png',
       clip: { x: 0, y: 0, width: 641, height: 961, scale: 1 },

@@ -147,9 +147,8 @@ export class StorySessionProtocolClient {
   }
 
   async resetVariant(variantId: string): Promise<SessionReady> {
-    const expectedState = variantId === '__base__' ? 'ready' : 'applied';
-    const current = this.requireState(expectedState);
-    if (variantId !== '__base__' && variantId !== this.activeVariantId) {
+    const current = this.requireState('applied');
+    if (variantId !== this.activeVariantId) {
       this.state = 'poisoned';
       throw new Error(
         `Story session reset expected ${this.activeVariantId ?? 'no active variant'}, received ${variantId}.`,

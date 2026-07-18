@@ -110,6 +110,7 @@ export class CapturingBrowser extends BaseBrowser {
   private contextGeneration = 0;
   private rootScreenshotOptions?: ScreenshotOptions;
   private previewRuntimeMetadata?: PreviewRuntimeMetadata;
+  private previewSettledResourceGeneration?: number;
 
   /**
    *
@@ -153,6 +154,7 @@ export class CapturingBrowser extends BaseBrowser {
     this.contextStartedAt = performance.now();
     this.capturesInContext = 0;
     this.contextGeneration += 1;
+    this.previewSettledResourceGeneration = undefined;
     await this.expose();
     this.resourceWatcher = new ResourceWatcher(this.page).init();
     this.navigator = new StoryNavigator(this.page, new URL(this.connection.url), this.idx);
@@ -179,7 +181,10 @@ export class CapturingBrowser extends BaseBrowser {
     const exposed: Exposed = {
       getBaseScreenshotOptions: () => this.baseScreenshotOptions,
       getCurrentVariantKey: () => this.currentVariantKey,
-      waitBrowserMetricsStable: () => this.waitBrowserMetricsStable('preEmit'),
+      waitBrowserMetricsStable: async () => {
+        await this.waitBrowserMetricsStable('preEmit');
+        this.previewSettledResourceGeneration = this.resourceWatcher?.generation;
+      },
     };
     const diagnosticExposure = captureDiagnosticsEnabled()
       ? { reportCaptureDiagnostic: (event: PreviewCaptureDiagnostic) => this.reportPreviewDiagnostic(event) }
@@ -233,6 +238,7 @@ export class CapturingBrowser extends BaseBrowser {
 
   private async setCurrentStory(story: Story, deadline: CaptureDeadline): Promise<ScreenshotOptions | undefined> {
     this._currentStory = story;
+    this.previewSettledResourceGeneration = undefined;
     this.debug('Set story', story.id);
     await this.measurePhase('navigation', async () => {
       await this.navigator!.navigate(story.id, deadline.navigationTimeout(), this.currentStoryRetryCount);
@@ -383,29 +389,36 @@ export class CapturingBrowser extends BaseBrowser {
 
   private async waitForResources(screenshotOptions: StrictScreenshotOptions, deadline: CaptureDeadline, quietMs = 100) {
     if (!screenshotOptions.waitAssets && !screenshotOptions.waitImages) return;
-    const before = this.resourceWatcher!.getDiagnosticSnapshot();
-    this.debug('Wait for requested resources resolved', this.resourceWatcher!.getRequestedUrls());
+    const diagnosticsEnabled = captureDiagnosticsEnabled();
+    const before = diagnosticsEnabled ? this.resourceWatcher!.getDiagnosticSnapshot() : undefined;
+    if (this.opt.logger.level === 'verbose') {
+      this.debug('Wait for requested resources resolved', this.resourceWatcher!.getRequestedUrls());
+    }
     const result = await this.resourceWatcher!.waitForRequestsComplete({
       quietMs,
       timeoutMs: deadline.remaining(3000),
       signal: deadline.signal,
+      includeDetails: diagnosticsEnabled,
     });
     if (result.didTimeout) {
       this.opt.logger.warn(
         `Resources did not settle within 3000 msec. ${this.opt.logger.color.yellow(JSON.stringify(this.currentStory))}`,
       );
     }
-    emitCaptureDiagnostic({
-      type: 'resource-summary',
-      before,
-      after: this.resourceWatcher!.getDiagnosticSnapshot(),
-      didTimeout: result.didTimeout,
-      elapsedMs: result.elapsedMs,
-      pending: result.pending,
-      quietMs,
-      requestedUrlCount: result.requestedUrls.length,
-      ...this.diagnosticContext(),
-    });
+    if (diagnosticsEnabled) {
+      emitCaptureDiagnostic({
+        type: 'resource-summary',
+        before: before!,
+        after: this.resourceWatcher!.getDiagnosticSnapshot(),
+        didTimeout: result.didTimeout,
+        elapsedMs: result.elapsedMs,
+        pending: result.pending,
+        quietMs,
+        requestedUrlCount: result.requestedUrlCount,
+        ...this.diagnosticContext(),
+      });
+    }
+    return result;
   }
 
   private async waitBrowserMetricsStable(phase: 'preEmit' | 'postEmit', deadline = this.activeDeadline) {
@@ -712,7 +725,7 @@ export class CapturingBrowser extends BaseBrowser {
       this.touched = false;
 
       // Change browser's viewport if needed.
-      const previousViewport = JSON.stringify(this.viewport);
+      const previousProfile = this.viewport ? normalizeEmulationProfile(this.viewport) : undefined;
       const vpChanged = await this.measurePhase('viewport', () => this.setViewport(mergedScreenshotOptions, deadline));
       // Skip to capture if the viewport option is invalid.
       if (!vpChanged) {
@@ -730,10 +743,26 @@ export class CapturingBrowser extends BaseBrowser {
 
       // Wait until browser main thread gets stable.
       await this.measurePhase('resource', () => this.waitForResources(mergedScreenshotOptions, deadline));
-      await this.measurePhase('metrics', () => this.waitBrowserMetricsStable('postEmit', deadline));
+      const currentProfile = this.viewport ? normalizeEmulationProfile(this.viewport) : undefined;
+      const viewportChanged =
+        previousProfile === undefined || currentProfile === undefined
+          ? previousProfile !== currentProfile
+          : !sameEmulationProfile(previousProfile, currentProfile);
+      const postPreviewResourceActivity =
+        this.previewSettledResourceGeneration !== undefined &&
+        this.resourceWatcher!.generation !== this.previewSettledResourceGeneration;
+      const requiresPostMetrics =
+        viewportChanged ||
+        this.touched ||
+        (this.mode === 'managed' &&
+          (postPreviewResourceActivity ||
+            mergedScreenshotOptions.delay > 0 ||
+            Boolean(this.previewRuntimeMetadata?.hasRuntimeWaitFor)));
+      if (requiresPostMetrics) {
+        await this.measurePhase('metrics', () => this.waitBrowserMetricsStable('postEmit', deadline));
+      }
 
-      const viewportChanged = previousViewport !== JSON.stringify(this.viewport);
-      if (shouldWaitForVisualCommit(this.mode, viewportChanged, this.touched)) {
+      if (shouldWaitForVisualCommit(this.mode, viewportChanged || postPreviewResourceActivity, this.touched)) {
         await this.measurePhase('visual-commit', async () => {
           const visualCommitDiagnostic = await this.page.waitForVisualCommit(
             { paintFallbackMs: 250, timeoutMs: deadline.remaining(3000) },
@@ -797,35 +826,13 @@ export class CapturingBrowser extends BaseBrowser {
     return variantKey.keys.length ? `${base}?keys=${encodeURIComponent(variantKey.keys.join(','))}` : base;
   }
 
-  private async resetStorySessionVariant(
-    protocol: StorySessionProtocolClient,
-    variantId: string,
-    baseProfile: ReturnType<typeof normalizeEmulationProfile>,
-    deadline: CaptureDeadline,
-    requiresSettling: boolean,
-  ) {
-    if (this.touched) {
-      await this.page.resetPointer();
-      this.touched = false;
-    }
-    const currentProfile = this.viewport ? normalizeEmulationProfile(this.viewport) : undefined;
-    if (!currentProfile || !sameEmulationProfile(currentProfile, baseProfile)) {
-      const baseViewport = toViewport(baseProfile);
-      await this.page.setViewport(baseViewport);
-      this.viewport = baseViewport;
-      await deadline.wait(this.opt.viewportDelay);
-    }
-    await protocol.resetVariant(variantId);
-    // Flush reset-triggered animation-frame work before declaring the network quiet.
-    // A second paint commits response-driven DOM changes before fingerprinting.
-    await this.page.waitForVisualCommit({ paintFallbackMs: 250, timeoutMs: deadline.remaining(3000) }, deadline.signal);
-    await this.resourceWatcher!.waitForRequestsComplete({
-      quietMs: requiresSettling ? 50 : 0,
-      timeoutMs: deadline.remaining(3000),
-      signal: deadline.signal,
-    });
-    await this.page.waitForVisualCommit({ paintFallbackMs: 250, timeoutMs: deadline.remaining(3000) }, deadline.signal);
-    const pendingRequestCount = this.resourceWatcher!.getDiagnosticSnapshot().pending.length;
+  private async waitForRenderTick(deadline: CaptureDeadline) {
+    const tick = this.page.waitForRenderTick();
+    await Promise.race([tick, deadline.interruption]);
+  }
+
+  private async verifyStorySessionState(protocol: StorySessionProtocolClient, variantId: string) {
+    const pendingRequestCount = this.resourceWatcher!.pendingCount;
     const verification = await protocol.verifyReset();
     if (
       !verification.activeElementMatchesBaseline ||
@@ -842,6 +849,51 @@ export class CapturingBrowser extends BaseBrowser {
         })}.`,
       );
     }
+  }
+
+  private async resetStorySessionVariant(
+    protocol: StorySessionProtocolClient,
+    variantId: string,
+    baseProfile: ReturnType<typeof normalizeEmulationProfile>,
+    deadline: CaptureDeadline,
+    resetMayMutate: boolean,
+  ) {
+    if (this.touched) {
+      await this.page.resetPointer();
+      this.touched = false;
+    }
+    const currentProfile = this.viewport ? normalizeEmulationProfile(this.viewport) : undefined;
+    if (!currentProfile || !sameEmulationProfile(currentProfile, baseProfile)) {
+      const baseViewport = toViewport(baseProfile);
+      await this.page.setViewport(baseViewport);
+      this.viewport = baseViewport;
+      await deadline.wait(this.opt.viewportDelay);
+    }
+    await protocol.resetVariant(variantId);
+    let converged = false;
+    for (let pass = 0; pass < 3; pass += 1) {
+      await this.waitForRenderTick(deadline);
+      const result = await this.resourceWatcher!.waitForRequestsComplete({
+        quietMs: resetMayMutate ? 50 : 0,
+        timeoutMs: deadline.remaining(3000),
+        signal: deadline.signal,
+        includeDetails: false,
+      });
+      if (result.didTimeout) throw new Error(`Story session reset resources timed out for ${variantId}.`);
+      const settledGeneration = this.resourceWatcher!.generation;
+      await this.waitForRenderTick(deadline);
+      if (this.resourceWatcher!.pendingCount === 0 && this.resourceWatcher!.generation === settledGeneration) {
+        converged = true;
+        break;
+      }
+    }
+    if (!converged) throw new Error(`Story session reset did not converge for ${variantId}.`);
+    const visualCommit = await this.page.waitForVisualCommit(
+      { paintFallbackMs: 250, timeoutMs: deadline.remaining(3000) },
+      deadline.signal,
+    );
+    if (visualCommit.didTimeout) throw new Error(`Story session reset paint timed out for ${variantId}.`);
+    await this.verifyStorySessionState(protocol, variantId);
   }
 
   private async captureStorySessionVariant(
@@ -892,6 +944,7 @@ export class CapturingBrowser extends BaseBrowser {
       const targetProfile = normalizeEmulationProfile(
         resolveViewport(options.viewport, this.getDeviceDescriptors()) ?? toViewport(baseProfile),
       );
+      let viewportChanged = false;
       if (!sameEmulationProfile(baseProfile, targetProfile)) {
         if (
           targetProfile.deviceScaleFactor !== baseProfile.deviceScaleFactor ||
@@ -905,6 +958,7 @@ export class CapturingBrowser extends BaseBrowser {
         await this.measurePhase('viewport', async () => {
           await this.page.setViewport(viewport);
           this.viewport = viewport;
+          viewportChanged = true;
           await deadline.wait(this.opt.viewportDelay);
         });
       }
@@ -917,21 +971,13 @@ export class CapturingBrowser extends BaseBrowser {
         await this.setClick(options);
         await this.waitIfTouched(deadline);
       });
-      const requiresSettling = Boolean(
-        options.hover || options.focus || options.click || this.previewRuntimeMetadata?.hasCustomReset,
-      );
-      if (requiresSettling) {
+      const captureMayMutate = Boolean(viewportChanged || options.delay > 0 || this.touched);
+      if (captureMayMutate) {
         await this.measurePhase('resource', () => this.waitForResources(options, deadline));
         await this.measurePhase('metrics', () => this.waitBrowserMetricsStable('postEmit', deadline));
         await this.measurePhase('visual-commit', () =>
           this.page.waitForVisualCommit({ paintFallbackMs: 250, timeoutMs: deadline.remaining(3000) }, deadline.signal),
         );
-      } else {
-        // Passive screenshot mutations need a committed paint and any requests observed by then, but no quiet delay.
-        await this.measurePhase('visual-commit', () =>
-          this.page.waitForVisualCommit({ paintFallbackMs: 250, timeoutMs: deadline.remaining(3000) }, deadline.signal),
-        );
-        await this.measurePhase('resource', () => this.waitForResources(options, deadline, 0));
       }
       const buffer = await this.measurePhase('screenshot', () =>
         this.page.screenshot({
@@ -942,7 +988,13 @@ export class CapturingBrowser extends BaseBrowser {
         }),
       );
       await this.measurePhase('reset', () =>
-        this.resetStorySessionVariant(protocol, variantId, baseProfile, deadline, requiresSettling),
+        this.resetStorySessionVariant(
+          protocol,
+          variantId,
+          baseProfile,
+          deadline,
+          captureMayMutate || Boolean(this.previewRuntimeMetadata?.hasCustomReset),
+        ),
       );
       completed = true;
       return buffer;
@@ -1126,7 +1178,7 @@ export class CapturingBrowser extends BaseBrowser {
       this.activeDeadline = baselineDeadline;
       const baselineAttempt = (async () => {
         await protocol.openSession({ sessionId, storyId: story.id, profile: baseProfile });
-        await this.resetStorySessionVariant(protocol, '__base__', baseProfile, baselineDeadline, false);
+        await this.verifyStorySessionState(protocol, 'baseline');
       })();
       try {
         await Promise.race([baselineAttempt, baselineDeadline.interruption]);

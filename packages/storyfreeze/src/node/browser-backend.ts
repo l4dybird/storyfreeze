@@ -92,6 +92,7 @@ export interface CapturePage {
   stopTrace(): Promise<void>;
   subscribeConsole(listener: (message: BrowserConsoleMessage) => void): () => void;
   subscribeRequests(listeners: RequestListeners): () => void;
+  waitForRenderTick(): Promise<void>;
   waitForVisualCommit(options: VisualCommitOptions, signal?: AbortSignal): Promise<VisualCommitResult>;
 }
 

@@ -76,7 +76,8 @@ describe(finalizeScreenshot, () => {
     triggerScreenshot({ fullPage: true, variants: { nested: { waitFor: async () => {} } } }, { id: 'button--primary' });
     await finalizeScreenshot({ id: 'button--primary', abortSignal: new AbortController().signal });
 
-    expect((win as Record<string, any>)[STORYFREEZE_PREVIEW_STATE_GLOBAL]).toMatchObject({
+    const state = (win as Record<string, any>)[STORYFREEZE_PREVIEW_STATE_GLOBAL];
+    expect(state).toMatchObject({
       status: 'ready',
       options: { fullPage: true, variants: { nested: {} } },
       runtime: {
@@ -85,6 +86,7 @@ describe(finalizeScreenshot, () => {
         runtimeWaitForVariants: ['nested'],
       },
     });
+    expect(state.rootOptions).toBeUndefined();
   });
 
   it('marks named runtime wait hooks as unsafe for same-document capture', async () => {

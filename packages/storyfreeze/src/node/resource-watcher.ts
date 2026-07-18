@@ -18,9 +18,17 @@ export class ResourceWatcher {
 
   constructor(private page: Pick<CapturePage, 'subscribeRequests'>) {}
 
+  get pendingCount() {
+    return this.inFlight.size;
+  }
+
+  get generation() {
+    return this.activityGeneration;
+  }
+
   private onRequest = (request: BrowserRequest) => {
     const url = request.url;
-    if (request.method !== 'GET' || ignoredResourceTypes.has(request.resourceType) || !url.startsWith('http')) {
+    if (ignoredResourceTypes.has(request.resourceType) || !url.startsWith('http')) {
       return;
     }
 
@@ -37,9 +45,8 @@ export class ResourceWatcher {
   private notifyActivity() {
     this.activityGeneration += 1;
     this.lastActivityAt = Date.now();
-    const waiters = [...this.activityWaiters];
+    for (const resolve of this.activityWaiters) resolve();
     this.activityWaiters.clear();
-    waiters.forEach(resolve => resolve());
   }
 
   init() {
@@ -95,10 +102,14 @@ export class ResourceWatcher {
     }
   }
 
-  async waitForRequestsComplete(options: { quietMs?: number; timeoutMs?: number; signal?: AbortSignal } = {}): Promise<{
+  async waitForRequestsComplete(
+    options: { quietMs?: number; timeoutMs?: number; signal?: AbortSignal; includeDetails?: boolean } = {},
+  ): Promise<{
     didTimeout: boolean;
     elapsedMs: number;
+    pendingCount: number;
     pending: ReturnType<ResourceWatcher['getDiagnosticSnapshot']>['pending'];
+    requestedUrlCount: number;
     requestedUrls: string[];
   }> {
     const quietMs = options.quietMs ?? 0;
@@ -108,12 +119,17 @@ export class ResourceWatcher {
     let quietStartedAt: number | undefined;
     let quietGeneration = -1;
 
-    const result = (didTimeout: boolean) => ({
-      didTimeout,
-      elapsedMs: Date.now() - startedAt,
-      pending: this.getDiagnosticSnapshot().pending,
-      requestedUrls: this.getRequestedUrls(),
-    });
+    const result = (didTimeout: boolean) => {
+      const includeDetails = options.includeDetails ?? true;
+      return {
+        didTimeout,
+        elapsedMs: Date.now() - startedAt,
+        pendingCount: this.inFlight.size,
+        pending: includeDetails ? this.getDiagnosticSnapshot().pending : [],
+        requestedUrlCount: this.requestedAssetUrls.size,
+        requestedUrls: includeDetails ? this.getRequestedUrls() : [],
+      };
+    };
 
     while (true) {
       const now = Date.now();

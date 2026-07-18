@@ -159,6 +159,16 @@ export class PlaywrightCapturePage implements CapturePage {
     await this.rawPage.mouse.move(0, 0);
   }
 
+  async waitForRenderTick() {
+    await this.rawPage.evaluate(
+      () =>
+        new Promise<void>(resolve => {
+          if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => resolve());
+          else setTimeout(resolve, 0);
+        }),
+    );
+  }
+
   waitForVisualCommit(options: VisualCommitOptions, signal?: AbortSignal) {
     return waitForVisualCommitWithAbort(this.rawPage.evaluate(waitForVisualCommitInPage, options), signal);
   }
@@ -177,7 +187,6 @@ export class PlaywrightCapturePage implements CapturePage {
       if (options.clip.height === 0) throw new Error('Expected options.clip.height not to be 0.');
     }
 
-    await this.rawPage.bringToFront();
     const captureBeyondViewport =
       typeof options.captureBeyondViewport === 'boolean' ? options.captureBeyondViewport : true;
     let clip = options.clip

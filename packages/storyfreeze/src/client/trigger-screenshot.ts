@@ -1,9 +1,4 @@
-import type {
-  ScreenshotOptionFragmentsForVariant,
-  ScreenshotOptions,
-  Exposed,
-  PreviewCaptureDiagnostic,
-} from '../shared/types.js';
+import type { ScreenshotOptions, Exposed, PreviewCaptureDiagnostic } from '../shared/types.js';
 import {
   mergeScreenshotOptions,
   pickupWithVariantKey,
@@ -96,13 +91,19 @@ function serializeError(error: unknown): SerializedError {
 }
 
 function normalizeOptions(options: ScreenshotOptions): NormalizedScreenshotOptions {
-  const serializable = JSON.parse(JSON.stringify(options)) as NormalizedScreenshotOptions;
-  delete (serializable as ScreenshotOptions).waitFor;
-  delete (serializable as ScreenshotOptions).reset;
-  for (const variant of Object.values(serializable.variants ?? {})) {
-    delete (variant as ScreenshotOptionFragmentsForVariant).waitFor;
+  const normalized = { ...options };
+  delete normalized.waitFor;
+  delete normalized.reset;
+  if (options.variants) {
+    normalized.variants = Object.fromEntries(
+      Object.entries(options.variants).map(([key, variant]) => {
+        const normalizedVariant = { ...variant };
+        delete normalizedVariant.waitFor;
+        return [key, normalizedVariant];
+      }),
+    );
   }
-  return serializable;
+  return normalized as NormalizedScreenshotOptions;
 }
 
 /** Store screenshot parameters during Storybook's render phase. */
@@ -177,11 +178,13 @@ export async function finalizeScreenshot(context: { id?: string; abortSignal?: A
       .map(([key]) => key)
       .sort();
     snapshotStorySessionRuntime(context.id, win);
+    const normalizedOptions = normalizeOptions(screenshotOptions);
+    const normalizedRootOptions = screenshotOptions === mergedOptions ? undefined : normalizeOptions(mergedOptions);
     setState(win, {
       ...baseState,
       status: 'ready',
-      options: normalizeOptions(screenshotOptions),
-      rootOptions: normalizeOptions(mergedOptions),
+      options: normalizedOptions,
+      ...(normalizedRootOptions ? { rootOptions: normalizedRootOptions } : {}),
       runtime: {
         hasCustomReset: typeof (mergedOptions as ScreenshotOptions).reset === 'function',
         hasRuntimeWaitFor: Boolean(screenshotOptions.waitFor),

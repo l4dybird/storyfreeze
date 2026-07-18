@@ -208,6 +208,52 @@ describe(initializeStorySessionController, () => {
     expect(verification.argsHash).toBe(verification.baseArgsHash);
   });
 
+  it('detects mutable state retained by function-valued args after reset', async () => {
+    const body = { innerHTML: '<button>Ready</button>' };
+    Object.defineProperty(globalThis, 'document', {
+      configurable: true,
+      value: { activeElement: body, body, documentElement: {} },
+    });
+    const target = {} as any;
+    const handler = Object.assign(() => {}, { calls: [] as string[] });
+    const args = { handler };
+    initializeStorySessionController(target);
+    registerStorySessionRuntime({}, { id: 'functions--story', args }, target);
+    snapshotStorySessionRuntime('functions--story', target);
+    const protocol = target[STORYFREEZE_STORY_SESSION_GLOBAL]!;
+    await protocol.openSession({ sessionId: 'functions', storyId: 'functions--story', profileHash: 'desktop' });
+    await protocol.applyVariant('clicked');
+
+    handler.calls.push('clicked');
+    await protocol.resetVariant('clicked');
+
+    const verification = await protocol.verifyReset();
+    expect(verification.argsHash).not.toBe(verification.baseArgsHash);
+    expect(handler.calls).toEqual(['clicked']);
+  });
+
+  it('detects call history retained by Storybook-style mock args', async () => {
+    const body = { innerHTML: '<button>Ready</button>' };
+    Object.defineProperty(globalThis, 'document', {
+      configurable: true,
+      value: { activeElement: body, body, documentElement: {} },
+    });
+    const target = {} as any;
+    const onClick = vi.fn();
+    initializeStorySessionController(target);
+    registerStorySessionRuntime({}, { id: 'mock--story', args: { onClick } }, target);
+    snapshotStorySessionRuntime('mock--story', target);
+    const protocol = target[STORYFREEZE_STORY_SESSION_GLOBAL]!;
+    await protocol.openSession({ sessionId: 'mock', storyId: 'mock--story', profileHash: 'desktop' });
+    await protocol.applyVariant('clicked');
+
+    onClick('clicked');
+    await protocol.resetVariant('clicked');
+
+    const verification = await protocol.verifyReset();
+    expect(verification.argsHash).not.toBe(verification.baseArgsHash);
+  });
+
   it('fails closed for class instances with private state without corrupting strict capture args', async () => {
     class Model {
       #value: string;

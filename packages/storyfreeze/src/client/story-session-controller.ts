@@ -53,6 +53,7 @@ type StorySessionWindow = typeof window & {
 
 const functionIds = new WeakMap<Function, number>();
 let nextFunctionId = 1;
+const ignoredFunctionStateKeys = new Set(['arguments', 'caller', 'length', 'name', 'prototype']);
 
 function functionIdentity(value: Function) {
   let id = functionIds.get(value);
@@ -61,6 +62,36 @@ function functionIdentity(value: Function) {
     functionIds.set(value, id);
   }
   return id;
+}
+
+function functionStateKey(key: PropertyKey) {
+  if (typeof key === 'string') return `string:${key}`;
+  if (typeof key === 'symbol') return `symbol:${Symbol.keyFor(key) ?? key.description ?? ''}`;
+  return `number:${key}`;
+}
+
+function functionStateEntries(value: Function, canonicalizeChild: (child: unknown) => unknown) {
+  const isMockFunction = Object.getOwnPropertyDescriptor(value, '_isMockFunction')?.value === true;
+  return Reflect.ownKeys(value)
+    .filter(key => typeof key !== 'string' || !ignoredFunctionStateKeys.has(key))
+    .map(key => {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      if (!descriptor) return undefined;
+      if ('value' in descriptor) {
+        return [functionStateKey(key), canonicalizeChild(descriptor.value)] as const;
+      }
+      if (isMockFunction && key === 'mock' && descriptor.get) {
+        try {
+          return [functionStateKey(key), canonicalizeChild(descriptor.get.call(value))] as const;
+        } catch (error) {
+          const reason = error instanceof Error ? error.message : String(error);
+          throw new Error(`Story session cannot inspect mock function state: ${reason}`);
+        }
+      }
+      throw new Error(`Story session cannot safely fingerprint function accessor state at ${String(key)}.`);
+    })
+    .filter((entry): entry is readonly [string, unknown] => entry !== undefined)
+    .sort(([left], [right]) => left.localeCompare(right));
 }
 
 function cloneValue(value: unknown, seen = new Map<object, unknown>()): unknown {
@@ -136,17 +167,23 @@ function restoreState(target: Record<string, unknown> | undefined, source: Recor
 function canonicalizeForSort(value: unknown, ancestors = new Set<object>()): unknown {
   if (value === undefined) return ['undefined'];
   if (typeof value === 'bigint') return ['bigint', String(value)];
-  if (typeof value === 'function') return ['function', functionIdentity(value)];
   if (typeof value === 'symbol') return ['symbol', String(value.description ?? '')];
   if (typeof value === 'number') {
     if (Number.isNaN(value)) return ['number', 'NaN'];
     if (!Number.isFinite(value)) return ['number', String(value)];
     if (Object.is(value, -0)) return ['number', '-0'];
   }
-  if (typeof value !== 'object' || value === null) return value;
+  if ((typeof value !== 'object' && typeof value !== 'function') || value === null) return value;
   if (ancestors.has(value)) return ['cycle'];
   const descendants = new Set(ancestors);
   descendants.add(value);
+  if (typeof value === 'function') {
+    return [
+      'function',
+      functionIdentity(value),
+      functionStateEntries(value, child => canonicalizeForSort(child, descendants)),
+    ];
+  }
   if (Array.isArray(value)) return ['array', value.map(child => canonicalizeForSort(child, descendants))];
   if (value instanceof Date) {
     return ['date', Number.isNaN(value.getTime()) ? 'invalid' : value.toISOString()];
@@ -170,7 +207,7 @@ function canonicalizeForSort(value: unknown, ancestors = new Set<object>()): unk
     'object',
     constructorName,
     Object.entries(value as Record<string, unknown>)
-      .filter(([, child]) => typeof child !== 'function' && typeof child !== 'symbol')
+      .filter(([, child]) => typeof child !== 'symbol')
       .sort(([left], [right]) => left.localeCompare(right))
       .map(([key, child]) => [key, canonicalizeForSort(child, descendants)]),
   ];
@@ -183,18 +220,20 @@ function canonicalSortKey(value: unknown) {
 function canonicalize(value: unknown, seen = new Map<object, number>()): unknown {
   if (value === undefined) return ['undefined'];
   if (typeof value === 'bigint') return ['bigint', String(value)];
-  if (typeof value === 'function') return ['function', functionIdentity(value)];
   if (typeof value === 'symbol') return ['symbol', String(value.description ?? '')];
   if (typeof value === 'number') {
     if (Number.isNaN(value)) return ['number', 'NaN'];
     if (!Number.isFinite(value)) return ['number', String(value)];
     if (Object.is(value, -0)) return ['number', '-0'];
   }
-  if (typeof value !== 'object' || value === null) return value;
+  if ((typeof value !== 'object' && typeof value !== 'function') || value === null) return value;
   const existing = seen.get(value);
   if (existing !== undefined) return ['reference', existing];
   const id = seen.size;
   seen.set(value, id);
+  if (typeof value === 'function') {
+    return ['function', id, functionIdentity(value), functionStateEntries(value, child => canonicalize(child, seen))];
+  }
   if (Array.isArray(value)) return ['array', id, value.map(child => canonicalize(child, seen))];
   if (value instanceof Date) {
     return ['date', id, Number.isNaN(value.getTime()) ? 'invalid' : value.toISOString()];
@@ -216,7 +255,7 @@ function canonicalize(value: unknown, seen = new Map<object, number>()): unknown
     id,
     constructorName,
     Object.entries(value as Record<string, unknown>)
-      .filter(([, child]) => typeof child !== 'function' && typeof child !== 'symbol')
+      .filter(([, child]) => typeof child !== 'symbol')
       .sort(([left], [right]) => left.localeCompare(right))
       .map(([key, child]) => [key, canonicalize(child, seen)]),
   ];

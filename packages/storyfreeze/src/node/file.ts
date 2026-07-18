@@ -109,8 +109,8 @@ export class FileSystem {
         await fs.writeFile(temporaryPath, buffer);
         await fs.rename(temporaryPath, filePath);
       } catch (error) {
-        await fs.rm(temporaryPath, { force: true });
         this.closeWriter(error);
+        await fs.rm(temporaryPath, { force: true }).catch(() => undefined);
         throw error;
       } finally {
         this.releaseWrite(buffer.byteLength);

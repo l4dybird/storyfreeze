@@ -1,5 +1,7 @@
 import { CaptureAttemptTimeoutError } from './errors.js';
 
+const maximumTimerDelayMs = 2_147_483_647;
+
 function abortReason(signal: AbortSignal) {
   return signal.reason instanceof Error ? signal.reason : new Error('StoryFreeze was interrupted.');
 }
@@ -15,7 +17,7 @@ export class CaptureDeadline {
   readonly timeoutError: CaptureAttemptTimeoutError;
 
   constructor(timeoutMs: number, requestId: string, parentSignal?: AbortSignal) {
-    const effectiveTimeout = Number.isFinite(timeoutMs) ? Math.max(0, timeoutMs) : 5000;
+    const effectiveTimeout = Number.isFinite(timeoutMs) ? Math.min(maximumTimerDelayMs, Math.max(0, timeoutMs)) : 5000;
     this.expiresAt = Date.now() + effectiveTimeout;
     this.timeoutError = new CaptureAttemptTimeoutError(effectiveTimeout, requestId);
     this.parentSignal = parentSignal;
@@ -86,7 +88,7 @@ export class CaptureDeadline {
         action();
       };
       const onAbort = () => finish(() => reject(abortReason(this.signal)));
-      const timer = setTimeout(() => finish(resolve), milliseconds);
+      const timer = setTimeout(() => finish(resolve), Math.min(maximumTimerDelayMs, milliseconds));
       cleanup.onAbort = onAbort;
       cleanup.timer = timer;
       this.signal.addEventListener('abort', onAbort, { once: true });

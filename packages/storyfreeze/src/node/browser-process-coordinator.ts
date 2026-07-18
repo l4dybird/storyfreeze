@@ -26,6 +26,7 @@ type BrowserGeneration = {
 };
 
 const closedMessage = 'The browser process coordinator is closed.';
+const staleSessionCloseTimeoutMs = 1_000;
 
 /**
  * Owns a single shared browser process and creates isolated sessions within it.
@@ -34,6 +35,7 @@ const closedMessage = 'The browser process coordinator is closed.';
  */
 export class BrowserProcessCoordinator implements BrowserSessionSource {
   private readonly instanceClosures = new WeakMap<BrowserInstance, Promise<void>>();
+  private readonly closeController = new AbortController();
   private closed = false;
   private closePromise?: Promise<void>;
   private current?: BrowserGeneration;
@@ -50,9 +52,19 @@ export class BrowserProcessCoordinator implements BrowserSessionSource {
     while (true) {
       const browser = await this.ensureHealthyInstance();
       let session: BrowserSession;
+      const opening = Promise.resolve().then(() => browser.instance.newSession(options));
       try {
-        session = await browser.instance.newSession(options);
+        const result = await raceAgainstTimeout(opening, Number.POSITIVE_INFINITY, this.closeController.signal);
+        if (result.timedOut) throw new Error('Browser session opening timed out unexpectedly.');
+        session = result.value;
       } catch (error) {
+        if (this.closed) {
+          void opening.then(
+            lateSession => this.closeStaleSession(lateSession),
+            () => undefined,
+          );
+          throw new Error(closedMessage);
+        }
         if (!this.closed && (this.current !== browser || !browser.instance.isHealthy())) {
           await this.replaceInstance(browser.generation);
           continue;
@@ -68,7 +80,7 @@ export class BrowserProcessCoordinator implements BrowserSessionSource {
         };
       }
 
-      await session.close().catch(() => {});
+      await this.closeStaleSession(session);
       if (this.closed) throw new Error(closedMessage);
       await this.replaceInstance(browser.generation);
     }
@@ -81,6 +93,7 @@ export class BrowserProcessCoordinator implements BrowserSessionSource {
   close() {
     if (this.closePromise) return this.closePromise;
     this.closed = true;
+    this.closeController.abort(new Error(closedMessage));
     this.closePromise = this.closeCurrentInstance();
     return this.closePromise;
   }
@@ -107,6 +120,13 @@ export class BrowserProcessCoordinator implements BrowserSessionSource {
       this.instanceClosures.set(instance, closing);
     }
     return closing;
+  }
+
+  private async closeStaleSession(session: BrowserSession) {
+    await raceAgainstTimeout(
+      Promise.resolve().then(() => session.close()),
+      staleSessionCloseTimeoutMs,
+    ).catch(() => {});
   }
 
   private async ensureHealthyInstance(): Promise<BrowserGeneration> {
@@ -144,11 +164,28 @@ export class BrowserProcessCoordinator implements BrowserSessionSource {
     if (stale) await this.closeInstance(stale.instance).catch(() => {});
     if (this.closed) throw new Error(closedMessage);
 
-    const instance = await this.backend.launch(
-      this.pinnedExecutablePath
-        ? { ...this.runtimeOptions, chromiumPath: this.pinnedExecutablePath }
-        : this.runtimeOptions,
+    const launching = Promise.resolve().then(() =>
+      this.backend.launch(
+        this.pinnedExecutablePath
+          ? { ...this.runtimeOptions, chromiumPath: this.pinnedExecutablePath }
+          : this.runtimeOptions,
+      ),
     );
+    let instance: BrowserInstance;
+    try {
+      const result = await raceAgainstTimeout(launching, Number.POSITIVE_INFINITY, this.closeController.signal);
+      if (result.timedOut) throw new Error('Browser launch timed out unexpectedly.');
+      instance = result.value;
+    } catch (error) {
+      if (this.closed) {
+        void launching.then(
+          lateInstance => this.closeInstance(lateInstance).catch(() => {}),
+          () => undefined,
+        );
+        throw new Error(closedMessage);
+      }
+      throw error;
+    }
     if (this.closed) {
       await this.closeInstance(instance).catch(() => {});
       throw new Error(closedMessage);

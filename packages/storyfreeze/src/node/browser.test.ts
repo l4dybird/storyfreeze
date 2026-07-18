@@ -213,7 +213,7 @@ describe(BaseBrowser, () => {
     await browser.close();
   });
 
-  it('does not wait for a shared session that opens after close supersedes its boot', async () => {
+  it('returns from close without initializing a shared session that opens afterward', async () => {
     const session = {
       close: vi.fn(async () => {}),
       isHealthy: vi.fn(() => true),
@@ -230,7 +230,12 @@ describe(BaseBrowser, () => {
           }),
       ),
     } satisfies BrowserSessionSource;
-    const browser = new BaseBrowser({}, new TestBackend(), {}, source);
+    class ClosingBrowser extends BaseBrowser {
+      protected override async onBooted() {
+        throw new Error('A superseded session must not be initialized.');
+      }
+    }
+    const browser = new ClosingBrowser({}, new TestBackend(), {}, source);
 
     const booting = browser.boot();
     await vi.waitFor(() => expect(source.openSession).toHaveBeenCalledOnce());

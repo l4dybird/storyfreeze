@@ -3,6 +3,8 @@ import {
   mergeScreenshotOptions,
   pickupWithVariantKey,
   expandViewportsOption,
+  extractVariantKeys,
+  variantKeyIdentifier,
 } from '../shared/screenshot-options-helper.js';
 import {
   STORYFREEZE_PREVIEW_STATE_GLOBAL,
@@ -17,6 +19,7 @@ import { applyViewportFromGlobals, type StoryContextLike } from './resolve-viewp
 import {
   initializeStorySessionController,
   registerStorySessionRuntime,
+  setStorySessionReset,
   snapshotStorySessionRuntime,
 } from './story-session-controller.js';
 
@@ -58,8 +61,20 @@ export function initializePreviewState() {
   setState(win, { ...createPreviewStateBase(identity.storyId, identity.requestId), status: 'booting' });
 }
 
-function waitForDelayTime(time: number = 0) {
-  return new Promise(res => setTimeout(res, time));
+function waitForDelayTime(time = 0, signal?: AbortSignal) {
+  if (time <= 0 || signal?.aborted) return Promise.resolve();
+  const delay = Math.min(2_147_483_647, time);
+  return new Promise<void>(resolve => {
+    const state: { timer?: ReturnType<typeof setTimeout> } = {};
+    const finish = () => {
+      if (state.timer) clearTimeout(state.timer);
+      signal?.removeEventListener('abort', finish);
+      resolve();
+    };
+    signal?.addEventListener('abort', finish, { once: true });
+    state.timer = setTimeout(finish, delay);
+    if (signal?.aborted) finish();
+  });
 }
 
 function waitUserFunction(waitFor: undefined | null | string | (() => Promise<any>)) {
@@ -152,7 +167,7 @@ export async function finalizeScreenshot(context: { id?: string; abortSignal?: A
     const screenshotOptions = pickupWithVariantKey(mergedOptions, variantKey);
 
     if (!screenshotOptions.skip) {
-      await waitForDelayTime(screenshotOptions.delay);
+      await waitForDelayTime(screenshotOptions.delay, context.abortSignal);
       if (context.abortSignal?.aborted) return;
       await waitUserFunction(screenshotOptions.waitFor);
       if (context.abortSignal?.aborted) return;
@@ -173,10 +188,17 @@ export async function finalizeScreenshot(context: { id?: string; abortSignal?: A
     }
 
     if (context.abortSignal?.aborted) return;
-    const runtimeWaitForVariants = Object.entries(mergedOptions.variants ?? {})
-      .filter(([, variant]) => Boolean(variant.waitFor))
-      .map(([key]) => key)
-      .sort();
+    const [invalidVariantGraph, variantKeys] = extractVariantKeys(mergedOptions);
+    const runtimeWaitForVariants = invalidVariantGraph
+      ? []
+      : [
+          ...new Set(
+            variantKeys
+              .filter(key => Boolean(pickupWithVariantKey(mergedOptions, key).waitFor))
+              .map(key => variantKeyIdentifier(key.keys)),
+          ),
+        ].sort();
+    setStorySessionReset(context.id, (mergedOptions as ScreenshotOptions).reset, win);
     snapshotStorySessionRuntime(context.id, win);
     const normalizedOptions = normalizeOptions(screenshotOptions);
     const normalizedRootOptions = screenshotOptions === mergedOptions ? undefined : normalizeOptions(mergedOptions);

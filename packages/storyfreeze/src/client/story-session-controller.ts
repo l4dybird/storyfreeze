@@ -507,7 +507,17 @@ function hashDomNode(node: unknown, write: (value: unknown) => void): void {
     write(name);
     write(value);
   }
-  for (const key of ['value', 'checked', 'selectedIndex', 'selected', 'open'] as const) {
+  for (const key of [
+    'value',
+    'checked',
+    'indeterminate',
+    'selectedIndex',
+    'selected',
+    'selectionStart',
+    'selectionEnd',
+    'selectionDirection',
+    'open',
+  ] as const) {
     if (key in record && typeof record[key] !== 'function') {
       write(key);
       write(record[key]);
@@ -535,7 +545,15 @@ function documentFingerprint(): string | undefined {
 function captureScrollSnapshot(): ScrollSnapshot {
   const elements = new Set<Element>();
   if (document.scrollingElement) elements.add(document.scrollingElement);
-  for (const element of Array.from(document.querySelectorAll?.('*') ?? [])) {
+  const candidates = new Set<Element>();
+  const visitElements = (root: Pick<Document | ShadowRoot, 'querySelectorAll'>) => {
+    for (const element of Array.from(root.querySelectorAll?.('*') ?? [])) {
+      candidates.add(element);
+      if (element.shadowRoot) visitElements(element.shadowRoot);
+    }
+  };
+  visitElements(document);
+  for (const element of candidates) {
     if (
       element.scrollLeft !== 0 ||
       element.scrollTop !== 0 ||
@@ -576,7 +594,8 @@ function scrollSnapshotMatches(snapshot: ScrollSnapshot | undefined) {
 }
 
 function currentActiveElement(): Element | null {
-  const active = document.activeElement;
+  let active = document.activeElement;
+  while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
   if (!active || active === document.body || active === document.documentElement) return null;
   return active as Element;
 }
@@ -640,6 +659,16 @@ export function registerStorySessionRuntime(
     ...(context.args ? { args: context.args } : {}),
     ...(context.globals ? { globals: context.globals } : {}),
   };
+}
+
+/** Replaces the reset hook after all screenshot-option fragments have been merged. */
+export function setStorySessionReset(
+  storyId: string,
+  reset: ResetHook | undefined,
+  target: StorySessionWindow | undefined = typeof window === 'undefined' ? undefined : (window as StorySessionWindow),
+) {
+  const runtime = target?.__STORYFREEZE_STORY_SESSION_RUNTIME__;
+  if (runtime?.storyId === storyId) runtime.reset = reset;
 }
 
 /** Captures the post-render/play state that every same-document reset must restore. */

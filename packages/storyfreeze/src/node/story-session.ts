@@ -39,6 +39,16 @@ export interface SessionVariantExecutionResult {
   strictFallbacks: SessionVariantRequest[];
 }
 
+/** Signals that an output callback transferred buffer ownership before it failed. */
+export class SessionOutputConsumedError extends Error {
+  constructor(readonly outputError: unknown) {
+    super('The story-session output consumer failed after taking ownership of the buffer.', {
+      cause: outputError,
+    });
+    this.name = 'SessionOutputConsumedError';
+  }
+}
+
 export function classifyBatchEligibility(
   capture: Pick<PlannedCapture, 'options'>,
   options: { hasCustomReset?: boolean; allowRuntimeValidation?: boolean } = {},

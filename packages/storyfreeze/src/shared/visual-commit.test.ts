@@ -69,6 +69,33 @@ describe(waitForVisualCommitInPage, () => {
     });
   });
 
+  it('does not lose an image completion between the initial check and listener registration', async () => {
+    let completeChecks = 0;
+    const image = {
+      get complete() {
+        completeChecks += 1;
+        return completeChecks > 1;
+      },
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      decode: vi.fn(async () => {}),
+    };
+    installDocument({ images: [image] });
+    Object.defineProperty(globalThis, 'requestAnimationFrame', {
+      configurable: true,
+      value: (callback: FrameRequestCallback) => {
+        callback(0);
+        return 1;
+      },
+    });
+
+    await expect(waitForVisualCommitInPage({ paintFallbackMs: 250, timeoutMs: 3000 })).resolves.toMatchObject({
+      didTimeout: false,
+      imageCount: 1,
+    });
+    expect(image.decode).toHaveBeenCalledOnce();
+  });
+
   it('reports the font status after the ready promise settles', async () => {
     const fonts = { ready: Promise.resolve(), status: 'loading' as FontFaceSetLoadStatus };
     fonts.ready = fonts.ready.then(() => {

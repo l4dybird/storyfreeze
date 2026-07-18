@@ -1,4 +1,4 @@
-import { sleep } from './async-utils.js';
+import { raceAgainstTimeout, sleep } from './async-utils.js';
 import type { CapturePage } from './browser-backend.js';
 import type { PreviewMode, RunMode } from './types.js';
 import {
@@ -155,7 +155,9 @@ async function waitForMarker(
     if (signal?.aborted) {
       throw signal.reason instanceof Error ? signal.reason : new Error('StoryFreeze was interrupted.');
     }
-    const raw = await readPreviewState(page);
+    const read = await raceAgainstTimeout(readPreviewState(page), deadline - Date.now(), signal);
+    if (read.timedOut) return undefined;
+    const raw = read.value;
     if (raw !== undefined) return validatePreviewState(raw, expected);
     await sleep(25);
   } while (Date.now() < deadline);
@@ -225,7 +227,9 @@ export class StoryNavigator {
       if (signal?.aborted) {
         throw signal.reason instanceof Error ? signal.reason : new Error('StoryFreeze was interrupted.');
       }
-      lastState = await readPreviewState(this.page);
+      const read = await raceAgainstTimeout(readPreviewState(this.page), deadline - Date.now(), signal);
+      if (read.timedOut) break;
+      lastState = read.value;
       if (lastState !== undefined) {
         const state = validatePreviewState(lastState, this.current);
         if (state.status === 'ready') {
@@ -250,7 +254,9 @@ export class StoryNavigator {
       if (signal?.aborted) {
         throw signal.reason instanceof Error ? signal.reason : new Error('StoryFreeze was interrupted.');
       }
-      lastState = await readSimplePreviewState(this.page);
+      const read = await raceAgainstTimeout(readSimplePreviewState(this.page), deadline - Date.now(), signal);
+      if (read.timedOut) break;
+      lastState = read.value;
       if (lastState.status === 'ready') return;
       if (lastState.status === 'no-preview') {
         throw new SimplePreviewRenderError(this.current.storyId, this.page.currentUrl(), 'No Preview is visible.');

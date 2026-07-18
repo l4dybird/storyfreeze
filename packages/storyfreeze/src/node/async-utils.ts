@@ -12,6 +12,8 @@ export async function sleep(msec = 0): Promise<void> {
 
 export type TimeoutRaceResult<T> = { timedOut: false; value: T } | { timedOut: true };
 
+const maximumTimerDelayMs = 2_147_483_647;
+
 export function raceAgainstTimeout<T>(
   operation: Promise<T>,
   timeoutMs: number,
@@ -31,7 +33,8 @@ export function raceAgainstTimeout<T>(
     };
     onAbort = () => finish(() => reject(signal?.reason));
     if (Number.isFinite(timeoutMs)) {
-      timeout = setTimeout(() => finish(() => resolve({ timedOut: true })), Math.max(0, timeoutMs));
+      const timerDelay = Math.min(maximumTimerDelayMs, Math.max(0, timeoutMs));
+      timeout = setTimeout(() => finish(() => resolve({ timedOut: true })), timerDelay);
     }
     signal?.addEventListener('abort', onAbort, { once: true });
     operation.then(

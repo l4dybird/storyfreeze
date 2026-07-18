@@ -121,6 +121,24 @@ describe(disposeRuntimeResources, () => {
     expect(storiesBrowser.close).toHaveBeenCalledTimes(1);
     expect(connection.disconnect).toHaveBeenCalledTimes(1);
   });
+
+  it('continues cleanup when a close operation never settles', async () => {
+    vi.useFakeTimers();
+    try {
+      const worker = { close: vi.fn(() => new Promise<void>(() => {})) };
+      const storiesBrowser = { close: vi.fn(async () => {}) };
+      const connection = { disconnect: vi.fn(async () => {}) };
+
+      const disposing = disposeRuntimeResources({ workers: [worker], storiesBrowser, connection }, logger);
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      await expect(disposing).resolves.toBeUndefined();
+      expect(storiesBrowser.close).toHaveBeenCalledTimes(1);
+      expect(connection.disconnect).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe(bootCaptureWorkers, () => {
@@ -161,6 +179,22 @@ describe(bootCaptureWorkers, () => {
 
     await expect(booting).rejects.toThrow('interrupted by test');
     expect(worker.close).toHaveBeenCalledTimes(1);
+  });
+
+  it('bounds an initial worker boot that never settles', async () => {
+    vi.useFakeTimers();
+    try {
+      const worker = createWorker(() => new Promise<void>(() => {}));
+      const booting = bootCaptureWorkers([worker], undefined, [], 25);
+      const rejection = expect(booting).rejects.toThrow('Capture worker boot did not settle within 25 msec');
+
+      await vi.advanceTimersByTimeAsync(25);
+
+      await rejection;
+      expect(worker.close).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('does not start workers when the run is already aborted', async () => {
@@ -349,9 +383,17 @@ describe(CapturingBrowser, () => {
     expect(page.goto).not.toHaveBeenCalled();
   });
 
-  it.each(['context', 'process'] as const)(
+  it.each([
+    ['context', { width: 375, height: 667, deviceScaleFactor: 2, hasTouch: true, isMobile: true }],
+    ['process', { width: 375, height: 667, deviceScaleFactor: 2, hasTouch: true, isMobile: true }],
+    ['context', { width: 800, height: 600, deviceScaleFactor: 2, hasTouch: false, isMobile: false }],
+    [
+      'process',
+      { width: 600, height: 800, deviceScaleFactor: 1, hasTouch: false, isMobile: false, isLandscape: false },
+    ],
+  ] as const)(
     'applies a dynamic emulation profile without replacing the %s worker session',
-    async browserIsolation => {
+    async (browserIsolation, nextViewport) => {
       const order: string[] = [];
       const navigate = vi.fn(async () => {
         order.push('navigate');
@@ -406,6 +448,7 @@ describe(CapturingBrowser, () => {
                 deviceScaleFactor: number;
                 hasTouch: boolean;
                 isMobile: boolean;
+                isLandscape?: boolean;
               };
             },
             deadline: CaptureDeadline,
@@ -417,13 +460,7 @@ describe(CapturingBrowser, () => {
       await expect(
         setViewport(
           {
-            viewport: {
-              width: 375,
-              height: 667,
-              deviceScaleFactor: 2,
-              hasTouch: true,
-              isMobile: true,
-            },
+            viewport: nextViewport,
           },
           deadline,
         ),
@@ -436,13 +473,7 @@ describe(CapturingBrowser, () => {
         timeout: expect.any(Number),
         waitUntil: 'domcontentloaded',
       });
-      expect(page.setViewport).toHaveBeenCalledWith({
-        width: 375,
-        height: 667,
-        deviceScaleFactor: 2,
-        hasTouch: true,
-        isMobile: true,
-      });
+      expect(page.setViewport).toHaveBeenCalledWith(nextViewport);
       expect(navigate).toHaveBeenCalledWith('fixture--default', expect.any(Number), 0);
       expect(waitForReady).toHaveBeenCalledTimes(1);
       expect(order).toEqual(['about:blank', 'setViewport', 'navigate', 'preview-ready']);
@@ -736,6 +767,52 @@ describe(CapturingBrowser, () => {
     expect(releaseScreenshotBuffer).toHaveBeenCalledWith(buffer);
   });
 
+  it('releases a captured buffer after its deadline even when post-capture work never settles', async () => {
+    const options = {
+      captureMaxRetryCount: 0,
+      captureTimeout: 5,
+      delay: 0,
+      disableWaitAssets: false,
+      logger: new Logger('silent'),
+      viewports: ['800x600'],
+    } as MainOptions;
+    const browser = new CapturingBrowser(
+      { url: 'https://example.test' } as ManagedStorybookConnection,
+      options,
+      'managed',
+      0,
+    );
+    const buffer = Buffer.from('captured before stalled reset');
+    const releaseScreenshotBuffer = vi.fn();
+    vi.spyOn(browser as never, 'screenshotAttempt').mockImplementation((...args: unknown[]) => {
+      const onCapturedBuffer = args.at(-1) as (captured: Buffer, release: () => void) => void;
+      let released = false;
+      onCapturedBuffer(buffer, () => {
+        if (released) return;
+        released = true;
+        releaseScreenshotBuffer(buffer);
+      });
+      return new Promise(() => {});
+    });
+    vi.spyOn(browser as never, 'interruptAttempt').mockResolvedValue(false);
+
+    await expect(
+      browser.screenshot(
+        'fixture--default',
+        { id: 'fixture--default', kind: 'Fixture', story: 'Default', version: 'v5' },
+        { isDefault: true, keys: [] },
+        0,
+        options.logger,
+        false,
+        false,
+        { releaseScreenshotBuffer } as never,
+      ),
+    ).rejects.toThrow('did not stop after its browser session was closed');
+
+    expect(releaseScreenshotBuffer).toHaveBeenCalledOnce();
+    expect(releaseScreenshotBuffer).toHaveBeenCalledWith(buffer);
+  });
+
   it('applies the attempt deadline to simple mode and preserves the timeout after the final retry', async () => {
     const { boot, capture, close } = createStalledCapture({
       captureTimeout: 20,
@@ -931,5 +1008,43 @@ describe(main, () => {
     await expect(running).rejects.toThrow('interrupted by test');
     expect(close).toHaveBeenCalledTimes(1);
     expect(disconnect).toHaveBeenCalledTimes(1);
+  });
+
+  it('bounds story index enumeration and aborts its fetch before disposal', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.spyOn(ManagedStorybookConnection.prototype, 'connect').mockImplementation(
+        async function (this: ManagedStorybookConnection) {
+          return this;
+        },
+      );
+      const disconnect = vi.spyOn(ManagedStorybookConnection.prototype, 'disconnect').mockResolvedValue(undefined);
+      vi.spyOn(BaseBrowser.prototype, 'boot').mockImplementation(async function (this: BaseBrowser) {
+        return this;
+      });
+      let fetchSignal: AbortSignal | undefined;
+      vi.spyOn(globalThis, 'fetch').mockImplementation((_input, init) => {
+        fetchSignal = init?.signal ?? undefined;
+        return new Promise<Response>((_resolve, reject) => {
+          const onAbort = () => reject(fetchSignal?.reason);
+          if (fetchSignal?.aborted) onAbort();
+          else fetchSignal?.addEventListener('abort', onAbort, { once: true });
+        });
+      });
+      const close = vi.spyOn(BaseBrowser.prototype, 'close').mockResolvedValue(undefined);
+
+      const running = main({ ...options, captureTimeout: 1_000 });
+      const rejection = expect(running).rejects.toThrow('Story index load did not settle within 60000 msec');
+      await vi.advanceTimersByTimeAsync(0);
+      expect(fetchSignal).toBeDefined();
+      await vi.advanceTimersByTimeAsync(60_000);
+
+      await rejection;
+      expect(fetchSignal?.aborted).toBe(true);
+      expect(close).toHaveBeenCalledOnce();
+      expect(disconnect).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

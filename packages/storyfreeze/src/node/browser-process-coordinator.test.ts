@@ -134,15 +134,76 @@ describe(BrowserProcessCoordinator, () => {
     );
     const coordinator = new BrowserProcessCoordinator({ launch, name: 'playwright' }, {});
     const opening = coordinator.openSession();
+    let openingState = 'pending';
+    void opening.then(
+      () => (openingState = 'resolved'),
+      () => (openingState = 'rejected'),
+    );
 
     const closeState = await Promise.race([
       coordinator.close().then(() => 'closed'),
       new Promise<'pending'>(resolve => setTimeout(() => resolve('pending'), 50)),
     ]);
     expect(closeState).toBe('closed');
+    await vi.waitFor(() => expect(openingState).toBe('rejected'));
 
     resolveLaunch(browser.instance);
     await expect(opening).rejects.toThrow('coordinator is closed');
     await vi.waitFor(() => expect(browser.instance.close).toHaveBeenCalledOnce());
+  });
+
+  it('rejects a pending session open as soon as the coordinator closes', async () => {
+    const browser = createInstance('/chromium/pending-session');
+    vi.mocked(browser.instance.newSession).mockImplementationOnce(() => new Promise(() => {}));
+    const { backend } = createBackend([browser.instance]);
+    const coordinator = new BrowserProcessCoordinator(backend, {});
+    const opening = coordinator.openSession();
+    let openingState = 'pending';
+    void opening.then(
+      () => (openingState = 'resolved'),
+      () => (openingState = 'rejected'),
+    );
+    await vi.waitFor(() => expect(browser.instance.newSession).toHaveBeenCalledOnce());
+
+    await coordinator.close();
+
+    await vi.waitFor(() => expect(openingState).toBe('rejected'));
+    await expect(opening).rejects.toThrow('coordinator is closed');
+  });
+
+  it('bounds cleanup of a session that opens after the coordinator closes', async () => {
+    vi.useFakeTimers();
+    try {
+      const browser = createInstance('/chromium/late-session');
+      const closeSession = vi.fn(() => new Promise<void>(() => {}));
+      const lateSession = { close: closeSession, isHealthy: () => true, page: {} } as unknown as BrowserSession;
+      let resolveSession!: (session: BrowserSession) => void;
+      vi.mocked(browser.instance.newSession).mockImplementationOnce(
+        () =>
+          new Promise<BrowserSession>(resolve => {
+            resolveSession = resolve;
+          }),
+      );
+      const { backend } = createBackend([browser.instance]);
+      const coordinator = new BrowserProcessCoordinator(backend, {});
+      let outcome = 'pending';
+      const opening = coordinator.openSession();
+      void opening.then(
+        () => (outcome = 'resolved'),
+        () => (outcome = 'rejected'),
+      );
+      await vi.waitFor(() => expect(browser.instance.newSession).toHaveBeenCalledOnce());
+
+      await coordinator.close();
+      resolveSession(lateSession);
+      await vi.waitFor(() => expect(closeSession).toHaveBeenCalledOnce());
+
+      await vi.advanceTimersByTimeAsync(1_000);
+      await Promise.resolve();
+      expect(outcome).toBe('rejected');
+      await expect(opening).rejects.toThrow('coordinator is closed');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

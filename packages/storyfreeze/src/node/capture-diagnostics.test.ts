@@ -120,4 +120,24 @@ describe('capture diagnostics', () => {
     expect(Buffer.concat(chunks).toString('utf8')).toBe(expected);
     expect(write.mock.calls.length).toBeGreaterThan(1);
   });
+
+  it('bounds queued diagnostics while stdout is stalled', async () => {
+    process.env.STORYFREEZE_CAPTURE_DIAGNOSTICS = '1';
+    const completions: Array<() => void> = [];
+    const write = vi.spyOn(fs, 'write').mockImplementation(((_fd, data, _offset, length, _position, callback) => {
+      completions.push(() => callback?.(null, length as number, data as Buffer));
+    }) as never);
+
+    for (let index = 0; index < 80; index += 1) {
+      emitCaptureDiagnostic({ type: 'stalled-output', detail: `${index}:${'x'.repeat(64 * 1024)}` });
+    }
+
+    for (let index = 0; index < completions.length; index += 1) {
+      completions[index]();
+      await Promise.resolve();
+    }
+
+    expect(write.mock.calls.length).toBeGreaterThan(1);
+    expect(write.mock.calls.length).toBeLessThan(20);
+  });
 });

@@ -3,6 +3,7 @@ import { STORYFREEZE_STORY_SESSION_GLOBAL } from '../shared/preview-protocol.js'
 import {
   initializeStorySessionController,
   registerStorySessionRuntime,
+  setStorySessionReset,
   snapshotStorySessionRuntime,
 } from './story-session-controller.js';
 
@@ -88,6 +89,28 @@ describe(initializeStorySessionController, () => {
 
     await protocol.closeSession();
     await expect(protocol.applyVariant('focused')).rejects.toThrow('No StoryFreeze story session is open');
+  });
+
+  it('removes a reset hook when a later registration removes it', async () => {
+    const body = { innerHTML: '<button>Ready</button>' };
+    Object.defineProperty(globalThis, 'document', {
+      configurable: true,
+      value: { activeElement: body, body, documentElement: {} },
+    });
+    const target = {} as any;
+    const reset = vi.fn(async () => {});
+    initializeStorySessionController(target);
+    registerStorySessionRuntime({ reset }, { id: 'button--primary' }, target);
+    registerStorySessionRuntime({}, { id: 'button--primary' }, target);
+    setStorySessionReset('button--primary', undefined, target);
+    snapshotStorySessionRuntime('button--primary', target);
+    const protocol = target[STORYFREEZE_STORY_SESSION_GLOBAL]!;
+
+    await protocol.openSession({ sessionId: 'button-desktop', storyId: 'button--primary', profileHash: 'desktop' });
+    await protocol.applyVariant('hovered');
+    await protocol.resetVariant('hovered');
+
+    expect(reset).not.toHaveBeenCalled();
   });
 
   it('restores scroll and fingerprints portals, live form state, and open shadow DOM after settling', async () => {

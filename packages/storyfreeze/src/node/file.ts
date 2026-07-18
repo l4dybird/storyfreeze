@@ -30,7 +30,7 @@ export class FileSystem {
   private activeWriteBytes = 0;
   private activeScreenshotReservations = 0;
   private retainedScreenshotBytes = 0;
-  private writerError?: unknown;
+  private writerFailure?: { error: unknown };
 
   constructor(private opt: MainOptions) {
     this.outputRoot = path.resolve(opt.outDir);
@@ -77,10 +77,31 @@ export class FileSystem {
     return creating;
   }
 
-  private acquireWrite(bytes: number) {
-    if (this.writerError !== undefined) return Promise.reject(this.writerError);
+  private acquireWrite(bytes: number, signal?: AbortSignal) {
+    if (this.writerFailure !== undefined) return Promise.reject(this.writerFailure.error);
+    if (signal?.aborted) return Promise.reject(signal.reason ?? new Error('Screenshot output write was aborted.'));
     return new Promise<void>((resolve, reject) => {
-      this.writeWaiters.push({ bytes, resolve, reject });
+      let onAbort = () => {};
+      const waiter = {
+        bytes,
+        resolve: () => {
+          signal?.removeEventListener('abort', onAbort);
+          resolve();
+        },
+        reject: (error: unknown) => {
+          signal?.removeEventListener('abort', onAbort);
+          reject(error);
+        },
+      };
+      onAbort = () => {
+        const index = this.writeWaiters.indexOf(waiter);
+        if (index < 0) return;
+        this.writeWaiters.splice(index, 1);
+        waiter.reject(signal?.reason ?? new Error('Screenshot output write was aborted.'));
+        this.startWaitingWrites();
+      };
+      signal?.addEventListener('abort', onAbort, { once: true });
+      this.writeWaiters.push(waiter);
       this.startWaitingWrites();
     });
   }
@@ -104,7 +125,7 @@ export class FileSystem {
   }
 
   private acquireScreenshotReservation(bytes: number, signal?: AbortSignal) {
-    if (this.writerError !== undefined) return Promise.reject(this.writerError);
+    if (this.writerFailure !== undefined) return Promise.reject(this.writerFailure.error);
     if (signal?.aborted)
       return Promise.reject(signal.reason ?? new Error('Screenshot output reservation was aborted.'));
     return new Promise<void>((resolve, reject) => {
@@ -152,8 +173,8 @@ export class FileSystem {
   }
 
   private closeWriter(error: unknown) {
-    if (this.writerError !== undefined) return;
-    this.writerError = error;
+    if (this.writerFailure !== undefined) return;
+    this.writerFailure = { error };
     for (const waiter of this.writeWaiters.splice(0)) waiter.reject(error);
     for (const waiter of this.screenshotWaiters.splice(0)) waiter.reject(error);
   }
@@ -175,7 +196,7 @@ export class FileSystem {
         this.releaseScreenshotReservation(reservedBytes);
         return null;
       }
-      if (this.writerError !== undefined) throw this.writerError;
+      if (this.writerFailure !== undefined) throw this.writerFailure.error;
       if (this.screenshotReservations.has(buffer)) {
         throw new Error('A captured screenshot buffer cannot hold more than one output reservation.');
       }
@@ -209,14 +230,16 @@ export class FileSystem {
     this.releaseScreenshotReservation(reservedBytes);
   }
 
-  private writeAtomic(filePath: string, buffer: Buffer) {
+  private writeAtomic(filePath: string, buffer: Buffer, signal?: AbortSignal) {
     const operation = (async () => {
-      await this.acquireWrite(buffer.byteLength);
+      await this.acquireWrite(buffer.byteLength, signal);
       const temporaryPath = `${filePath}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`;
 
       try {
         await this.ensureDirectory(path.dirname(filePath));
-        await fs.writeFile(temporaryPath, buffer);
+        if (signal?.aborted) throw signal.reason ?? new Error('Screenshot output write was aborted.');
+        await fs.writeFile(temporaryPath, buffer, signal ? { signal } : undefined);
+        if (signal?.aborted) throw signal.reason ?? new Error('Screenshot output write was aborted.');
         await fs.rename(temporaryPath, filePath);
       } catch (error) {
         this.closeWriter(error);
@@ -236,24 +259,32 @@ export class FileSystem {
 
   async flush() {
     await Promise.allSettled([...this.pendingWrites]);
-    if (this.writerError !== undefined) throw this.writerError;
+    if (this.writerFailure !== undefined) throw this.writerFailure.error;
   }
 
   /**
    *
-   * Save captured buffer as a PNG image.
+   * Save a captured buffer as a PNG image. The method takes ownership of the
+   * retained buffer and releases its reservation after the write settles.
    *
    * @param kind - Story kind
    * @param story - Name of this story
    * @param suffix - File name suffix
-   * @param buffer - JSON trace buffer to save
+   * @param buffer - PNG buffer to save
    * @returns Absolute file path
    *
    **/
-  async saveScreenshot(kind: string, story: string, suffix: string[], buffer: Buffer, logicalId?: string) {
+  async saveScreenshot(
+    kind: string,
+    story: string,
+    suffix: string[],
+    buffer: Buffer,
+    logicalId?: string,
+    signal?: AbortSignal,
+  ) {
     try {
       const filePath = this.getPath(kind, story, suffix, '.png', logicalId);
-      await this.writeAtomic(filePath, buffer);
+      await this.writeAtomic(filePath, buffer, signal);
       return filePath;
     } finally {
       this.releaseScreenshotBuffer(buffer);
@@ -291,18 +322,37 @@ export class FileSystem {
           return filePath;
         } catch (error) {
           state = 'discarded';
-          await fs.rm(temporaryPath, { force: true });
+          try {
+            await fs.rm(temporaryPath, { force: true });
+          } catch (cleanupError) {
+            throw new AggregateError([error, cleanupError], 'Trace commit and temporary-file cleanup both failed.');
+          }
           throw error;
         }
       },
       discard: async () => {
         if (state !== 'open') return;
         state = 'discarded';
+        let closeFailure: { error: unknown } | undefined;
         try {
           await close();
-        } finally {
-          await fs.rm(temporaryPath, { force: true });
+        } catch (error) {
+          closeFailure = { error };
         }
+        let removeFailure: { error: unknown } | undefined;
+        try {
+          await fs.rm(temporaryPath, { force: true });
+        } catch (error) {
+          removeFailure = { error };
+        }
+        if (closeFailure !== undefined && removeFailure !== undefined) {
+          throw new AggregateError(
+            [closeFailure.error, removeFailure.error],
+            'Trace close and temporary-file cleanup both failed.',
+          );
+        }
+        if (closeFailure !== undefined) throw closeFailure.error;
+        if (removeFailure !== undefined) throw removeFailure.error;
       },
     };
   }

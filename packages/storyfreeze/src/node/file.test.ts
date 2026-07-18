@@ -136,6 +136,35 @@ describe(FileSystem, () => {
     fileSystem.releaseScreenshotBuffer(held);
   });
 
+  it('removes an aborted output from the write queue before it retains a writer slot', async () => {
+    const fileSystem = new FileSystem({ outDir, flat: false, parallel: 1 } as MainOptions);
+    const originalWriteFile = fs.writeFile.bind(fs);
+    let releaseWrite = () => {};
+    const writeBlocked = new Promise<void>(resolve => (releaseWrite = resolve));
+    vi.spyOn(fs, 'writeFile').mockImplementationOnce((async (...args: Parameters<typeof fs.writeFile>) => {
+      await writeBlocked;
+      return originalWriteFile(...args);
+    }) as typeof fs.writeFile);
+    const first = fileSystem.saveScreenshot('Button', 'First', [], Buffer.from('first'));
+    await vi.waitFor(() => expect(fs.writeFile).toHaveBeenCalledOnce());
+    const controller = new AbortController();
+    const second = fileSystem.saveScreenshot(
+      'Button',
+      'Second',
+      [],
+      Buffer.from('second'),
+      undefined,
+      controller.signal,
+    );
+
+    controller.abort(new Error('output cancelled'));
+
+    await expect(second).rejects.toThrow('output cancelled');
+    expect(fs.writeFile).toHaveBeenCalledOnce();
+    releaseWrite();
+    await first;
+  });
+
   it('closes the writer and flush fails after an output error', async () => {
     await fs.rm(outDir, { recursive: true, force: true });
     await fs.writeFile(outDir, 'not a directory');

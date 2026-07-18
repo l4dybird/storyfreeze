@@ -15,29 +15,46 @@ export type CaptureDiagnosticEvent = {
 };
 
 const captureDiagnosticListeners = new Set<(event: CaptureDiagnosticEvent) => void>();
+const maximumQueuedDiagnosticBytes = 1024 * 1024;
 
 class DiagnosticSink {
-  private readonly lines: Buffer[] = [];
+  private readonly lines: Array<Buffer | undefined> = [];
   private head = 0;
+  private queuedBytes = 0;
   private writing = false;
 
   write(line: string) {
-    this.lines.push(Buffer.from(line));
+    if (Buffer.byteLength(line) > maximumQueuedDiagnosticBytes) return;
+    const encoded = Buffer.from(line);
+    if (this.queuedBytes + encoded.byteLength > maximumQueuedDiagnosticBytes) return;
+    this.lines.push(encoded);
+    this.queuedBytes += encoded.byteLength;
     this.flushNext();
   }
 
   private flushNext() {
     if (this.writing || this.head >= this.lines.length) return;
     this.writing = true;
-    const line = this.lines[this.head++];
+    const line = this.lines[this.head];
+    this.lines[this.head] = undefined;
+    this.head += 1;
+    if (!line) {
+      this.writing = false;
+      queueMicrotask(() => this.flushNext());
+      return;
+    }
+    this.queuedBytes -= line.byteLength;
     let offset = 0;
     const complete = () => {
       this.writing = false;
       if (this.head === this.lines.length) {
         this.lines.length = 0;
         this.head = 0;
+      } else if (this.head >= 64 && this.head * 2 >= this.lines.length) {
+        this.lines.splice(0, this.head);
+        this.head = 0;
       }
-      this.flushNext();
+      queueMicrotask(() => this.flushNext());
     };
     const writeRemaining = () => {
       const remaining = line.byteLength - offset;

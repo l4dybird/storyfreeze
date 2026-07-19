@@ -9,8 +9,9 @@ on:
         type: choice
         options:
           - isolation
+          - protocol
           - topology
-        default: topology
+        default: protocol
       profile:
         description: Benchmark repetition profile
         required: true
@@ -38,6 +39,14 @@ on:
           - process
           - context
         default: process
+      starting_protocol:
+        description: Capture protocol measured first in the first pair
+        required: true
+        type: choice
+        options:
+          - strict
+          - persistent
+        default: strict
       run_roadmap_matrix:
         description: Run the independent Phase 1-3 workload matrix
         required: true
@@ -78,6 +87,7 @@ on:
       - 'scripts/e2e-prestorybook.js'
       - 'scripts/performance-roadmap-benchmark*.js'
       - 'scripts/performance-roadmap-scenarios*.js'
+      - 'scripts/storycapture-performance-gate*.js'
 
 permissions:
   contents: read
@@ -112,6 +122,7 @@ jobs:
           scripts/browser-performance-benchmark.test.js
           scripts/performance-roadmap-benchmark.test.js
           scripts/performance-roadmap-scenarios.test.js
+          scripts/storycapture-performance-gate.test.js
       - name: Install Playwright Chromium
         run: pnpm --filter storyfreeze exec playwright-core install --with-deps chromium
       - name: Record source tree
@@ -119,10 +130,11 @@ jobs:
       - name: Compare browser runtime modes
         env:
           STORYFREEZE_BENCHMARK_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
-          STORYFREEZE_BENCHMARK_COMPARISON: ${{ github.event_name == 'workflow_dispatch' && inputs.comparison || 'isolation' }}
+          STORYFREEZE_BENCHMARK_COMPARISON: ${{ github.event_name == 'workflow_dispatch' && inputs.comparison || 'protocol' }}
           STORYFREEZE_BENCHMARK_PARALLEL: ${{ github.event_name == 'workflow_dispatch' && inputs.parallel || '4' }}
           STORYFREEZE_BENCHMARK_PROFILE: ${{ github.event_name == 'workflow_dispatch' && inputs.profile || 'pr' }}
           STORYFREEZE_BENCHMARK_START_ISOLATION: ${{ github.event_name == 'workflow_dispatch' && inputs.starting_isolation || 'process' }}
+          STORYFREEZE_BENCHMARK_START_PROTOCOL: ${{ github.event_name == 'workflow_dispatch' && inputs.starting_protocol || 'strict' }}
           STORYFREEZE_BENCHMARK_TRACE: 'false'
           STORYFREEZE_BROWSER_PROVISIONING: explicit-install
         run: >-
@@ -135,7 +147,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: browser-isolation-explicit-${{ github.event_name == 'workflow_dispatch' && inputs.profile || 'pr' }}-p${{ github.event_name == 'workflow_dispatch' && inputs.parallel || '4' }}-${{ github.run_attempt }}
+          name: browser-${{ github.event_name == 'workflow_dispatch' && inputs.comparison || 'protocol' }}-explicit-${{ github.event_name == 'workflow_dispatch' && inputs.profile || 'pr' }}-p${{ github.event_name == 'workflow_dispatch' && inputs.parallel || '4' }}-${{ github.run_attempt }}
           path: |
             ${{ runner.temp }}/browser-isolation-explicit.json
             ${{ runner.temp }}/browser-isolation-explicit-failures

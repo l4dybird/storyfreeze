@@ -31,6 +31,24 @@ The blocking differential gate requires the same observed Chromium executable, s
 
 The workflow runs the PR profile with explicit browser installation when benchmark-related files change. Manual dispatch selects the `pr` or `record` profile, parallelism, first backend, and whether to run the independent trace control. A pinned official Playwright container comparison remains available only through `workflow_dispatch` with `compare_container=true`.
 
+## Persistent Preview and StoryCapture gate
+
+Phase 6P reuses the same packed React/Vite managed static fixture and Linux process-tree sampler; it does not add a fixture, smoke suite, or pixel-test job. Set `STORYFREEZE_BENCHMARK_COMPARISON=protocol` to compare `process + strict` with `process + auto` (persistent Preview). Pull requests run one warm-up and three alternating measured pairs at `parallel=4`. Manual `record` runs use two warm-ups and five measured pairs. Each schema 1 `persistent-preview-differential` artifact includes source commit/tree and installed-package hash, Chromium and runner identity, raw execution order and runs, wall/capture/CPU/peak RSS, navigation/story-switch/context-recycle diagnostics, browser launch and cleanup counts, and decoded-RGBA comparisons.
+
+The PR gate blocks capture, output, lifecycle, and pixel failures. It records performance ratios but does not block on a single GitHub-hosted runner. Run it manually with:
+
+```sh
+STORYFREEZE_BENCHMARK_COMPARISON=protocol \
+STORYFREEZE_BENCHMARK_PROFILE=record \
+STORYFREEZE_BENCHMARK_PARALLEL=4 \
+STORYFREEZE_BENCHMARK_START_PROTOCOL=strict \
+node scripts/e2e-prestorybook.js examples/react-vite browser-performance-benchmark.js persistent-preview.json
+```
+
+The representative release gate is separate because the 452-capture consumer project and Azure image are not public repository fixtures. Its record must contain five alternating raw pairs using the same Storybook static-build hash, Chromium, Azure image, `parallel=4`, and option hash, plus StoryFreeze commit/tree/package hashes. Evaluate it with `node scripts/storycapture-performance-gate.js <record.json> [evaluation.json]`. The gate recomputes raw-run p50/p95 and requires StoryFreeze/StoryCapture wall p50 `<=0.90`, wall p95 `<=1.00`, StoryFreeze/RC.0 CPU `<=0.90`, peak RSS `<=1.05`, exactly 452 outputs, and zero capture, visual, or lifecycle failures. A ratio `<=0.50` is reported as the non-blocking stretch goal.
+
+The optional no-recycle experiment is evaluated only after the 128-capture default passes. At least three alternating `default128`/`unlimited` pairs are required; unlimited is recommended only when wall p50 improves by at least 5%, peak RSS remains within `1.10` of RC.0, and correctness remains clean. No representative Azure result is recorded yet, so stable release remains blocked rather than inferring success from the smaller CI fixture.
+
 ## Browser isolation differential
 
 The isolation differential is independent of the schema 3 browser backend comparison above. It compares Playwright `process` and `context` isolation with the same packed React/Vite managed static fixture, explicit `playwright-core` Chromium executable, launch options, viewport data, and story selection. It does not add a fixture, smoke job, or pixel suite; the existing Storybook 10 E2E remains responsible for broad path, filter, shard, retry, and lifecycle coverage.

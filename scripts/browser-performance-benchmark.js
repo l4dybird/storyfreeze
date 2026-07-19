@@ -18,13 +18,17 @@ const failureArtifactDir = outputFile
 const sampleIntervalMs = 50;
 const processExitTimeoutMs = 2000;
 const benchmarkComparison = process.env.STORYFREEZE_BENCHMARK_COMPARISON || 'isolation';
-if (!['isolation', 'topology'].includes(benchmarkComparison)) {
+if (!['isolation', 'protocol', 'topology'].includes(benchmarkComparison)) {
   throw new Error(`Unsupported browser benchmark comparison: ${benchmarkComparison}`);
 }
 function benchmarkProfilesForComparison(comparison) {
-  return comparison === 'topology'
-    ? { pr: { measuredRuns: 3, warmupRuns: 1 }, record: { measuredRuns: 9, warmupRuns: 2 } }
-    : { pr: { measuredRuns: 3, warmupRuns: 1 }, record: { measuredRuns: 10, warmupRuns: 2 } };
+  if (comparison === 'topology') {
+    return { pr: { measuredRuns: 3, warmupRuns: 1 }, record: { measuredRuns: 9, warmupRuns: 2 } };
+  }
+  if (comparison === 'protocol') {
+    return { pr: { measuredRuns: 3, warmupRuns: 1 }, record: { measuredRuns: 5, warmupRuns: 2 } };
+  }
+  return { pr: { measuredRuns: 3, warmupRuns: 1 }, record: { measuredRuns: 10, warmupRuns: 2 } };
 }
 const benchmarkProfiles = benchmarkProfilesForComparison(benchmarkComparison);
 const benchmarkProfile = process.env.STORYFREEZE_BENCHMARK_PROFILE || 'pr';
@@ -43,8 +47,13 @@ const isolations = benchmarkComparison === 'topology' ? ['process', 'hybrid', 'c
 if (!isolations.includes(startingIsolation)) {
   throw new Error(`Unsupported starting isolation: ${startingIsolation}`);
 }
+const protocols = ['strict', 'persistent'];
+const startingProtocol = process.env.STORYFREEZE_BENCHMARK_START_PROTOCOL || 'strict';
+if (!protocols.includes(startingProtocol)) {
+  throw new Error(`Unsupported starting protocol: ${startingProtocol}`);
+}
 if (process.env.STORYFREEZE_BENCHMARK_TRACE === 'true') {
-  throw new Error('Browser isolation comparison does not support trace capture.');
+  throw new Error('Browser performance comparison does not support trace capture.');
 }
 
 function isolationExecutionOrder(iteration, values = isolations, first = startingIsolation) {
@@ -252,6 +261,7 @@ function measureCapture({
   isolation,
   label,
   pairStartingIsolation,
+  pairStartingProtocol,
   positionInPair,
   sequenceIndex,
   trace = false,
@@ -445,6 +455,7 @@ function measureCapture({
 
       resolve({
         backend,
+        browserGenerationCount: runtimeBrowserLaunchCount,
         browserCrashCount: diagnostics.browserCrashCount + (signal ? 1 : 0),
         browserCloseErrorCount,
         browserCloseEventCount: browserCloseEvents.length,
@@ -456,10 +467,12 @@ function measureCapture({
         errors,
         exitCode: code,
         iteration,
+        ...(captureProtocol ? { captureProtocol } : {}),
         ...(isolation ? { isolation } : {}),
         label,
         outputDir,
         ...(pairStartingIsolation ? { pairStartingIsolation } : {}),
+        ...(pairStartingProtocol ? { pairStartingProtocol } : {}),
         peakBrowserRootCount,
         peakChromiumProcessCount,
         peakChromiumProcessCountsByType,
@@ -730,15 +743,20 @@ function summarizeRuns(runs) {
   const idleEvents = diagnosticEvents.filter(event => event.type === 'idle-wait');
   const visualCommitEvents = diagnosticEvents.filter(event => event.type === 'visual-commit');
   return {
+    browserGenerationCount: runs.reduce((total, run) => total + (run.browserGenerationCount ?? 0), 0),
     browserCrashEventCount: runs.reduce((total, run) => total + run.browserCrashCount, 0),
     browserCrashRate: runs.filter(run => run.browserCrashCount > 0).length / runs.length,
     captureFailureRate: (expectedCaptures - captured) / expectedCaptures,
     captureTimeP50Ms: percentile(storyDurationsMs, 0.5),
     captureTimeP95Ms: percentile(storyDurationsMs, 0.95),
     diagnostics: {
+      contextRecycleCount: diagnosticEvents.filter(event => event.type === 'context-recycle').length,
       idleEventCount: idleEvents.length,
       idleTimeoutEventCount: idleEvents.filter(event => event.didTimeout).length,
       idleTimeoutRate: idleEvents.length ? idleEvents.filter(event => event.didTimeout).length / idleEvents.length : 0,
+      navigationCount: diagnosticEvents.filter(
+        event => event.type === 'capture-phase' && event.phase === 'navigation' && event.state === 'end',
+      ).length,
       phaseTimings,
       screenshotBudget: summarizeScreenshotBudget(diagnosticEvents),
       queue: {
@@ -752,6 +770,9 @@ function summarizeRuns(runs) {
         waitSamples: queueWaitTimes.length,
       },
       runtimePhaseTimings,
+      storySwitchCount: diagnosticEvents.filter(
+        event => event.type === 'capture-phase' && event.phase === 'story-switch' && event.state === 'end',
+      ).length,
       threeSecondTailEventCount: diagnosticEvents.filter(
         event => event.type === 'capture-output' && typeof event.durationMs === 'number' && event.durationMs >= 3000,
       ).length,
@@ -873,6 +894,207 @@ function browserMetadata() {
 function publicRun(run) {
   const { outputDir: _, ...record } = run;
   return record;
+}
+
+function hashDirectory(directory) {
+  const files = [];
+  const pending = [directory];
+  while (pending.length) {
+    const current = pending.pop();
+    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+      const absolutePath = path.join(current, entry.name);
+      if (entry.isSymbolicLink()) continue;
+      if (entry.isDirectory()) {
+        if (entry.name !== 'node_modules') pending.push(absolutePath);
+      } else if (entry.isFile()) files.push(absolutePath);
+    }
+  }
+  const hash = crypto.createHash('sha256');
+  for (const file of files.sort()) {
+    hash.update(path.relative(directory, file).replaceAll('\\', '/'));
+    hash.update('\0');
+    hash.update(fs.readFileSync(file));
+    hash.update('\0');
+  }
+  return hash.digest('hex');
+}
+
+async function runProtocolComparison(browser) {
+  const captureProtocols = { persistent: 'auto', strict: 'strict' };
+  const warmups = Object.fromEntries(protocols.map(protocol => [protocol, []]));
+  const warmupExecutionOrder = [];
+  let warmupSequenceIndex = 0;
+  for (let iteration = 1; iteration <= warmupRuns; iteration += 1) {
+    const order = isolationExecutionOrder(iteration, protocols, startingProtocol);
+    for (const [positionInPair, protocol] of order.entries()) {
+      const run = await measureCapture({
+        backend: 'playwright',
+        browser,
+        captureProtocol: captureProtocols[protocol],
+        exclude: benchmarkExclude,
+        expectedPngs: expectedPngCount,
+        expectedStories: expectedStoryCount,
+        isolation: 'process',
+        iteration,
+        label: `benchmark-protocol-${protocol}-warmup-${iteration}`,
+        pairStartingProtocol: order[0],
+        positionInPair,
+        sequenceIndex: ++warmupSequenceIndex,
+      });
+      warmups[protocol].push(run);
+      warmupExecutionOrder.push(run);
+    }
+  }
+
+  const runs = Object.fromEntries(protocols.map(protocol => [protocol, []]));
+  const measuredExecutionOrder = [];
+  let measuredSequenceIndex = 0;
+  for (let iteration = 1; iteration <= measuredRuns; iteration += 1) {
+    const order = isolationExecutionOrder(iteration, protocols, startingProtocol);
+    for (const [positionInPair, protocol] of order.entries()) {
+      const run = await measureCapture({
+        backend: 'playwright',
+        browser,
+        captureProtocol: captureProtocols[protocol],
+        exclude: benchmarkExclude,
+        expectedPngs: expectedPngCount,
+        expectedStories: expectedStoryCount,
+        isolation: 'process',
+        iteration,
+        label: `benchmark-protocol-${protocol}-${iteration}`,
+        pairStartingProtocol: order[0],
+        positionInPair,
+        sequenceIndex: ++measuredSequenceIndex,
+      });
+      runs[protocol].push(run);
+      measuredExecutionOrder.push(run);
+      console.log(
+        `${protocol} protocol ${iteration}/${measuredRuns}: ${run.wallTimeMs} ms, ${Math.round(run.peakTreeRssBytes / 1024 / 1024)} MiB peak RSS.`,
+      );
+    }
+  }
+
+  const pixelComparisons = [];
+  for (let index = 0; index < measuredRuns; index += 1) {
+    pixelComparisons.push(
+      compareDirectories(
+        `persistent-to-strict-run-${index + 1}`,
+        runs.strict[index].outputDir,
+        runs.persistent[index].outputDir,
+      ),
+    );
+  }
+  for (const protocol of protocols) {
+    for (let index = 1; index < measuredRuns; index += 1) {
+      pixelComparisons.push(
+        compareDirectories(
+          `${protocol}-stability-${index + 1}`,
+          runs[protocol][0].outputDir,
+          runs[protocol][index].outputDir,
+        ),
+      );
+    }
+  }
+
+  const summaries = Object.fromEntries(protocols.map(protocol => [protocol, summarizeRuns(runs[protocol])]));
+  const gateErrors = [];
+  for (const protocol of protocols) {
+    for (const run of [...warmups[protocol], ...runs[protocol]]) {
+      run.errors.forEach(error => gateErrors.push(`${run.label}: ${error}`));
+      if (run.runtimeBrowserLaunchCount !== run.topology.browserProcessCount) {
+        gateErrors.push(
+          `${run.label}: expected ${run.topology.browserProcessCount} runtime browser launches, observed ${run.runtimeBrowserLaunchCount}.`,
+        );
+      }
+    }
+  }
+  for (const comparison of pixelComparisons) {
+    if (comparison.mismatchCount !== 0) {
+      gateErrors.push(`${comparison.label}: ${comparison.mismatchCount} PNG mismatch(es).`);
+    }
+  }
+
+  const storyfreezePackageDir = path.join(fixtureDir, 'node_modules', 'storyfreeze');
+  const storyfreezePackage = JSON.parse(fs.readFileSync(path.join(storyfreezePackageDir, 'package.json'), 'utf8'));
+  const fixturePackage = JSON.parse(fs.readFileSync(path.join(fixtureDir, 'package.json'), 'utf8'));
+  const result = {
+    schemaVersion: 1,
+    kind: 'persistent-preview-differential',
+    recordedAt: new Date().toISOString(),
+    githubActions: {
+      repository: process.env.GITHUB_REPOSITORY || 'unknown',
+      runAttempt: process.env.GITHUB_RUN_ATTEMPT || 'unknown',
+      runId: process.env.GITHUB_RUN_ID || 'unknown',
+      workflowRef: process.env.GITHUB_WORKFLOW_REF || 'unknown',
+      workflowSha: process.env.GITHUB_WORKFLOW_SHA || 'unknown',
+    },
+    storyfreezeCommit: process.env.STORYFREEZE_BENCHMARK_COMMIT || 'unknown',
+    storyfreezePackageHash: hashDirectory(storyfreezePackageDir),
+    storyfreezeTree: process.env.STORYFREEZE_BENCHMARK_TREE || 'unknown',
+    storyfreezeVersion: storyfreezePackage.version,
+    provisioning: process.env.STORYFREEZE_BROWSER_PROVISIONING || 'explicit-install',
+    scenario: {
+      backend: 'playwright',
+      benchmarkProfile,
+      captureProtocols,
+      exclude: benchmarkExclude,
+      fixture: fixturePackage.name,
+      launchOptions,
+      measuredExecutionOrder: measuredExecutionOrder.map(run => run.label),
+      measuredRuns,
+      mode: 'managed-static',
+      parallel,
+      pngs: expectedPngCount,
+      processExitTimeoutMs,
+      sampleIntervalMs,
+      startingProtocol,
+      stories: expectedStoryCount,
+      storybook: fixturePackage.devDependencies.storybook,
+      warmupExecutionOrder: warmupExecutionOrder.map(run => run.label),
+      warmupRuns,
+    },
+    environment: {
+      arch: process.arch,
+      browser,
+      cpuCount: os.cpus().length,
+      cpuModel: os.cpus()[0]?.model,
+      node: process.version,
+      platform: process.platform,
+      release: os.release(),
+      runnerImage: process.env.ImageOS || 'unknown',
+      runnerImageVersion: process.env.ImageVersion || 'unknown',
+      totalMemoryBytes: os.totalmem(),
+    },
+    protocols: Object.fromEntries(
+      protocols.map(protocol => [
+        protocol,
+        {
+          runs: runs[protocol].map(publicRun),
+          summary: summaries[protocol],
+          warmups: warmups[protocol].map(publicRun),
+        },
+      ]),
+    ),
+    protocolDifferential: {
+      pixelComparisons,
+      ratios: {
+        captureTimeP95: ratio(summaries.persistent.captureTimeP95Ms, summaries.strict.captureTimeP95Ms),
+        cpuTime: ratio(summaries.persistent.medianCpuTimeMs, summaries.strict.medianCpuTimeMs),
+        peakTreeRss: ratio(summaries.persistent.medianPeakTreeRssBytes, summaries.strict.medianPeakTreeRssBytes),
+        wallTimeP50: ratio(summaries.persistent.wallTimeP50Ms, summaries.strict.wallTimeP50Ms),
+        wallTimeP95: ratio(summaries.persistent.wallTimeP95Ms, summaries.strict.wallTimeP95Ms),
+      },
+    },
+    gate: { errors: gateErrors, passed: gateErrors.length === 0 },
+  };
+
+  const json = `${JSON.stringify(result, null, 2)}\n`;
+  if (outputFile) {
+    fs.mkdirSync(path.dirname(outputFile), { recursive: true });
+    fs.writeFileSync(outputFile, json);
+  }
+  console.log(`STORYFREEZE_BROWSER_BENCHMARK_RESULT=${JSON.stringify(result)}`);
+  if (gateErrors.length) throw new Error(`Persistent Preview differential gate failed:\n- ${gateErrors.join('\n- ')}`);
 }
 
 async function runIsolationComparison(browser) {
@@ -1113,7 +1335,8 @@ async function main() {
   const server = startVitePreview();
   try {
     await waitForServer(server);
-    await runIsolationComparison(browser);
+    if (benchmarkComparison === 'protocol') await runProtocolComparison(browser);
+    else await runIsolationComparison(browser);
   } finally {
     await stopServer(server);
   }
@@ -1130,7 +1353,11 @@ if (require.main === module) {
           {
             schemaVersion: benchmarkComparison === 'topology' ? 2 : 1,
             kind:
-              benchmarkComparison === 'topology' ? 'browser-topology-differential' : 'browser-isolation-differential',
+              benchmarkComparison === 'topology'
+                ? 'browser-topology-differential'
+                : benchmarkComparison === 'protocol'
+                  ? 'persistent-preview-differential'
+                  : 'browser-isolation-differential',
             storyfreezeCommit: process.env.STORYFREEZE_BENCHMARK_COMMIT || 'unknown',
             storyfreezeTree: process.env.STORYFREEZE_BENCHMARK_TREE || 'unknown',
             recordedAt: new Date().toISOString(),
@@ -1152,6 +1379,7 @@ module.exports = {
   benchmarkProfilesForComparison,
   chromiumProcessType,
   findObservedProcesses,
+  hashDirectory,
   isolationExecutionOrder,
   parseParallel,
   processIdentity,

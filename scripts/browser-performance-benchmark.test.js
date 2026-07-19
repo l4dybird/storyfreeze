@@ -1,10 +1,14 @@
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const test = require('node:test');
 
 const {
   benchmarkProfilesForComparison,
   chromiumProcessType,
   findObservedProcesses,
+  hashDirectory,
   isolationExecutionOrder,
   parseParallel,
   processIdentity,
@@ -17,6 +21,10 @@ test('uses complete measured rotations for each comparison profile', () => {
     record: { measuredRuns: 9, warmupRuns: 2 },
   });
   assert.deepEqual(benchmarkProfilesForComparison('isolation').record, { measuredRuns: 10, warmupRuns: 2 });
+  assert.deepEqual(benchmarkProfilesForComparison('protocol'), {
+    pr: { measuredRuns: 3, warmupRuns: 1 },
+    record: { measuredRuns: 5, warmupRuns: 2 },
+  });
 });
 
 test('rotates every benchmark lane through every execution position', () => {
@@ -57,14 +65,35 @@ test('tracks observed processes by PID and Linux start time', () => {
   assert.deepEqual(findObservedProcesses(processes, new Set(['101:1000', '202:3000'])), [second]);
 });
 
+test('hashes package files deterministically without workspace dependencies', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'storyfreeze-package-hash-'));
+  try {
+    fs.mkdirSync(path.join(directory, 'dist'));
+    fs.writeFileSync(path.join(directory, 'package.json'), '{"name":"fixture"}');
+    fs.writeFileSync(path.join(directory, 'dist', 'index.js'), 'export {};');
+    fs.mkdirSync(path.join(directory, 'node_modules'));
+    fs.writeFileSync(path.join(directory, 'node_modules', 'ignored.js'), 'ignored');
+    const first = hashDirectory(directory);
+    fs.writeFileSync(path.join(directory, 'node_modules', 'ignored.js'), 'changed');
+    assert.equal(hashDirectory(directory), first);
+    fs.writeFileSync(path.join(directory, 'dist', 'index.js'), 'export const changed = true;');
+    assert.notEqual(hashDirectory(directory), first);
+  } finally {
+    fs.rmSync(directory, { force: true, recursive: true });
+  }
+});
+
 test('summarizes capture/runtime phases, queue utilization, and topology', () => {
   const summary = summarizeRuns([
     {
       browserCrashCount: 0,
+      browserGenerationCount: 1,
       browserCloseErrorCount: 0,
       browserCloseEventCount: 5,
       captureDiagnostics: [
         { durationMs: 100, phase: 'navigation', state: 'end', type: 'capture-phase' },
+        { durationMs: 10, phase: 'story-switch', state: 'end', type: 'capture-phase' },
+        { capturesInContext: 128, type: 'context-recycle' },
         { durationMs: 250, phase: 'capture-worker-boot', state: 'end', type: 'runtime-phase' },
         { durationMs: 7, state: 'start', type: 'queue-task' },
         {
@@ -112,6 +141,10 @@ test('summarizes capture/runtime phases, queue utilization, and topology', () =>
   ]);
 
   assert.deepEqual(summary.diagnostics.phaseTimings.navigation, { p50Ms: 100, p95Ms: 100, samples: 1 });
+  assert.equal(summary.diagnostics.navigationCount, 1);
+  assert.equal(summary.diagnostics.storySwitchCount, 1);
+  assert.equal(summary.diagnostics.contextRecycleCount, 1);
+  assert.equal(summary.browserGenerationCount, 1);
   assert.deepEqual(summary.diagnostics.runtimePhaseTimings['capture-worker-boot'], {
     p50Ms: 250,
     p95Ms: 250,

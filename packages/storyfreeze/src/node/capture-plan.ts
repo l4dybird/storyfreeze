@@ -73,7 +73,7 @@ export function createCapturePlan(manifest: StoryFreezeManifest): CapturePlan {
 export function profileSwitchCost(current: EmulationProfile | undefined, next: EmulationProfile): number {
   if (!current || sameEmulationProfile(current, next)) return 0;
   if (current.isMobile !== next.isMobile || current.hasTouch !== next.hasTouch) return 350;
-  if (current.deviceScaleFactor !== next.deviceScaleFactor || current.isLandscape !== next.isLandscape) return 100;
+  if (current.deviceScaleFactor !== next.deviceScaleFactor) return 100;
   return 15;
 }
 

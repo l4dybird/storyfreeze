@@ -348,7 +348,8 @@ export class CapturingBrowser extends BaseBrowser {
     const currentProfile = this.viewport ? normalizeEmulationProfile(this.viewport) : undefined;
     if (!currentProfile || !sameEmulationProfile(currentProfile, nextProfile)) {
       this.debug('Change viewport', JSON.stringify(nextViewport));
-      // Changing mobile or touch emulation requires a fresh Storybook navigation.
+      // Changing mobile, touch, or device-scale emulation requires a fresh Storybook navigation.
+      // Orientation follows the live width/height update and does not invalidate the current document.
       const willBeReloaded = !currentProfile || !sameEmulationClass(currentProfile, nextProfile);
       if (willBeReloaded) {
         // Avoid racing emulation changes against Storybook's preview lifecycle.
@@ -1095,12 +1096,7 @@ export class CapturingBrowser extends BaseBrowser {
       );
       let viewportChanged = false;
       if (!sameEmulationProfile(baseProfile, targetProfile)) {
-        if (
-          targetProfile.deviceScaleFactor !== baseProfile.deviceScaleFactor ||
-          targetProfile.isMobile !== baseProfile.isMobile ||
-          targetProfile.hasTouch !== baseProfile.hasTouch ||
-          targetProfile.isLandscape !== baseProfile.isLandscape
-        ) {
+        if (!sameEmulationClass(baseProfile, targetProfile)) {
           throw new Error(`Variant ${variantId} crosses an unsafe emulation boundary.`);
         }
         const viewport = toViewport(targetProfile);
@@ -1324,12 +1320,7 @@ export class CapturingBrowser extends BaseBrowser {
               { hasCustomReset: this.previewRuntimeMetadata?.hasCustomReset },
             )
           : { mode: 'strict' as const, reason: 'viewport could not be normalized' };
-        const unsafeProfile =
-          !targetProfile ||
-          targetProfile.deviceScaleFactor !== baseProfile.deviceScaleFactor ||
-          targetProfile.isMobile !== baseProfile.isMobile ||
-          targetProfile.hasTouch !== baseProfile.hasTouch ||
-          targetProfile.isLandscape !== baseProfile.isLandscape;
+        const unsafeProfile = !targetProfile || !sameEmulationClass(baseProfile, targetProfile);
         if (hasRuntimeWait || requiresViewportReload || unsafeProfile || eligibility.mode === 'strict') {
           const reason = hasRuntimeWait
             ? 'runtime waitFor cannot be replayed safely'

@@ -65,7 +65,6 @@ export function sameEmulationClass(left: EmulationProfile, right: EmulationProfi
   return (
     left.deviceScaleFactor === right.deviceScaleFactor &&
     left.isMobile === right.isMobile &&
-    left.hasTouch === right.hasTouch &&
-    left.isLandscape === right.isLandscape
+    left.hasTouch === right.hasTouch
   );
 }

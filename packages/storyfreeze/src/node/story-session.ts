@@ -63,12 +63,7 @@ export function classifyBatchEligibility(
 }
 
 function emulationClassKey(profile: EmulationProfile): string {
-  return [
-    profile.deviceScaleFactor,
-    profile.isMobile ? 1 : 0,
-    profile.hasTouch ? 1 : 0,
-    profile.isLandscape ? 1 : 0,
-  ].join(':');
+  return [profile.deviceScaleFactor, profile.isMobile ? 1 : 0, profile.hasTouch ? 1 : 0].join(':');
 }
 
 function sessionId(storyId: string, profile: EmulationProfile): string {
@@ -76,8 +71,8 @@ function sessionId(storyId: string, profile: EmulationProfile): string {
 }
 
 /**
- * Builds opt-in sessions around a default capture. Different mobile/touch/DPR/orientation classes
- * remain fresh-navigation boundaries; width/height-only transitions may share a session.
+ * Builds opt-in sessions around a default capture. Different mobile/touch/DPR classes remain
+ * fresh-navigation boundaries; width/height/orientation transitions may share a session.
  */
 export function createStorySessionPlans(plan: { captures: readonly PlannedCapture[] }, mode: CaptureProtocolMode) {
   const strictCaptures: PlannedCapture[] = [];

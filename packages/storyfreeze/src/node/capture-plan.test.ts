@@ -19,14 +19,16 @@ const desktop = {
   isLandscape: true,
 };
 const resized = { ...desktop, width: 1024 };
+const portrait = { ...desktop, width: 600, height: 800, isLandscape: false };
 const highDpr = { ...desktop, deviceScaleFactor: 2 };
 const mobile = { ...desktop, width: 390, height: 844, isMobile: true, hasTouch: true, isLandscape: false };
 
 describe(profileSwitchCost, () => {
-  it('weights mobile/touch, DPR/orientation, and resize switches separately', () => {
+  it('weights mobile/touch, DPR, and live resize/orientation switches separately', () => {
     expect(profileSwitchCost(undefined, desktop)).toBe(0);
     expect(profileSwitchCost(desktop, desktop)).toBe(0);
     expect(profileSwitchCost(desktop, resized)).toBe(15);
+    expect(profileSwitchCost(desktop, portrait)).toBe(15);
     expect(profileSwitchCost(desktop, highDpr)).toBe(100);
     expect(profileSwitchCost(desktop, mobile)).toBe(350);
   });

@@ -4,8 +4,19 @@ import { randomBytes } from 'crypto';
 import type { MainOptions } from './types.js';
 import sanitize from 'sanitize-filename';
 import { captureDiagnosticsEnabled, emitCaptureDiagnostic } from './capture-diagnostics.js';
+import type { ScreenshotCaptureDimensions } from './browser-backend.js';
 
 export const MAXIMUM_RETAINED_SCREENSHOT_BYTES = 64 * 1024 * 1024;
+
+export function estimateScreenshotBufferReservation(dimensions: ScreenshotCaptureDimensions | undefined) {
+  if (!dimensions) return undefined;
+  const scale = Math.max(1, dimensions.deviceScaleFactor);
+  const width = Math.ceil(dimensions.width * scale);
+  const height = Math.ceil(dimensions.height * scale);
+  const rawBytes = width * height * 4 + height;
+  if (!Number.isSafeInteger(rawBytes) || rawBytes < 1) return undefined;
+  return rawBytes + Math.ceil(rawBytes * 0.02) + 1024 * 1024;
+}
 
 export interface TraceFile {
   write(chunk: Buffer): Promise<void>;

@@ -4,7 +4,7 @@ import type {
   BrowserBackend,
   BrowserConsoleMessage,
   BrowserSessionOptions,
-  ScreenshotCaptureOptions,
+  ScreenshotCaptureController,
 } from './browser-backend.js';
 import type { BrowserSessionSource } from './browser-process-coordinator.js';
 import type { Story } from './story.js';
@@ -17,7 +17,6 @@ import type {
   StrictScreenshotOptions,
   Exposed,
   PreviewCaptureDiagnostic,
-  Viewport,
 } from '../shared/types.js';
 import { InvalidCurrentStoryStateError, PreviewReadyTimeoutError, SimplePreviewReadyTimeoutError } from './errors.js';
 import {
@@ -29,7 +28,12 @@ import {
   type InvalidVariantKeysReason,
 } from '../shared/screenshot-options-helper.js';
 import { Logger } from './logger.js';
-import { FileSystem, type ScreenshotBudgetDiagnosticContext, type TraceFile } from './file.js';
+import {
+  estimateScreenshotBufferReservation,
+  FileSystem,
+  type ScreenshotBudgetDiagnosticContext,
+  type TraceFile,
+} from './file.js';
 import { ResourceWatcher } from './resource-watcher.js';
 import { StoryNavigator } from './story-navigator.js';
 import { captureDiagnosticsEnabled, emitCaptureDiagnostic, measureCaptureDiagnostic } from './capture-diagnostics.js';
@@ -57,33 +61,22 @@ import { raceAgainstTimeout } from './async-utils.js';
 
 const disableAnimationStylePath = fileURLToPath(new URL('../../assets/disable-animation.css', import.meta.url));
 
-function estimatePngBufferReservation(options: ScreenshotCaptureOptions, viewport: Viewport | undefined) {
-  if (options.fullPage) return undefined;
-  const dimensions = options.clip ?? viewport;
-  if (!dimensions) return undefined;
-  const scale = Math.max(1, viewport?.deviceScaleFactor ?? 1);
-  const width = Math.ceil(dimensions.width * scale);
-  const height = Math.ceil(dimensions.height * scale);
-  const rawBytes = width * height * 4 + height;
-  if (!Number.isSafeInteger(rawBytes) || rawBytes < 1) return undefined;
-  return rawBytes + Math.ceil(rawBytes * 0.02) + 1024 * 1024;
-}
-
-function captureScreenshotWithBudget(
+function createScreenshotCaptureController(
   fileSystem: FileSystem,
-  options: ScreenshotCaptureOptions,
-  viewport: Viewport | undefined,
-  capture: () => Promise<Buffer | null>,
   signal?: AbortSignal,
   diagnosticContext?: ScreenshotBudgetDiagnosticContext,
-) {
-  if (typeof fileSystem.captureScreenshot !== 'function') return capture();
-  return fileSystem.captureScreenshot(
-    estimatePngBufferReservation(options, viewport),
-    capture,
-    signal,
-    diagnosticContext,
-  );
+): ScreenshotCaptureController {
+  return {
+    capture(dimensions, capture) {
+      if (typeof fileSystem.captureScreenshot !== 'function') return capture();
+      return fileSystem.captureScreenshot(
+        estimateScreenshotBufferReservation(dimensions),
+        capture,
+        signal,
+        diagnosticContext,
+      );
+    },
+  };
 }
 
 function releaseCapturedScreenshot(fileSystem: FileSystem, buffer: Buffer | null | undefined) {
@@ -888,13 +881,9 @@ export class CapturingBrowser extends BaseBrowser {
         clip: captureOptions.clip ?? undefined,
       };
       buffer = await this.measurePhase('screenshot', () =>
-        captureScreenshotWithBudget(
-          fileSystem,
+        this.page.screenshot(
           screenshotOptions,
-          this.viewport,
-          () => this.page.screenshot(screenshotOptions),
-          deadline.signal,
-          this.diagnosticContext(),
+          createScreenshotCaptureController(fileSystem, deadline.signal, this.diagnosticContext()),
         ),
       );
       if (buffer) onCapturedBuffer?.(buffer, releaseBuffer);
@@ -1145,13 +1134,9 @@ export class CapturingBrowser extends BaseBrowser {
         clip: options.clip ?? undefined,
       };
       retainedBuffer = await this.measurePhase('screenshot', () =>
-        captureScreenshotWithBudget(
-          fileSystem,
+        this.page.screenshot(
           screenshotOptions,
-          this.viewport,
-          () => this.page.screenshot(screenshotOptions),
-          deadline.signal,
-          this.diagnosticContext(),
+          createScreenshotCaptureController(fileSystem, deadline.signal, this.diagnosticContext()),
         ),
       );
       releaseAbandonedBuffer();

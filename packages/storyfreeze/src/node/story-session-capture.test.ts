@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vite-plus/test';
 import { createBaseScreenshotOptions, variantKeyIdentifier } from '../shared/screenshot-options-helper.js';
 import { BaseBrowser } from './browser.js';
+import type { ScreenshotCaptureController } from './browser-backend.js';
 import { CaptureDeadline } from './capture-deadline.js';
 import { CapturingBrowser } from './capturing-browser.js';
 import { Logger } from './logger.js';
@@ -167,7 +168,9 @@ describe(CapturingBrowser.prototype.screenshotSessionVariants, () => {
       }),
     };
     const page = {
-      screenshot: vi.fn(() => screenshot),
+      screenshot: vi.fn((_options: unknown, controller: ScreenshotCaptureController) =>
+        controller.capture({ width: 800, height: 600, deviceScaleFactor: 1 }, () => screenshot),
+      ),
       subscribeConsole: vi.fn(() => vi.fn()),
       waitForRenderTick: vi.fn(async () => {}),
       waitForVisualCommit: vi.fn(async () => ({ didTimeout: false })),

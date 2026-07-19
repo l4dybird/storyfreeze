@@ -58,6 +58,19 @@ export interface ScreenshotCaptureOptions {
   omitBackground?: boolean;
 }
 
+export interface ScreenshotCaptureDimensions {
+  deviceScaleFactor: number;
+  height: number;
+  width: number;
+}
+
+export interface ScreenshotCaptureController {
+  capture(
+    dimensions: ScreenshotCaptureDimensions | undefined,
+    capture: () => Promise<Buffer | null>,
+  ): Promise<Buffer | null>;
+}
+
 export interface RequestListeners {
   finished(request: BrowserRequest): void;
   started(request: BrowserRequest): void;
@@ -87,7 +100,7 @@ export interface CapturePage {
   hover(selector: string): Promise<void>;
   readMetrics(): Promise<BrowserMetrics>;
   resetPointer(): Promise<void>;
-  screenshot(options: ScreenshotCaptureOptions): Promise<Buffer | null>;
+  screenshot(options: ScreenshotCaptureOptions, controller?: ScreenshotCaptureController): Promise<Buffer | null>;
   setViewport(viewport: Viewport): Promise<void>;
   startTrace(sink: TraceSink): Promise<void>;
   stopTrace(): Promise<void>;

@@ -106,10 +106,10 @@ describe(selectTopology, () => {
     });
   });
 
-  it('boots no more workers than captures and grows beyond the initial profile groups only for queue depth', () => {
-    expect(selectWorkerCount(plan(2), 4)).toEqual({ initialWorkerCount: 1, workerCount: 2 });
-    expect(selectWorkerCount(plan(6), 4)).toEqual({ initialWorkerCount: 1, workerCount: 4 });
-    expect(selectWorkerCount(plan(8), 4)).toEqual({ initialWorkerCount: 1, workerCount: 4 });
+  it('boots the requested capture workers immediately without exceeding the capture count', () => {
+    expect(selectWorkerCount(plan(2), 4)).toEqual({ initialWorkerCount: 2, workerCount: 2 });
+    expect(selectWorkerCount(plan(6), 4)).toEqual({ initialWorkerCount: 4, workerCount: 4 });
+    expect(selectWorkerCount(plan(8), 4)).toEqual({ initialWorkerCount: 4, workerCount: 4 });
   });
 
   it('reserves dormant workers for runtime-discovered variants without booting them initially', () => {

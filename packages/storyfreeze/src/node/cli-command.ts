@@ -103,7 +103,7 @@ const storyfreezeCommandArgs = {
   },
   maxCapturesPerContext: {
     type: 'number',
-    default: 0,
+    default: 128,
     description: 'Recycle a browser context after this many captures. Zero disables count-based recycling.',
   },
   maxContextAge: {
@@ -129,8 +129,8 @@ const storyfreezeCommandArgs = {
   captureProtocol: {
     type: 'enum',
     choices: captureProtocolModes,
-    default: 'strict',
-    description: 'Variant capture protocol. strict preserves fresh navigation for every capture.',
+    default: 'auto',
+    description: 'Capture protocol. auto reuses managed Storybook Preview pages between stories.',
   },
   browserLaunchOptions: {
     type: 'string',
@@ -285,14 +285,10 @@ function toMainOptions(
     viewportDelay: values.viewportDelay,
     reloadAfterChangeViewport: values.reloadAfterChangeViewport,
     stateChangeDelay: values.stateChangeDelay,
-    ...(values.maxCapturesPerContext > 0 || values.maxContextAge > 0
-      ? {
-          recyclingPolicy: {
-            ...(values.maxCapturesPerContext > 0 ? { maxCapturesPerContext: values.maxCapturesPerContext } : {}),
-            ...(values.maxContextAge > 0 ? { maxContextAgeMs: values.maxContextAge } : {}),
-          },
-        }
-      : {}),
+    recyclingPolicy: {
+      maxCapturesPerContext: values.maxCapturesPerContext,
+      maxContextAgeMs: values.maxContextAge,
+    },
     disableCssAnimation: values.disableCssAnimation,
     disableWaitAssets: values.disableWaitAssets,
     trace: values.trace,

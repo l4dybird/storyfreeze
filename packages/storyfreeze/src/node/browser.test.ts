@@ -398,6 +398,30 @@ describe(MetricsWatcher, () => {
     controller.abort(new Error('interrupted'));
     await expect(aborted).rejects.toThrow('interrupted');
   });
+
+  it('resets measurement state when a page-scoped watcher is reused', async () => {
+    const readMetrics = vi
+      .fn()
+      .mockResolvedValueOnce({ nodes: 1, recalcStyleCount: 1, layoutCount: 1 })
+      .mockResolvedValueOnce({ nodes: 1, recalcStyleCount: 1, layoutCount: 1 })
+      .mockResolvedValueOnce({ nodes: 1, recalcStyleCount: 1, layoutCount: 1 })
+      .mockResolvedValueOnce({ nodes: 2, recalcStyleCount: 2, layoutCount: 2 })
+      .mockResolvedValueOnce({ nodes: 2, recalcStyleCount: 2, layoutCount: 2 })
+      .mockResolvedValueOnce({ nodes: 2, recalcStyleCount: 2, layoutCount: 2 });
+    const watcher = new MetricsWatcher({ readMetrics } as never, 3);
+
+    await expect(watcher.waitForStable()).resolves.toMatchObject({ sampleCount: 3, stable: true });
+    await expect(watcher.waitForStable()).resolves.toMatchObject({
+      sampleCount: 3,
+      samples: [
+        { nodes: 2, recalcStyleCount: 2, layoutCount: 2 },
+        { nodes: 2, recalcStyleCount: 2, layoutCount: 2 },
+        { nodes: 2, recalcStyleCount: 2, layoutCount: 2 },
+      ],
+      stable: true,
+    });
+    expect(readMetrics).toHaveBeenCalledTimes(6);
+  });
 });
 
 describe(getDeviceDescriptors, () => {

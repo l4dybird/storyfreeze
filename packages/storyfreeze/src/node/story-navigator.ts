@@ -22,6 +22,7 @@ import {
   type PreviewRuntimeMetadata,
   type StoryFreezePreviewStateV1,
 } from '../shared/preview-protocol.js';
+import { WorkerSessionProtocolClient } from './worker-session-protocol.js';
 
 type ExpectedPreviewState = { storyId: string; requestId: string };
 
@@ -193,12 +194,17 @@ export class StoryNavigator {
   private current?: ExpectedPreviewState;
   private _rootOptions?: NormalizedScreenshotOptions;
   private _runtimeMetadata?: PreviewRuntimeMetadata;
+  private reusableDocument = false;
+  private workerSessionSupport: 'unknown' | 'supported' | 'unsupported' = 'unknown';
+  private readonly workerSession: WorkerSessionProtocolClient;
 
   constructor(
     private readonly page: NavigationPage,
     private readonly baseUrl: URL,
     private readonly workerId: number,
-  ) {}
+  ) {
+    this.workerSession = new WorkerSessionProtocolClient(page);
+  }
 
   get rootOptions() {
     return this._rootOptions;
@@ -208,7 +214,19 @@ export class StoryNavigator {
     return this._runtimeMetadata;
   }
 
+  get canSelectStory() {
+    return this.reusableDocument && this.workerSessionSupport !== 'unsupported';
+  }
+
+  async detectWorkerSessionSupport(): Promise<boolean> {
+    if (this.workerSessionSupport !== 'unknown') return this.workerSessionSupport === 'supported';
+    const supported = await this.workerSession.isAvailable();
+    this.workerSessionSupport = supported ? 'supported' : 'unsupported';
+    return supported;
+  }
+
   async navigate(storyId: string, timeout = 60_000, retryCount = 0): Promise<void> {
+    this.invalidateDocument();
     const requestId = `${this.workerId}-${++this.sequence}`;
     this.current = { storyId, requestId };
     this._rootOptions = undefined;
@@ -216,6 +234,31 @@ export class StoryNavigator {
     const url = createStoryPreviewUrl(this.baseUrl, storyId, requestId, retryCount);
     await this.page.goto(url.href, { timeout, waitUntil: 'domcontentloaded' });
     assertPreviewUrl(this.page, url, this.current);
+    this.reusableDocument = true;
+  }
+
+  async selectStory(storyId: string): Promise<void> {
+    if (!this.reusableDocument) throw new Error('Story preview document is not ready for worker-session selection.');
+    const requestId = `${this.workerId}-${++this.sequence}`;
+    this.current = { storyId, requestId };
+    this._rootOptions = undefined;
+    this._runtimeMetadata = undefined;
+    await this.workerSession.selectStory(this.current);
+    this.workerSessionSupport = 'supported';
+  }
+
+  async completeCapture(): Promise<void> {
+    await this.workerSession.completeCapture();
+  }
+
+  invalidateDocument(): void {
+    this.reusableDocument = false;
+    this.workerSession.invalidate();
+  }
+
+  markWorkerSessionUnavailable(): void {
+    this.workerSessionSupport = 'unsupported';
+    this.workerSession.invalidate();
   }
 
   async waitForReady(timeout: number, signal?: AbortSignal): Promise<NormalizedScreenshotOptions> {

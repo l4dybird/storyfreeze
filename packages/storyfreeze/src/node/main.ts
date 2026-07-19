@@ -296,6 +296,9 @@ export async function main(mainOptions: MainOptions, overrides: Partial<MainDepe
             abortable(detectRunMode(storiesBrowser!, browserOptions), mainOptions.signal),
           )
         : browserOptions.mode;
+    if (mode === 'simple' && browserOptions.captureProtocol === 'story-session') {
+      throw new Error('--capture-protocol story-session requires managed Preview mode and the StoryFreeze addon.');
+    }
     if (browserOptions.mode !== 'auto') {
       logger.log(`StoryFreeze runs with ${mode} mode (forced by --mode ${mode}; validated on first capture).`);
     }
@@ -336,7 +339,7 @@ export async function main(mainOptions: MainOptions, overrides: Partial<MainDepe
     });
     for (const warning of manifest.warnings) logger.warn(warning);
     const capturePlan = createCapturePlan(manifest);
-    const executionWorkload = createExecutionWorkload(capturePlan, mainOptions.captureProtocol ?? 'strict');
+    const executionWorkload = createExecutionWorkload(capturePlan, mainOptions.captureProtocol ?? 'auto');
     const topologySelection = selectTopology(
       executionWorkload,
       { cpuCount: availableParallelism(), availableMemoryBytes: freemem() },

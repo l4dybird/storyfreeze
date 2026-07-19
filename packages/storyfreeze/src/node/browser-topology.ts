@@ -48,8 +48,7 @@ export function selectWorkerCount(plan: SchedulablePlan, maximumParallel: number
   const items = plannedItems(plan);
   const captureCount = items.length;
   if (captureCount === 0) return { initialWorkerCount: 0, workerCount: 0 };
-  const runnableProfileGroupCount = Math.max(1, plan.profileCount);
-  const initialWorkerCount = Math.min(maximumParallel, captureCount, runnableProfileGroupCount);
+  const initialWorkerCount = Math.min(maximumParallel, captureCount);
   const hasRuntimeDiscovery = items.some(item => item.executionMode === 'runtime-discovery');
   const hasAutoSessionFallback =
     'workItems' in plan &&

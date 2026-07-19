@@ -13,6 +13,9 @@ export class MetricsWatcher {
   ) {}
 
   async waitForStable(options: { quietMs?: number; timeoutMs?: number; signal?: AbortSignal } = {}) {
+    this.previous = [];
+    this._sampleCount = 0;
+    this._incompleteSampleCount = 0;
     const quietMs = options.quietMs ?? 0;
     const timeoutMs = options.timeoutMs ?? Number.POSITIVE_INFINITY;
     const startedAt = Date.now();

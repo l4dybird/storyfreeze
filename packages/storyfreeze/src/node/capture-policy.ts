@@ -29,9 +29,14 @@ export function shouldRecoverPlaywrightWorker(options: {
   aborted: boolean;
   healthy: boolean;
   maxRetryCount: number;
+  protocolFault?: boolean;
   retryCount: number;
 }) {
-  return !options.aborted && !options.healthy && options.retryCount < options.maxRetryCount;
+  return (
+    !options.aborted &&
+    (!options.healthy || options.protocolFault === true) &&
+    options.retryCount < options.maxRetryCount
+  );
 }
 
 export function shouldRecycleContext(

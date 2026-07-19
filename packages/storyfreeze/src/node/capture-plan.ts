@@ -18,6 +18,8 @@ export interface PlannedCapture {
   estimatedCostMs: number;
   executionMode: CaptureExecutionMode;
   profileHint?: string;
+  /** Runtime-only marker for a profile restored from a previously discovered profile hint. */
+  runtimeProfileResolved?: boolean;
 }
 
 export interface CapturePlan {

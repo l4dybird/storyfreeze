@@ -13,7 +13,12 @@ import type {
   Exposed,
   PreviewCaptureDiagnostic,
 } from '../shared/types.js';
-import { InvalidCurrentStoryStateError, PreviewReadyTimeoutError, SimplePreviewReadyTimeoutError } from './errors.js';
+import {
+  InvalidCurrentStoryStateError,
+  PreviewReadyTimeoutError,
+  PreviewStateMismatchError,
+  SimplePreviewReadyTimeoutError,
+} from './errors.js';
 import {
   createBaseScreenshotOptions,
   mergeScreenshotOptions,
@@ -58,6 +63,7 @@ import {
 } from './capture-policy.js';
 import { MetricsWatcher } from './metrics-watcher.js';
 import { createScreenshotCaptureController, releaseCapturedScreenshot } from './screenshot-capture-controller.js';
+import { isWorkerSessionProtocolFault, isWorkerSessionProtocolUnavailable } from './worker-session-protocol.js';
 
 const disableAnimationStylePath = fileURLToPath(new URL('../../assets/disable-animation.css', import.meta.url));
 
@@ -76,6 +82,7 @@ export { resolveViewport } from './emulation-profile.js';
  **/
 interface ScreenshotResult {
   buffer: Buffer | null;
+  resolvedProfile?: import('./emulation-profile.js').EmulationProfile;
   succeeded: boolean;
   variantKeysToPush: VariantKey[];
   defaultVariantSuffix?: string;
@@ -95,6 +102,7 @@ export class CapturingBrowser extends BaseBrowser {
   private currentVariantKey: VariantKey = { isDefault: true, keys: [] };
   private touched = false;
   private resourceWatcher?: ResourceWatcher;
+  private metricsWatcher?: MetricsWatcher;
   private navigator?: StoryNavigator;
   private diagnosticLastPhase?: string;
   private diagnosticOutcome: 'captured' | 'failed' | 'retry' | 'skipped' = 'failed';
@@ -105,6 +113,7 @@ export class CapturingBrowser extends BaseBrowser {
   private rootScreenshotOptions?: ScreenshotOptions;
   private previewRuntimeMetadata?: PreviewRuntimeMetadata;
   private previewSettledResourceGeneration?: number;
+  private workerSessionFallbackWarned = false;
 
   /**
    *
@@ -149,14 +158,17 @@ export class CapturingBrowser extends BaseBrowser {
     this.capturesInContext = 0;
     this.contextGeneration += 1;
     this.previewSettledResourceGeneration = undefined;
+    this.workerSessionFallbackWarned = false;
     await this.expose();
     this.resourceWatcher = new ResourceWatcher(this.page).init();
+    this.metricsWatcher = new MetricsWatcher(this.page, this.opt.metricsWatchRetryCount);
     this.navigator = new StoryNavigator(this.page, new URL(this.connection.url), this.idx);
   }
 
   protected override async onClosing() {
     const resourceWatcher = this.resourceWatcher;
     this.resourceWatcher = undefined;
+    this.metricsWatcher = undefined;
     this.navigator = undefined;
     try {
       resourceWatcher?.dispose();
@@ -234,14 +246,36 @@ export class CapturingBrowser extends BaseBrowser {
     this._currentStory = story;
     this.previewSettledResourceGeneration = undefined;
     this.debug('Set story', story.id);
-    await this.measurePhase('navigation', async () => {
-      await this.navigator!.navigate(story.id, deadline.navigationTimeout(), this.currentStoryRetryCount);
-      await this.addStyles();
-    });
+    const persistent =
+      this.mode === 'managed' && this.opt.captureProtocol !== 'strict' && this.navigator!.canSelectStory;
+    if (persistent) {
+      try {
+        await this.measurePhase('story-switch', () => this.navigator!.selectStory(story.id));
+      } catch (error) {
+        if (this.opt.captureProtocol === 'story-session' || !isWorkerSessionProtocolUnavailable(error)) throw error;
+        this.warnWorkerSessionFallback();
+        this.navigator!.markWorkerSessionUnavailable();
+        this.navigator!.invalidateDocument?.();
+        await this.measurePhase('navigation', async () => {
+          await this.navigator!.navigate(story.id, deadline.navigationTimeout(), this.currentStoryRetryCount);
+          await this.addStyles();
+        });
+      }
+    } else {
+      await this.measurePhase('navigation', async () => {
+        await this.navigator!.navigate(story.id, deadline.navigationTimeout(), this.currentStoryRetryCount);
+        await this.addStyles();
+      });
+    }
     if (this.mode === 'managed') {
       const options = await this.measurePhase('preview-ready', () =>
         this.navigator!.waitForReady(deadline.remaining(), deadline.signal),
       );
+      if (this.opt.captureProtocol !== 'strict' && !(await this.navigator!.detectWorkerSessionSupport())) {
+        const error = new Error('StoryFreeze worker-session preview protocol is unavailable or incompatible.');
+        if (this.opt.captureProtocol === 'story-session') throw error;
+        this.warnWorkerSessionFallback();
+      }
       this.rootScreenshotOptions = this.navigator!.rootOptions ?? options;
       this.previewRuntimeMetadata = this.navigator!.runtimeMetadata;
       return options;
@@ -254,8 +288,15 @@ export class CapturingBrowser extends BaseBrowser {
     return undefined;
   }
 
+  private warnWorkerSessionFallback() {
+    if (this.workerSessionFallbackWarned) return;
+    this.workerSessionFallbackWarned = true;
+    this.opt.logger.warn('Persistent Preview protocol is unavailable. Falling back to fresh navigation.');
+  }
+
   private async setViewport(opt: StrictScreenshotOptions, deadline: CaptureDeadline) {
-    if (!this.currentStory) {
+    const story = this.currentStory;
+    if (!story) {
       throw new InvalidCurrentStoryStateError();
     }
 
@@ -278,26 +319,22 @@ export class CapturingBrowser extends BaseBrowser {
     const currentProfile = this.viewport ? normalizeEmulationProfile(this.viewport) : undefined;
     if (!currentProfile || !sameEmulationProfile(currentProfile, nextProfile)) {
       this.debug('Change viewport', JSON.stringify(nextViewport));
-      // Changing mobile, touch, or device-scale emulation requires a fresh Storybook navigation.
-      // Orientation follows the live width/height update and does not invalidate the current document.
-      const willBeReloaded = !currentProfile || !sameEmulationClass(currentProfile, nextProfile);
-      if (willBeReloaded) {
-        // Avoid racing emulation changes against Storybook's preview lifecycle.
-        await this.page.goto('about:blank', {
-          timeout: deadline.navigationTimeout(),
-          waitUntil: 'domcontentloaded',
-        });
+      const requiresSessionRestart = currentProfile !== undefined && !sameEmulationClass(currentProfile, nextProfile);
+      if (requiresSessionRestart) {
+        await this.restartCaptureSession(undefined, { viewport: nextViewport });
+      } else {
+        await this.page.setViewport(nextViewport);
+        this.viewport = nextViewport;
       }
-      await this.page.setViewport(nextViewport);
-      this.viewport = nextViewport;
-      if (willBeReloaded || this.opt.reloadAfterChangeViewport) {
+      if (requiresSessionRestart || this.opt.reloadAfterChangeViewport) {
         // Start a fresh owned request after the viewport has settled.
         emitCaptureDiagnostic({
           type: 'viewport-triggered-navigation',
           planned: false,
           ...this.diagnosticContext(),
         });
-        await this.setCurrentStory(this.currentStory, deadline);
+        if (!requiresSessionRestart) this.navigator!.invalidateDocument();
+        await this.setCurrentStory(story, deadline);
         await deadline.wait(this.opt.viewportDelay);
       } else {
         await deadline.wait(this.opt.viewportDelay);
@@ -308,23 +345,22 @@ export class CapturingBrowser extends BaseBrowser {
   }
 
   private async applyPreNavigationProfile(plannedCapture: PlannedCapture | undefined, deadline: CaptureDeadline) {
-    if (!plannedCapture || plannedCapture.executionMode === 'runtime-discovery') return;
+    if (
+      !plannedCapture ||
+      (plannedCapture.executionMode === 'runtime-discovery' && !plannedCapture.runtimeProfileResolved)
+    )
+      return;
     const nextViewport = toViewport(plannedCapture.profile);
     if (this.viewport && sameEmulationProfile(normalizeEmulationProfile(this.viewport), plannedCapture.profile)) return;
 
     const currentProfile = this.viewport ? normalizeEmulationProfile(this.viewport) : undefined;
-    const expensiveSwitch =
-      currentProfile !== undefined &&
-      (plannedCapture.profile.isMobile !== currentProfile.isMobile ||
-        plannedCapture.profile.hasTouch !== currentProfile.hasTouch);
+    const expensiveSwitch = currentProfile !== undefined && !sameEmulationClass(currentProfile, plannedCapture.profile);
     if (expensiveSwitch) {
-      await this.page.goto('about:blank', {
-        timeout: deadline.navigationTimeout(),
-        waitUntil: 'domcontentloaded',
-      });
+      await this.restartCaptureSession(undefined, { viewport: nextViewport });
+    } else {
+      await this.page.setViewport(nextViewport);
+      this.viewport = nextViewport;
     }
-    await this.page.setViewport(nextViewport);
-    this.viewport = nextViewport;
     await deadline.wait(this.opt.viewportDelay);
     emitCaptureDiagnostic({
       type: 'pre-navigation-profile',
@@ -416,8 +452,7 @@ export class CapturingBrowser extends BaseBrowser {
   }
 
   private async waitBrowserMetricsStable(phase: 'preEmit' | 'postEmit', deadline = this.activeDeadline) {
-    const mw = new MetricsWatcher(this.page, this.opt.metricsWatchRetryCount);
-    const result = await mw.waitForStable({
+    const result = await this.metricsWatcher!.waitForStable({
       quietMs: 50,
       timeoutMs: deadline?.remaining(2000) ?? 2000,
       signal: deadline?.signal ?? this.opt.signal,
@@ -475,11 +510,11 @@ export class CapturingBrowser extends BaseBrowser {
     this.previewRuntimeMetadata = undefined;
   }
 
-  private async restartCaptureSession(originalError?: unknown) {
+  private async restartCaptureSession(originalError?: unknown, sessionOptions?: BrowserSessionOptions) {
     await this.close();
     this.resetCaptureState();
     try {
-      await this.boot();
+      await this.boot(sessionOptions);
     } catch (recoveryError) {
       if (originalError !== undefined) {
         throw new AggregateError([originalError, recoveryError], 'Failed to restart the Playwright capture worker.');
@@ -498,14 +533,15 @@ export class CapturingBrowser extends BaseBrowser {
 
   private async recycleContextIfNeeded() {
     const ageMs = this.contextStartedAt === 0 ? 0 : performance.now() - this.contextStartedAt;
-    if (!shouldRecycleContext(this.opt.recyclingPolicy, this.capturesInContext, ageMs)) return;
+    const policy =
+      this.opt.recyclingPolicy ?? (this.opt.captureProtocol === 'strict' ? undefined : { maxCapturesPerContext: 128 });
+    if (!shouldRecycleContext(policy, this.capturesInContext, ageMs)) return;
     emitCaptureDiagnostic({
       type: 'context-recycle',
       ageMs,
       capturesInContext: this.capturesInContext,
       reason:
-        this.opt.recyclingPolicy?.maxCapturesPerContext !== undefined &&
-        this.capturesInContext >= this.opt.recyclingPolicy.maxCapturesPerContext
+        policy?.maxCapturesPerContext !== undefined && this.capturesInContext >= policy.maxCapturesPerContext
           ? 'capture-count'
           : 'context-age',
       ...this.diagnosticContext(),
@@ -551,6 +587,7 @@ export class CapturingBrowser extends BaseBrowser {
     const deadline = new CaptureDeadline(this.opt.captureTimeout, requestId, this.opt.signal);
     this.activeDeadline = deadline;
     let attemptContextGeneration: number | undefined;
+    let completedInCurrentContext = false;
     let releaseRetainedAttemptBuffer: (() => void) | undefined;
     let attemptAbandoned = false;
     const releaseAbandonedAttempt = () => {
@@ -588,7 +625,9 @@ export class CapturingBrowser extends BaseBrowser {
     });
 
     try {
-      return await Promise.race([attempt, deadline.interruption]);
+      const result = await Promise.race([attempt, deadline.interruption]);
+      completedInCurrentContext = result.succeeded;
+      return result;
     } catch (error) {
       attemptAbandoned = true;
       releaseAbandonedAttempt();
@@ -633,6 +672,7 @@ export class CapturingBrowser extends BaseBrowser {
         aborted: this.opt.signal?.aborted ?? false,
         healthy: this.isSessionHealthy(),
         maxRetryCount: this.opt.captureMaxRetryCount,
+        protocolFault: isWorkerSessionProtocolFault(error) || error instanceof PreviewStateMismatchError,
         retryCount: this.currentStoryRetryCount,
       });
       if (!shouldRecover) throw error;
@@ -649,7 +689,10 @@ export class CapturingBrowser extends BaseBrowser {
         outcome: this.diagnosticOutcome,
         ...attemptDiagnosticContext,
       });
-      if (attemptContextGeneration !== undefined && this.contextGeneration === attemptContextGeneration) {
+      if (
+        attemptContextGeneration !== undefined &&
+        (this.contextGeneration === attemptContextGeneration || completedInCurrentContext)
+      ) {
         this.capturesInContext += 1;
       }
     }
@@ -830,6 +873,7 @@ export class CapturingBrowser extends BaseBrowser {
 
       return {
         buffer,
+        ...(this.viewport ? { resolvedProfile: normalizeEmulationProfile(this.viewport) } : {}),
         succeeded: true,
         variantKeysToPush,
         defaultVariantSuffix,
@@ -848,6 +892,11 @@ export class CapturingBrowser extends BaseBrowser {
     };
     try {
       unsubscribeConsole();
+    } catch (error) {
+      recordCleanupFailure(error);
+    }
+    try {
+      await this.navigator?.completeCapture?.();
     } catch (error) {
       recordCleanupFailure(error);
     }

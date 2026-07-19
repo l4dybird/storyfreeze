@@ -142,6 +142,7 @@ export interface ScreenshotWorker {
     plannedCapture?: PlannedCapture,
   ): Promise<{
     buffer: Buffer | null;
+    resolvedProfile?: EmulationProfile;
     succeeded: boolean;
     variantKeysToPush: VariantKey[];
     defaultVariantSuffix?: string;
@@ -246,6 +247,7 @@ export function createScreenshotService({
   const capturePlan = executionPlan?.capturePlan;
   const captureProtocol = executionPlan?.captureProtocol ?? 'strict';
   const { assignments, plannedWorkerCostMs } = initialAssignments(stories, workers, executionPlan);
+  const runtimeProfilesByHint = new Map<string, EmulationProfile>();
   const queue = new CaptureLeaseQueue(assignments);
   const diagnosticsEnabled = captureDiagnosticsEnabled();
   const initialCaptureCount = assignments.reduce((total, requests) => total + requests.length, 0);
@@ -441,6 +443,15 @@ export function createScreenshotService({
           }
 
           const request = lease.capture;
+          const cachedProfile = request.profileHint ? runtimeProfilesByHint.get(request.profileHint) : undefined;
+          const effectivePlannedCapture =
+            cachedProfile && request.plannedCapture?.executionMode === 'runtime-discovery'
+              ? {
+                  ...request.plannedCapture,
+                  profile: cachedProfile,
+                  runtimeProfileResolved: true,
+                }
+              : request.plannedCapture;
           queue.markRunning(request.captureId);
           inFlightCount += 1;
           const taskStartedAt = diagnosticsEnabled ? performance.now() : 0;
@@ -492,14 +503,20 @@ export function createScreenshotService({
                   forwardConsoleLogs,
                   trace,
                   fileSystem,
-                  request.plannedCapture,
+                  effectivePlannedCapture,
                 ),
                 operationTimeoutMs,
                 `Capture ${request.captureId}`,
                 () => worker.close?.() ?? Promise.resolve(),
               ),
             );
-            const { succeeded, buffer, variantKeysToPush, defaultVariantSuffix } = result;
+            const { succeeded, buffer, resolvedProfile, variantKeysToPush, defaultVariantSuffix } = result;
+
+            if (resolvedProfile) {
+              lastProfiles[workerId] = resolvedProfile;
+              request.profile = resolvedProfile;
+              if (request.profileHint) runtimeProfilesByHint.set(request.profileHint, resolvedProfile);
+            }
 
             if (!succeeded) {
               const retry = createRequest({
@@ -558,7 +575,7 @@ export function createScreenshotService({
                   forwardConsoleLogs,
                   trace,
                   fileSystem,
-                  captureProtocol,
+                  captureProtocol === 'story-session' ? 'auto' : captureProtocol,
                   output =>
                     saveCaptureOutput(request.story, output.variantKey, output.buffer, output.durationMs, 0).catch(
                       error => {

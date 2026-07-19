@@ -28,8 +28,50 @@ function pageWithState(getState: () => unknown) {
     goto: vi.fn(async (url: string) => {
       currentUrl = url;
     }),
-    evaluate: vi.fn(async () => getState()),
+    evaluate: vi.fn(async (_fn: unknown, argument?: { globalName?: string }) =>
+      argument?.globalName === '__STORYFREEZE_WORKER_SESSION__' ? false : getState(),
+    ),
     currentUrl: vi.fn(() => currentUrl),
+  };
+}
+
+function workerSessionPage() {
+  let currentUrl = 'about:blank';
+  let previewState: unknown = state('ready');
+  const protocol = {
+    protocolVersion: 1,
+    selectStory: vi.fn(async ({ requestId, storyId }: { requestId: string; storyId: string }) => {
+      previewState = state('ready', storyId, requestId);
+      return { requestId, storyId, generation: 1 };
+    }),
+    completeCapture: vi.fn(),
+  };
+  const page = {
+    goto: vi.fn(async (url: string) => {
+      currentUrl = url;
+      const parsed = new URL(url);
+      previewState = state('ready', parsed.searchParams.get('id')!, parsed.searchParams.get('storyfreezeRequestId')!);
+    }),
+    evaluate: vi.fn(async (fn: (argument: any) => unknown, argument?: any) => {
+      if (argument?.globalName === '__STORYFREEZE_WORKER_SESSION__') {
+        return fn(argument);
+      }
+      return previewState;
+    }),
+    currentUrl: vi.fn(() => currentUrl),
+  };
+  const originalWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
+  Object.defineProperty(globalThis, 'window', {
+    configurable: true,
+    value: { __STORYFREEZE_WORKER_SESSION__: protocol },
+  });
+  return {
+    page,
+    protocol,
+    restore() {
+      if (originalWindow) Object.defineProperty(globalThis, 'window', originalWindow);
+      else Reflect.deleteProperty(globalThis, 'window');
+    },
   };
 }
 
@@ -134,6 +176,42 @@ describe(StoryNavigator, () => {
     expect(vi.mocked(page.goto).mock.calls[0][0]).not.toContain('storyfreezeRetryCount');
     expect(vi.mocked(page.goto).mock.calls[1][0]).toContain('storyfreezeRetryCount=2');
     expect(vi.mocked(page.goto).mock.calls.map(([, options]) => options?.timeout)).toEqual([60_000, 1234]);
+  });
+
+  it('switches stories in one preview document after the initial navigation', async () => {
+    const fixture = workerSessionPage();
+    try {
+      const navigator = new StoryNavigator(fixture.page, new URL('https://example.test/storybook'), 7);
+      await navigator.navigate('button--primary');
+      await navigator.waitForReady(100);
+      await expect(navigator.detectWorkerSessionSupport()).resolves.toBe(true);
+      await navigator.selectStory('button--secondary');
+      await expect(navigator.waitForReady(100)).resolves.toEqual({ fullPage: true });
+      await navigator.completeCapture();
+
+      expect(fixture.page.goto).toHaveBeenCalledOnce();
+      expect(fixture.protocol.selectStory).toHaveBeenCalledWith({
+        requestId: '7-2',
+        storyId: 'button--secondary',
+      });
+      expect(fixture.protocol.completeCapture).toHaveBeenCalledWith('7-2');
+    } finally {
+      fixture.restore();
+    }
+  });
+
+  it('keeps a protocol-unavailable document on the fresh-navigation path', async () => {
+    const page = pageWithState(() => state('ready'));
+    const navigator = new StoryNavigator(page, new URL('https://example.test/storybook'), 7);
+
+    await navigator.navigate('button--primary');
+    expect(navigator.canSelectStory).toBe(true);
+    await expect(navigator.detectWorkerSessionSupport()).resolves.toBe(false);
+    expect(navigator.canSelectStory).toBe(false);
+    await navigator.navigate('button--secondary');
+    await expect(navigator.detectWorkerSessionSupport()).resolves.toBe(false);
+    expect(navigator.canSelectStory).toBe(false);
+    expect(page.evaluate).toHaveBeenCalledOnce();
   });
 
   it.each([

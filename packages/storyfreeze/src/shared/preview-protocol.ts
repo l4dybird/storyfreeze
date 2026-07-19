@@ -48,6 +48,26 @@ export function createPreviewStateBase(storyId: string, requestId: string): Prev
   };
 }
 
+export const STORYFREEZE_WORKER_SESSION_GLOBAL = '__STORYFREEZE_WORKER_SESSION__';
+export const STORYFREEZE_WORKER_SESSION_PROTOCOL_VERSION = 1 as const;
+
+export interface SelectWorkerStoryRequest {
+  requestId: string;
+  storyId: string;
+}
+
+export interface WorkerStorySelection extends SelectWorkerStoryRequest {
+  generation: number;
+}
+
+export interface WorkerSessionPreviewProtocol {
+  protocolVersion: typeof STORYFREEZE_WORKER_SESSION_PROTOCOL_VERSION;
+  selectStory(request: SelectWorkerStoryRequest): Promise<WorkerStorySelection>;
+  completeCapture(requestId: string): void;
+  current(): WorkerStorySelection | undefined;
+  dispose(): void;
+}
+
 export const STORYFREEZE_STORY_SESSION_GLOBAL = '__STORYFREEZE_STORY_SESSION__';
 export const STORYFREEZE_STORY_SESSION_PROTOCOL_VERSION = 3 as const;
 

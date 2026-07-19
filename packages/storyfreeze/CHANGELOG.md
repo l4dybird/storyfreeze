@@ -1,5 +1,12 @@
 # storyfreeze
 
+## 0.2.0-rc.0
+
+### Patch Changes
+
+- 3f57c15: Expose the story-session reset context type and organize internal deterministic and capture-protocol contracts before the release candidate.
+- Promote the validated alpha release to the first release candidate.
+
 ## 0.2.0-alpha.9
 
 ### Patch Changes

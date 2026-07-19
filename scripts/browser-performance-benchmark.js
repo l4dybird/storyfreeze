@@ -7,6 +7,7 @@ const path = require('path');
 const { execFileSync, spawn } = require('child_process');
 const { createRequire } = require('module');
 const { PNG } = require('pngjs');
+const { resolvePnpmCommand } = require('./pnpm-command.js');
 const { summarizeScreenshotBudget } = require('./screenshot-budget-summary.js');
 
 const fixtureDir = path.resolve(process.argv[2] || '.');
@@ -64,11 +65,8 @@ const clockTicksPerSecond =
   process.platform === 'linux' ? Number(execFileSync('getconf', ['CLK_TCK'], { encoding: 'utf8' }).trim()) : 0;
 
 function runPnpm(args) {
-  const inheritedPnpmCli = process.env.npm_execpath;
-  const usesInheritedCli = inheritedPnpmCli && /pnpm(?:\.cjs)?$/i.test(path.basename(inheritedPnpmCli));
-  const command = usesInheritedCli ? process.execPath : process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm';
-  const commandArgs = usesInheritedCli ? [inheritedPnpmCli, ...args] : args;
-  execFileSync(command, commandArgs, {
+  const invocation = resolvePnpmCommand(args);
+  execFileSync(invocation.command, invocation.args, {
     cwd: fixtureDir,
     env: {
       ...process.env,
@@ -76,7 +74,6 @@ function runPnpm(args) {
       FORCE_COLOR: '0',
       STORYBOOK_DISABLE_TELEMETRY: '1',
     },
-    shell: process.platform === 'win32' && !usesInheritedCli,
     stdio: 'inherit',
   });
 }

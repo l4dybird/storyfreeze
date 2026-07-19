@@ -55,7 +55,7 @@ jobs:
       - name: Verify release metadata
         if: matrix.node-version == '22.18.0'
         run: |
-          node --test scripts/get-dist-tag.test.js
+          node --test scripts/get-dist-tag.test.js scripts/pnpm-command.test.js
           node scripts/get-dist-tag.js --json
       - run: pnpm publish:dry-run
         if: matrix.node-version == '22.18.0'

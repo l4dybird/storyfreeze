@@ -242,6 +242,7 @@ function copyFailureFile(category, label, relativePath, source) {
 function measureCapture({
   backend,
   browser,
+  captureProtocol,
   captureTimeoutMs,
   exclude,
   expectedPngs,
@@ -274,6 +275,7 @@ function measureCapture({
     '--browser-isolation',
     isolation || 'process',
   ];
+  if (captureProtocol) args.push('--capture-protocol', captureProtocol);
   if (captureTimeoutMs !== undefined) args.push('--capture-timeout', String(captureTimeoutMs));
   if (trace) args.push('--trace');
   if (include) args.push('--include', include);
@@ -883,6 +885,7 @@ async function runIsolationComparison(browser) {
       const run = await measureCapture({
         backend: 'playwright',
         browser,
+        captureProtocol: 'strict',
         exclude: benchmarkExclude,
         expectedPngs: expectedPngCount,
         expectedStories: expectedStoryCount,
@@ -907,6 +910,7 @@ async function runIsolationComparison(browser) {
       const run = await measureCapture({
         backend: 'playwright',
         browser,
+        captureProtocol: 'strict',
         exclude: benchmarkExclude,
         expectedPngs: expectedPngCount,
         expectedStories: expectedStoryCount,

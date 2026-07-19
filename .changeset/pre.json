@@ -27,6 +27,7 @@
     "skip-duplicate-visual-wait",
     "stop-capture-queue",
     "stream-playwright-traces",
+    "support-storybook-10-indexer",
     "validate-cli-numbers"
   ]
 }

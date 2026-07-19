@@ -1,5 +1,11 @@
 # storyfreeze
 
+## 0.2.0-alpha.9
+
+### Patch Changes
+
+- 6b8f9fb: Load the viewport indexer on Storybook 10.0-10.4 by falling back to Storybook 10.5's story-file matcher when the internal export is unavailable.
+
 ## 0.2.0-alpha.8
 
 ### Patch Changes

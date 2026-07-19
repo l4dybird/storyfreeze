@@ -18,6 +18,7 @@
     "manifest-topology-story-sessions",
     "playwright-default",
     "protect-capture-paths",
+    "quick-screenshots-rest",
     "reject-redirected-previews",
     "resolve-viewport-globals",
     "safe-browser-sandbox",

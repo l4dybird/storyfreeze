@@ -1,5 +1,11 @@
 # storyfreeze
 
+## 0.2.0-alpha.4
+
+### Minor Changes
+
+- 0cd5738: Add manifest-first profile-aware scheduling, lazy process/context/hybrid/auto browser topology orchestration, deterministic context recycling, and the opt-in story-scoped capture protocol with generation and reset verification. Keep process isolation and strict fresh-navigation capture as compatibility defaults, with automatic strict fallback for unsafe or failed story sessions.
+
 ## 0.2.0-alpha.3
 
 ### Patch Changes

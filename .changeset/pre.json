@@ -15,6 +15,7 @@
     "guard-rendered-previews",
     "harden-browser-path-handling",
     "isolate-browser-runtimes",
+    "manifest-topology-story-sessions",
     "playwright-default",
     "protect-capture-paths",
     "reject-redirected-previews",

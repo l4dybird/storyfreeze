@@ -23,8 +23,8 @@ import {
   snapshotStorySessionRuntime,
 } from './story-session-controller.js';
 
-type Args<T> = T extends (...args: infer A) => any ? A : never;
-type Return<T> = T extends (...args: any) => infer R ? R : never;
+type Args<T> = T extends (...args: infer A) => unknown ? A : never;
+type Return<T> = T extends (...args: infer _A) => infer R ? R : never;
 
 type ExposedFns = {
   [P in keyof Exposed]: (...args: Args<Exposed[P]>) => Promise<Return<Exposed[P]>>;
@@ -77,7 +77,7 @@ function waitForDelayTime(time = 0, signal?: AbortSignal) {
   });
 }
 
-function waitUserFunction(waitFor: undefined | null | string | (() => Promise<any>)) {
+function waitUserFunction(waitFor: undefined | null | string | (() => Promise<unknown>)) {
   if (!waitFor) return Promise.resolve();
   if (typeof waitFor === 'string') {
     const userDefinedFn = (window as unknown as Record<string, unknown>)[waitFor];

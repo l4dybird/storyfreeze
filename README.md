@@ -6,9 +6,9 @@
 > originally forked from [reg-viz/storycap](https://github.com/reg-viz/storycap).
 > It is not an official successor to either project.
 
-StoryFreeze currently preserves the behavior of the Storycapture 9 baseline
-while it is being migrated to Storybook 10. The package and CLI use the
-`storyfreeze` name.
+StoryFreeze captures Storybook 10 stories with Playwright while preserving the
+established Storycapture output contract where it remains applicable. The
+package and CLI use the `storyfreeze` name and require Node.js 22 or newer.
 
 [storybook]: https://github.com/storybooks/storybook
 [playwright]: https://playwright.dev/
@@ -36,6 +36,7 @@ It is primarily responsible for image generation necessary for Visual Testing su
   - [`withScreenshot`](#withscreenshot)
   - [type `ScreenshotOptions`](#type-screenshotoptions)
   - [type `Variants`](#type-variants)
+  - [Supporting option types](#supporting-option-types)
   - [type `Viewport`](#type-viewport)
   - [function `isScreenshot`](#function-isscreenshot)
 - [Command Line Options](#command-line-options)
@@ -62,10 +63,10 @@ It is primarily responsible for image generation necessary for Visual Testing su
 ## Features
 
 - :camera: Take screenshots of each story via [Playwright][playwright].
-- :zap: Extremely fast.
-- :package: Zero configuration.
+- :zap: Parallel capture, sharding, and opt-in same-story capture reuse.
+- :package: Simple mode requires no addon configuration.
 - :rocket: Provide flexible screenshot shooting options.
-- :tada: Independent of any UI framework(React, Angular, Vue, etc...)
+- :tada: Framework-neutral preview and capture protocol.
 
 ## Install
 
@@ -245,20 +246,22 @@ loads it automatically from `storyfreeze/preview`; applications should configure
 
 ```ts
 interface ScreenshotOptions {
-  delay?: number;                           // default 0 msec
-  waitAssets?: boolean;                     // default true
-  waitFor?: string | () => Promise<void>;   // default ""
-  fullPage?: boolean;                       // default true
-  hover?: string;                           // default ""
-  focus?: string;                           // default ""
-  click?: string;                           // default ""
-  skip?: boolean;                           // default false
+  delay?: number; // default 0 msec
+  waitAssets?: boolean; // default true
+  waitFor?: string | (() => Promise<unknown>); // default ""
+  fullPage?: boolean; // default true
+  hover?: string; // default ""
+  focus?: string; // default ""
+  click?: string; // default ""
+  skip?: boolean; // default false
   viewport?: Viewport | string;
   viewports?: string[] | { [variantName]: Viewport | string };
   variants?: Variants;
-  waitImages?: boolean;                     // default true
-  omitBackground?: boolean;                 // default false
-  captureBeyondViewport?: boolean;          // default true
+  defaultVariantSuffix?: string;
+  reset?: (context: StorySessionResetContext) => void | Promise<void>;
+  waitImages?: boolean; // default true
+  omitBackground?: boolean; // default false
+  captureBeyondViewport?: boolean; // default true
   clip?: { x: number; y: number; width: number; height: number } | null; // default null
 }
 ```
@@ -273,6 +276,8 @@ interface ScreenshotOptions {
 - `skip`: If set true, StoryFreeze cancels capturing corresponding stories.
 - `viewport`, `viewports`: See type `Viewport` section below.
 - `variants`: See type `Variants` section below.
+- `defaultVariantSuffix`: If set, StoryFreeze appends this suffix to the default capture filename.
+- `reset`: Restores story-owned state after an opt-in same-document variant capture. It is not used by the default strict fresh-navigation path.
 - `waitImages`: Deprecated. Use `waitAssets`. If set true, StoryFreeze waits until `<img>` in the story are loaded.
 - `omitBackground`: If set true, StoryFreeze omits the background of the page allowing for transparent screenshots. Note the storybook theme will need to be transparent as well.
 - `captureBeyondViewport`: If set true, StoryFreeze captures beyond the viewport through the Chromium screenshot protocol. The default is true for the Playwright Chromium runtime.
@@ -288,7 +293,7 @@ type Variants = {
     extends?: string | string[]; // default: ""
     delay?: number;
     waitAssets?: boolean;
-    waitFor?: string | () => Promise<void>;
+    waitFor?: string | (() => Promise<unknown>);
     fullPage?: boolean;
     hover?: string;
     focus?: string;
@@ -304,6 +309,20 @@ type Variants = {
 ```
 
 - `extends`: If set other variant's name(or an array of names of them), this variant extends the other variant options. And this variant generates a PNG file with suffix such as `_${parentVariantName}_${thisVariantName}`.
+
+### Supporting option types
+
+The package root also exports `ScreenshotOptionFragments`,
+`ScreenshotOptionFragmentsForVariant`, and `StorySessionResetContext` for typed
+configuration helpers. The fragment types contain the shared fields shown
+above. The reset context identifies the active story and variant:
+
+```ts
+interface StorySessionResetContext {
+  storyId: string;
+  variantId: string;
+}
+```
 
 ### type `Viewport`
 
@@ -671,18 +690,24 @@ The current balanced [browser isolation record](https://github.com/l4dybird/stor
 
 ### Storybook versions
 
-StoryFreeze is tested with the followings versions:
+The package peer range is Storybook `^10.0.0`. The release gate uses the current
+Storybook 10 React/Vite fixture for complete simple and managed static E2E. The
+packed preset is also load-checked with Storybook 10.0 and 10.4 so the viewport
+indexer fallback remains compatible with releases that do not export
+`STORY_FILE_TEST_REGEXP`.
 
 - Simple mode:
-  - [x] Storybook v10.x
+  - [x] Storybook 10.x
 - Managed mode:
-  - [x] Storybook v10.x
+  - [x] Storybook 10.x
 
 See also packages in `examples` directory.
 
 ### UI frameworks
 
-StoryFreeze (with both simple and managed mode) is agnostic for specific UI frameworks(e.g. React, Angular, Vue.js, etc...). So you can use it with Storybook with your own favorite framework :smile: .
+The capture protocol is UI-framework neutral. React + Vite is the blocking
+release fixture; other Storybook 10 framework integrations are supported by the
+same preview protocol but are not separate release-gate fixtures.
 
 ## How it works
 

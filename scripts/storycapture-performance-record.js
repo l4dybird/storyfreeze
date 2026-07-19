@@ -203,6 +203,25 @@ function signalProcessGroup(pid, signal) {
   }
 }
 
+function signalChildProcessGroup(child, signal, errors, sendGroupSignal = signalProcessGroup) {
+  try {
+    sendGroupSignal(child.pid, signal);
+  } catch (groupError) {
+    errors.push(groupError);
+    try {
+      child.kill(signal);
+    } catch (childError) {
+      if (childError?.code !== 'ESRCH') errors.push(childError);
+    }
+  }
+}
+
+function detachTimedOutChild(child) {
+  child.stdout.destroy();
+  child.stderr.destroy();
+  child.unref();
+}
+
 function parseCaptureTime(log, pattern) {
   if (pattern) {
     const match = log.match(new RegExp(pattern, 'g'))?.at(-1)?.match(new RegExp(pattern));
@@ -290,13 +309,7 @@ async function measureCommand({
   let forceKillTimer;
   let finalSettlementTimer;
   const signalErrors = [];
-  const signalGroup = signal => {
-    try {
-      signalProcessGroup(child.pid, signal);
-    } catch (error) {
-      signalErrors.push(error);
-    }
-  };
+  const signalGroup = signal => signalChildProcessGroup(child, signal, signalErrors);
   let settleForcedCompletion;
   const forcedCompletion = new Promise(resolve => {
     settleForcedCompletion = resolve;
@@ -307,8 +320,7 @@ async function measureCommand({
     forceKillTimer = setTimeout(() => {
       signalGroup('SIGKILL');
       finalSettlementTimer = setTimeout(() => {
-        child.stdout.destroy();
-        child.stderr.destroy();
+        detachTimedOutChild(child);
         settleForcedCompletion({ code: null, forced: true, signal: 'SIGKILL' });
       }, processExitGraceMs);
     }, processExitGraceMs);
@@ -676,11 +688,13 @@ if (require.main === module) {
 module.exports = {
   captureWorkerSessionGenerationCount,
   comparePngDirectories,
+  detachTimedOutChild,
   hashPath,
   measureCommand,
   measuredOrder,
   parseCaptureTime,
   pngVisualHash,
   readExpectedPaths,
+  signalChildProcessGroup,
   validateConfig,
 };

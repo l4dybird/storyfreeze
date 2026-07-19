@@ -8,11 +8,13 @@ const { PNG } = require('pngjs');
 const {
   captureWorkerSessionGenerationCount,
   comparePngDirectories,
+  detachTimedOutChild,
   hashPath,
   measureCommand,
   measuredOrder,
   parseCaptureTime,
   readExpectedPaths,
+  signalChildProcessGroup,
   validateConfig,
 } = require('./storycapture-performance-record.js');
 
@@ -36,6 +38,30 @@ test('counts capture-worker sessions independently of browser-process topology',
     ]),
     2,
   );
+});
+
+test('falls back to the direct child and unrefs a forced completion', () => {
+  const groupError = Object.assign(new Error('group signal failed'), { code: 'EPERM' });
+  const errors = [];
+  const signals = [];
+  const child = {
+    pid: 42,
+    kill: signal => {
+      signals.push(signal);
+      return true;
+    },
+    stderr: { destroy: () => signals.push('stderr') },
+    stdout: { destroy: () => signals.push('stdout') },
+    unref: () => signals.push('unref'),
+  };
+
+  signalChildProcessGroup(child, 'SIGKILL', errors, () => {
+    throw groupError;
+  });
+  detachTimedOutChild(child);
+
+  assert.deepEqual(errors, [groupError]);
+  assert.deepEqual(signals, ['SIGKILL', 'stdout', 'stderr', 'unref']);
 });
 
 test('hashes deterministic directory contents and reads path contracts', () => {

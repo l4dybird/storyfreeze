@@ -102,9 +102,6 @@ importers:
       sanitize-filename:
         specifier: ^1.6.3
         version: 1.6.3
-      storybook:
-        specifier: ^10.0.0
-        version: 10.5.0(@types/react@19.2.17)(prettier@3.4.2)(react@18.3.1)(vite-plus@0.2.4(@types/node@22.20.1)(@voidzero-dev/vite-plus-core@0.2.4(@types/node@22.20.1)(esbuild@0.28.1)(typescript@5.7.3)(yaml@2.6.1))(esbuild@0.28.1)(typescript@5.7.3)(yaml@2.6.1))
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -112,6 +109,9 @@ importers:
       rimraf:
         specifier: ^6.0.0
         version: 6.1.3
+      storybook:
+        specifier: 10.5.2
+        version: 10.5.2(@types/react@19.2.17)(prettier@3.4.2)(react@18.3.1)(vite-plus@0.2.4(@types/node@22.20.1)(@voidzero-dev/vite-plus-core@0.2.4(@types/node@22.20.1)(esbuild@0.28.1)(typescript@5.7.3)(yaml@2.6.1))(esbuild@0.28.1)(typescript@5.7.3)(yaml@2.6.1))
       typedoc:
         specifier: 0.27.6
         version: 0.27.6(typescript@5.7.3)
@@ -3945,21 +3945,6 @@ packages:
   std-env@4.2.0:
     resolution: {integrity: sha512-oCUKSupKTHX53EyjDtuZQ64pjLJ6yYCtpmEw0goYxtjG9KpbRe8KAsl2tBUGU9DyMcJ0RwJ8GqJAFzMXcXW1Rw==}
 
-  storybook@10.5.0:
-    resolution: {integrity: sha512-dRhM/kSSvHQR8DmZO41v5sJuz9U6zDjjR2gRBTgZN2RBSXbmF0Brvgszrvvxyx2VfxuYKzhB+xumKwWkwlBtig==}
-    hasBin: true
-    peerDependencies:
-      '@types/react': ^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0
-      prettier: ^2 || ^3
-      vite-plus: ^0.1.15 || ^0.2.0
-    peerDependenciesMeta:
-      '@types/react':
-        optional: true
-      prettier:
-        optional: true
-      vite-plus:
-        optional: true
-
   storybook@10.5.2:
     resolution: {integrity: sha512-zkYxVZoDMj8njzZc3EH5UyY7885wpi9a1mmWVwFiNHSo+i5r2Go84E2OI1cdOctRymLkNvgs1j5jqAKA0ftBqg==}
     hasBin: true
@@ -4386,18 +4371,6 @@ packages:
 
   wrappy@1.0.2:
     resolution: {integrity: sha512-l4Sp/DRseor9wL6EvV2+TuQn63dMkPjZ/sp9XkghTEbV9KlPS1xUsZ3u7/IQO4wxtcFB4bgpQPRcR3QCvezPcQ==}
-
-  ws@8.18.0:
-    resolution: {integrity: sha512-8VbfWfHLbbwu3+N6OKsOMpBdT4kXPDDB9cJk2bJ6mh9ucxdlnNvH1e+roYkKmN9Nxw2yjz7VzeO9oOz2zJ04Pw==}
-    engines: {node: '>=10.0.0'}
-    peerDependencies:
-      bufferutil: ^4.0.1
-      utf-8-validate: '>=5.0.2'
-    peerDependenciesMeta:
-      bufferutil:
-        optional: true
-      utf-8-validate:
-        optional: true
 
   ws@8.21.0:
     resolution: {integrity: sha512-Vsp28b7DRcimFQvrqu2Wek3z1iYxDCWqHYB8Qsnk/S4RfaCQzPGPyBNuVjJV3cd6UiKtUtp6sNM77gWvzcCH+g==}
@@ -8762,7 +8735,7 @@ snapshots:
 
   std-env@4.2.0: {}
 
-  storybook@10.5.0(@types/react@19.2.17)(prettier@3.4.2)(react@18.3.1)(vite-plus@0.2.4(@types/node@22.20.1)(@voidzero-dev/vite-plus-core@0.2.4(@types/node@22.20.1)(esbuild@0.28.1)(typescript@5.7.3)(yaml@2.6.1))(esbuild@0.28.1)(typescript@5.7.3)(yaml@2.6.1)):
+  storybook@10.5.2(@types/react@19.2.17)(prettier@3.4.2)(react@18.3.1)(vite-plus@0.2.4(@types/node@22.20.1)(@voidzero-dev/vite-plus-core@0.2.4(@types/node@22.20.1)(esbuild@0.28.1)(typescript@5.7.3)(yaml@2.6.1))(esbuild@0.28.1)(typescript@5.7.3)(yaml@2.6.1)):
     dependencies:
       '@storybook/global': 5.0.0
       '@storybook/icons': 2.1.0(react@18.3.1)
@@ -8780,7 +8753,7 @@ snapshots:
       recast: 0.23.12
       semver: 7.8.5
       use-sync-external-store: 1.6.0(react@18.3.1)
-      ws: 8.18.0
+      ws: 8.21.0
     optionalDependencies:
       '@types/react': 19.2.17
       prettier: 3.4.2
@@ -9335,8 +9308,6 @@ snapshots:
       strip-ansi: 7.1.0
 
   wrappy@1.0.2: {}
-
-  ws@8.18.0: {}
 
   ws@8.21.0: {}
 

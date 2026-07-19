@@ -93,7 +93,7 @@ try {
         name: 'storyfreeze-package-smoke',
         private: true,
         type: 'module',
-        dependencies: { storybook: '10.5.0' },
+        dependencies: { storybook: '10.5.2' },
       },
       null,
       2,

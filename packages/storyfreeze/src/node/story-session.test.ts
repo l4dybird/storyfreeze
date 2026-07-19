@@ -51,11 +51,13 @@ describe(classifyBatchEligibility, () => {
 });
 
 describe(createStorySessionPlans, () => {
-  it('groups each emulation class into its own session and batches same-class resizes', () => {
+  it('groups each emulation class into its own session and batches same-class resizes and orientation changes', () => {
     const base = capture('base', []);
     const hover = capture('hover', ['hover'], { hover: '#button' });
     const resizedProfile = { ...desktop, width: 1024 };
     const resized = capture('resized', ['resized'], { viewport: resizedProfile });
+    const portraitProfile = { ...desktop, width: 600, height: 800, isLandscape: false };
+    const portrait = capture('portrait', ['portrait'], { viewport: portraitProfile });
     const mobileProfile = {
       ...desktop,
       width: 390,
@@ -70,10 +72,11 @@ describe(createStorySessionPlans, () => {
       viewport: mobileProfile,
     });
 
-    const result = createStorySessionPlans({ captures: [base, hover, resized, mobile, mobileHover] }, 'auto');
+    const result = createStorySessionPlans({ captures: [base, hover, resized, portrait, mobile, mobileHover] }, 'auto');
     expect(result.sessions).toHaveLength(2);
     expect(result.sessions.flatMap(session => session.variants.map(variant => variant.capture.captureId))).toEqual([
       'hover',
+      'portrait',
       'resized',
       'mobile-hover',
     ]);

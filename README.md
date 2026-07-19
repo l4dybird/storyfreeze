@@ -155,6 +155,10 @@ tag only as a scheduling hint so stories that select the same viewport stay on
 adjacent workers; the preview runtime remains authoritative for the actual width,
 height, and device settings.
 
+After runtime discovery, width, height, and orientation changes are applied to the
+current page and settled before capture. Mobile, touch, and device-scale changes
+keep the fresh-navigation boundary.
+
 Direct literals and local object spreads are supported:
 
 ```js
@@ -489,7 +493,7 @@ Fresh navigation remains the default for every capture. Use `--capture-protocol 
 $ npx storyfreeze --capture-protocol auto http://localhost:9009
 ```
 
-`auto` batches safe hover, focus, screenshot-only, and same-emulation-class viewport variants. Mobile, touch, DPR, orientation, runtime `waitFor`, or reset-unsafe boundaries use fresh navigation automatically. A recoverable failed session or reset recreates the worker session and requeues every unfinished variant through the strict path. If an interrupted browser-side operation does not settle after its session is closed, the run stops instead of reusing potentially active page state. Session reset flushes paint-triggered work, waits for pending requests, commits response-driven paint, then compares focus, document selection ranges, args/globals, scroll positions, and the full preview document, including portals, live form state, and open shadow roots. `--capture-protocol story-session` is the validation mode: it reports missing prerequisites, unsafe variants, and reset failures as errors instead of falling back.
+`auto` batches safe hover, focus, screenshot-only, and same-emulation-class viewport variants. Width, height, and orientation changes use a live viewport update; mobile, touch, DPR, runtime `waitFor`, or reset-unsafe boundaries use fresh navigation automatically. A recoverable failed session or reset recreates the worker session and requeues every unfinished variant through the strict path. If an interrupted browser-side operation does not settle after its session is closed, the run stops instead of reusing potentially active page state. Session reset flushes paint-triggered work, waits for pending requests, commits response-driven paint, then compares focus, document selection ranges, args/globals, scroll positions, and the full preview document, including portals, live form state, and open shadow roots. `--capture-protocol story-session` is the validation mode: it reports missing prerequisites, unsafe variants, and reset failures as errors instead of falling back.
 
 Context count and age limits are applied at safe capture boundaries. An active story session finishes its same-document variant batch before a reached recycling limit is applied.
 

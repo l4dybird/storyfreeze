@@ -456,16 +456,28 @@ describe(CapturingBrowser, () => {
   });
 
   it.each([
-    ['context', { width: 375, height: 667, deviceScaleFactor: 2, hasTouch: true, isMobile: true }],
-    ['process', { width: 375, height: 667, deviceScaleFactor: 2, hasTouch: true, isMobile: true }],
-    ['context', { width: 800, height: 600, deviceScaleFactor: 2, hasTouch: false, isMobile: false }],
     [
+      'mobile/context',
+      'context',
+      { width: 375, height: 667, deviceScaleFactor: 2, hasTouch: true, isMobile: true },
+      true,
+    ],
+    [
+      'mobile/process',
+      'process',
+      { width: 375, height: 667, deviceScaleFactor: 2, hasTouch: true, isMobile: true },
+      true,
+    ],
+    ['DPR', 'context', { width: 800, height: 600, deviceScaleFactor: 2, hasTouch: false, isMobile: false }, true],
+    [
+      'orientation',
       'process',
       { width: 600, height: 800, deviceScaleFactor: 1, hasTouch: false, isMobile: false, isLandscape: false },
+      false,
     ],
   ] as const)(
-    'applies a dynamic emulation profile without replacing the %s worker session',
-    async (browserIsolation, nextViewport) => {
+    'applies a dynamic %s profile without replacing the worker session',
+    async (_label, browserIsolation, nextViewport, requiresNavigation) => {
       const order: string[] = [];
       const navigate = vi.fn(async () => {
         order.push('navigate');
@@ -541,14 +553,21 @@ describe(CapturingBrowser, () => {
 
       expect(close).not.toHaveBeenCalled();
       expect(boot).not.toHaveBeenCalled();
-      expect(page.goto).toHaveBeenCalledWith('about:blank', {
-        timeout: expect.any(Number),
-        waitUntil: 'domcontentloaded',
-      });
       expect(page.setViewport).toHaveBeenCalledWith(nextViewport);
-      expect(navigate).toHaveBeenCalledWith('fixture--default', expect.any(Number), 0);
-      expect(waitForReady).toHaveBeenCalledTimes(1);
-      expect(order).toEqual(['about:blank', 'setViewport', 'navigate', 'preview-ready']);
+      if (requiresNavigation) {
+        expect(page.goto).toHaveBeenCalledWith('about:blank', {
+          timeout: expect.any(Number),
+          waitUntil: 'domcontentloaded',
+        });
+        expect(navigate).toHaveBeenCalledWith('fixture--default', expect.any(Number), 0);
+        expect(waitForReady).toHaveBeenCalledTimes(1);
+        expect(order).toEqual(['about:blank', 'setViewport', 'navigate', 'preview-ready']);
+      } else {
+        expect(page.goto).not.toHaveBeenCalled();
+        expect(navigate).not.toHaveBeenCalled();
+        expect(waitForReady).not.toHaveBeenCalled();
+        expect(order).toEqual(['setViewport']);
+      }
     },
   );
 

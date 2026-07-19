@@ -17,6 +17,7 @@
     "harden-browser-path-handling",
     "isolate-browser-runtimes",
     "manifest-topology-story-sessions",
+    "organize-rc-contracts",
     "playwright-default",
     "protect-capture-paths",
     "quick-screenshots-rest",

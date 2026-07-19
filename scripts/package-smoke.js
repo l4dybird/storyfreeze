@@ -78,6 +78,43 @@ function assertEqual(actual, expected, label) {
   }
 }
 
+function verifyStorybookCompatibility(tarballPath, version) {
+  const compatibilityDir = path.join(temporaryDir, `storybook-${version}`);
+  fs.mkdirSync(compatibilityDir);
+  fs.writeFileSync(
+    path.join(compatibilityDir, 'package.json'),
+    `${JSON.stringify(
+      {
+        name: `storyfreeze-storybook-${version}-compatibility`,
+        private: true,
+        type: 'module',
+        dependencies: {
+          storybook: version,
+          storyfreeze: `file:${tarballPath}`,
+        },
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  runNpm(['install', '--ignore-scripts', '--no-audit', '--no-fund'], compatibilityDir);
+
+  const installedStorybook = JSON.parse(
+    fs.readFileSync(path.join(compatibilityDir, 'node_modules', 'storybook', 'package.json'), 'utf8'),
+  );
+  assertEqual(installedStorybook.version, version, `Storybook ${version} compatibility version`);
+  const exports = run(
+    process.execPath,
+    [
+      '--input-type=module',
+      '--eval',
+      "const [preset, preview] = await Promise.all([import('storyfreeze/preset'), import('storyfreeze/preview')]); process.stdout.write(`${Object.keys(preset).sort().join(',')}|${Object.keys(preview.default).sort().join(',')}`);",
+    ],
+    { cwd: compatibilityDir },
+  );
+  assertEqual(exports, 'experimental_indexers|afterEach,decorators', `Storybook ${version} packed addon load`);
+}
+
 try {
   const packResult = inputTarballPath
     ? JSON.parse(runNpm(['pack', '--json', '--dry-run', '--ignore-scripts', inputTarballPath], rootDir))[0]
@@ -102,6 +139,10 @@ try {
 
   const tarballPath = inputTarballPath || path.join(temporaryDir, packResult.filename);
   runNpm(['install', '--ignore-scripts', '--no-audit', '--no-fund', tarballPath], consumerDir);
+
+  if (process.env.STORYFREEZE_PACKAGE_SMOKE_STORYBOOK_COMPAT === '1') {
+    for (const version of ['10.0.0', '10.4.0']) verifyStorybookCompatibility(tarballPath, version);
+  }
 
   const installedPackageDir = path.join(consumerDir, 'node_modules', 'storyfreeze');
   const installedMetadata = JSON.parse(fs.readFileSync(path.join(installedPackageDir, 'package.json'), 'utf8'));

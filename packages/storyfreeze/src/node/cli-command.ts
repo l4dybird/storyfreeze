@@ -10,7 +10,7 @@ import {
 } from 'gunshi';
 import { renderHeader } from 'gunshi/renderer';
 import { time } from './async-utils.js';
-import { lazyPlaywrightBrowserBackend } from './browser.js';
+import { lazyPlaywrightBrowserBackend } from './playwright-backend-loader.js';
 import { browserDeviceDescriptors } from './browser-device-registry.js';
 import type { BrowserBackend, BrowserLaunchOptions, ChromeChannel } from './browser-backend.js';
 import { Logger } from './logger.js';

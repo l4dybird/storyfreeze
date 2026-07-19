@@ -9,7 +9,8 @@ import type {
   BrowserSession,
   CapturePage,
 } from './browser-backend.js';
-import { BaseBrowser, ChromiumNotFoundError, MetricsWatcher, getDeviceDescriptors } from './browser.js';
+import { BaseBrowser, ChromiumNotFoundError, getDeviceDescriptors } from './browser.js';
+import { MetricsWatcher } from './metrics-watcher.js';
 import type { BrowserSessionSource } from './browser-process-coordinator.js';
 import { findChrome, type FindChromeOptions, type FindChromeResult } from './chromium-resolver.js';
 

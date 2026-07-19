@@ -10,6 +10,7 @@ const {
   findObservedProcesses,
   hashDirectory,
   isolationExecutionOrder,
+  parseCaptureLog,
   parseParallel,
   processIdentity,
   summarizeRuns,
@@ -40,6 +41,18 @@ test('accepts exploratory parallel values without accepting arbitrary worker cou
   assert.equal(parseParallel('16'), 16);
   assert.throws(() => parseParallel('3'), /Unsupported benchmark parallel value/);
   assert.throws(() => parseParallel('many'), /Unsupported benchmark parallel value/);
+});
+
+test('parses integer and persistent-session fractional capture timings', () => {
+  const parsed = parseCaptureLog(
+    [
+      'Found 2 stories.',
+      'Screenshot stored: first.png in 123 msec.',
+      'Screenshot stored: second.png in 216.4918 msec.',
+    ].join('\n'),
+  );
+  assert.equal(parsed.storyCount, 2);
+  assert.deepEqual(parsed.storyDurationsMs, [123, 216.4918]);
 });
 
 test('classifies independently sampled Chromium process types', () => {

@@ -202,7 +202,7 @@ function countMatches(value, pattern) {
 function parseCaptureLog(log) {
   const plainLog = log.replace(/\u001B\[[0-?]*[ -/]*[@-~]/g, '');
   const storyCounts = [...plainLog.matchAll(/Found (\d+) stories\./g)].map(match => Number(match[1]));
-  const storyDurationsMs = [...plainLog.matchAll(/Screenshot stored: .*? in (\d+) msec\./g)].map(match =>
+  const storyDurationsMs = [...plainLog.matchAll(/Screenshot stored: .*? in (\d+(?:\.\d+)?) msec\./g)].map(match =>
     Number(match[1]),
   );
   const captureDiagnostics = plainLog
@@ -1381,6 +1381,7 @@ module.exports = {
   findObservedProcesses,
   hashDirectory,
   isolationExecutionOrder,
+  parseCaptureLog,
   parseParallel,
   processIdentity,
   summarizeRuns,

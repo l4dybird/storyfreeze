@@ -43,7 +43,7 @@ It is primarily responsible for image generation necessary for Visual Testing su
 - [Multiple PNGs from 1 story](#multiple-pngs-from-1-story)
   - [Basic usage](#basic-usage)
   - [Variants composition](#variants-composition)
-  - [Story-scoped capture sessions](#story-scoped-capture-sessions)
+  - [Persistent Preview capture sessions](#persistent-preview-capture-sessions)
   - [Parallelisation across multiple computers](#parallelisation-across-multiple-computers)
 - [Tips](#tips)
   - [Run with Docker](#run-with-docker)
@@ -414,13 +414,13 @@ OPTIONS:
   --viewport-delay <viewport-delay>                                Delay time [msec] between changing viewport and capturing. (default: 0)
   --reload-after-change-viewport                                   Whether to reload after viewport changed. (default: false)
   --state-change-delay <state-change-delay>                        Delay time [msec] after changing element's state. (default: 0)
-  --max-captures-per-context <max-captures-per-context>            Recycle a browser context after this many captures. Zero disables count-based recycling. (default: 0)
+  --max-captures-per-context [max-captures-per-context]            Recycle a browser context after this many captures. Zero disables count-based recycling. (default: 128)
   --max-context-age <max-context-age>                              Recycle a browser context after this many milliseconds. Zero disables age-based recycling. (default: 0)
   --list-devices                                                   List available device descriptors. (default: false)
   -C, --chromium-channel [chromium-channel]                        Channel to search local Chromium. (default: *, choices: canary | stable | *)
   --chromium-path <chromium-path>                                  Executable Chromium path. (default: )
   --browser-isolation [browser-isolation]                          Browser topology preset for capture workers. (default: process, choices: process | context | hybrid | auto)
-  --capture-protocol [capture-protocol]                            Variant capture protocol. strict preserves fresh navigation for every capture. (default: strict, choices: strict | story-session | auto)
+  --capture-protocol [capture-protocol]                            Capture protocol. auto reuses managed Storybook Preview pages between stories. (default: auto, choices: strict | story-session | auto)
   --browser-launch-options <browser-launch-options>                JSON string of browser launch options. (default: {})
 
 EXAMPLES:
@@ -504,17 +504,19 @@ The above example generates the following:
 > [!NOTE]
 > You can extend some viewports with keys of `viewports` option because the `viewports` field is expanded to variants internally.
 
-### Story-scoped capture sessions
+### Persistent Preview capture sessions
 
-Fresh navigation remains the default for every capture. Use `--capture-protocol auto` to capture reset-safe variants from the same Storybook story document when possible:
+Managed Storybooks use `--capture-protocol auto` by default. Each capture worker opens the Preview once, switches stories through Storybook's event channel, and keeps request and story state correlated inside that page:
 
 ```sh
 $ npx storyfreeze --capture-protocol auto http://localhost:9009
 ```
 
-`auto` batches safe hover, focus, screenshot-only, and same-emulation-class viewport variants. Width, height, and orientation changes use a live viewport update; mobile, touch, DPR, runtime `waitFor`, or reset-unsafe boundaries use fresh navigation automatically. A recoverable failed session or reset recreates the worker session and requeues every unfinished variant through the strict path. If an interrupted browser-side operation does not settle after its session is closed, the run stops instead of reusing potentially active page state. Session reset flushes paint-triggered work, waits for pending requests, commits response-driven paint, then compares focus, document selection ranges, args/globals, scroll positions, and the full preview document, including portals, live form state, and open shadow roots. `--capture-protocol story-session` is the validation mode: it reports missing prerequisites, unsafe variants, and reset failures as errors instead of falling back.
+`auto` falls back to fresh navigation when the internal Preview protocol is unavailable, including addon-free simple mode. Use `--capture-protocol strict` for diagnostic runs that require a fresh navigation for every capture. `--capture-protocol story-session` requires the managed protocol and reports a missing or invalid session as an error instead of falling back.
 
-Context count and age limits are applied at safe capture boundaries. An active story session finishes its same-document variant batch before a reached recycling limit is applied.
+Width and height changes use a live viewport update. StoryFreeze also updates mobile, touch, orientation, and DPR emulation in the existing worker where the browser supports it, then invalidates the Preview document before reuse. Same-story variants retain the existing apply/reset isolation checks. A failed worker session is closed before its capture enters the existing retry path, and terminal failure stops new queue assignments.
+
+Context count and age limits are applied at safe capture boundaries. The default count limit recycles each worker after 128 captures; set `--max-captures-per-context 0` to disable it.
 
 State-changing click variants require a story-owned reset hook before they are eligible:
 

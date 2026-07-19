@@ -79,7 +79,7 @@ describe(createExecutionWorkload, () => {
 
     expect(capturePlan.captures.every(capture => capture.executionMode === 'runtime-discovery')).toBe(true);
     expect(workload.profileCount).toBe(2);
-    expect(selectWorkerCount(workload, 4)).toEqual({ initialWorkerCount: 2, workerCount: 4 });
+    expect(selectWorkerCount(workload, 4)).toEqual({ initialWorkerCount: 4, workerCount: 4 });
     expect(prepared.workers.map(worker => new Set(worker.workItems.map(item => item.profileHint)).size)).toEqual([
       1, 1, 1, 1,
     ]);

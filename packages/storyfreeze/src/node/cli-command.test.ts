@@ -36,6 +36,8 @@ describe(runCli, () => {
       parallel: 4,
       mode: 'auto',
       browserIsolation: 'process',
+      captureProtocol: 'auto',
+      recyclingPolicy: { maxCapturesPerContext: 128, maxContextAgeMs: 0 },
       flat: false,
       include: [],
       exclude: [],

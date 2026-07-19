@@ -58,6 +58,7 @@ import {
 } from './capture-policy.js';
 import { MetricsWatcher } from './metrics-watcher.js';
 import { createScreenshotCaptureController, releaseCapturedScreenshot } from './screenshot-capture-controller.js';
+import { isWorkerSessionProtocolUnavailable } from './worker-session-protocol.js';
 
 const disableAnimationStylePath = fileURLToPath(new URL('../../assets/disable-animation.css', import.meta.url));
 
@@ -95,6 +96,7 @@ export class CapturingBrowser extends BaseBrowser {
   private currentVariantKey: VariantKey = { isDefault: true, keys: [] };
   private touched = false;
   private resourceWatcher?: ResourceWatcher;
+  private metricsWatcher?: MetricsWatcher;
   private navigator?: StoryNavigator;
   private diagnosticLastPhase?: string;
   private diagnosticOutcome: 'captured' | 'failed' | 'retry' | 'skipped' = 'failed';
@@ -151,12 +153,14 @@ export class CapturingBrowser extends BaseBrowser {
     this.previewSettledResourceGeneration = undefined;
     await this.expose();
     this.resourceWatcher = new ResourceWatcher(this.page).init();
+    this.metricsWatcher = new MetricsWatcher(this.page, this.opt.metricsWatchRetryCount);
     this.navigator = new StoryNavigator(this.page, new URL(this.connection.url), this.idx);
   }
 
   protected override async onClosing() {
     const resourceWatcher = this.resourceWatcher;
     this.resourceWatcher = undefined;
+    this.metricsWatcher = undefined;
     this.navigator = undefined;
     try {
       resourceWatcher?.dispose();
@@ -234,10 +238,26 @@ export class CapturingBrowser extends BaseBrowser {
     this._currentStory = story;
     this.previewSettledResourceGeneration = undefined;
     this.debug('Set story', story.id);
-    await this.measurePhase('navigation', async () => {
-      await this.navigator!.navigate(story.id, deadline.navigationTimeout(), this.currentStoryRetryCount);
-      await this.addStyles();
-    });
+    const persistent =
+      this.mode === 'managed' && this.opt.captureProtocol !== 'strict' && this.navigator!.canSelectStory;
+    if (persistent) {
+      try {
+        await this.measurePhase('story-switch', () => this.navigator!.selectStory(story.id));
+      } catch (error) {
+        if (this.opt.captureProtocol === 'story-session' || !isWorkerSessionProtocolUnavailable(error)) throw error;
+        this.opt.logger.warn('Persistent Preview protocol is unavailable. Falling back to fresh navigation.');
+        this.navigator!.invalidateDocument?.();
+        await this.measurePhase('navigation', async () => {
+          await this.navigator!.navigate(story.id, deadline.navigationTimeout(), this.currentStoryRetryCount);
+          await this.addStyles();
+        });
+      }
+    } else {
+      await this.measurePhase('navigation', async () => {
+        await this.navigator!.navigate(story.id, deadline.navigationTimeout(), this.currentStoryRetryCount);
+        await this.addStyles();
+      });
+    }
     if (this.mode === 'managed') {
       const options = await this.measurePhase('preview-ready', () =>
         this.navigator!.waitForReady(deadline.remaining(), deadline.signal),
@@ -287,6 +307,7 @@ export class CapturingBrowser extends BaseBrowser {
           timeout: deadline.navigationTimeout(),
           waitUntil: 'domcontentloaded',
         });
+        this.navigator!.invalidateDocument?.();
       }
       await this.page.setViewport(nextViewport);
       this.viewport = nextViewport;
@@ -322,6 +343,7 @@ export class CapturingBrowser extends BaseBrowser {
         timeout: deadline.navigationTimeout(),
         waitUntil: 'domcontentloaded',
       });
+      this.navigator!.invalidateDocument?.();
     }
     await this.page.setViewport(nextViewport);
     this.viewport = nextViewport;
@@ -416,8 +438,7 @@ export class CapturingBrowser extends BaseBrowser {
   }
 
   private async waitBrowserMetricsStable(phase: 'preEmit' | 'postEmit', deadline = this.activeDeadline) {
-    const mw = new MetricsWatcher(this.page, this.opt.metricsWatchRetryCount);
-    const result = await mw.waitForStable({
+    const result = await this.metricsWatcher!.waitForStable({
       quietMs: 50,
       timeoutMs: deadline?.remaining(2000) ?? 2000,
       signal: deadline?.signal ?? this.opt.signal,
@@ -498,14 +519,15 @@ export class CapturingBrowser extends BaseBrowser {
 
   private async recycleContextIfNeeded() {
     const ageMs = this.contextStartedAt === 0 ? 0 : performance.now() - this.contextStartedAt;
-    if (!shouldRecycleContext(this.opt.recyclingPolicy, this.capturesInContext, ageMs)) return;
+    const policy =
+      this.opt.recyclingPolicy ?? (this.opt.captureProtocol === 'strict' ? undefined : { maxCapturesPerContext: 128 });
+    if (!shouldRecycleContext(policy, this.capturesInContext, ageMs)) return;
     emitCaptureDiagnostic({
       type: 'context-recycle',
       ageMs,
       capturesInContext: this.capturesInContext,
       reason:
-        this.opt.recyclingPolicy?.maxCapturesPerContext !== undefined &&
-        this.capturesInContext >= this.opt.recyclingPolicy.maxCapturesPerContext
+        policy?.maxCapturesPerContext !== undefined && this.capturesInContext >= policy.maxCapturesPerContext
           ? 'capture-count'
           : 'context-age',
       ...this.diagnosticContext(),
@@ -848,6 +870,11 @@ export class CapturingBrowser extends BaseBrowser {
     };
     try {
       unsubscribeConsole();
+    } catch (error) {
+      recordCleanupFailure(error);
+    }
+    try {
+      await this.navigator?.completeCapture?.();
     } catch (error) {
       recordCleanupFailure(error);
     }

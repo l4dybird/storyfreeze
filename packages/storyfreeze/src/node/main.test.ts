@@ -65,6 +65,8 @@ describe(shouldRecycleContext, () => {
     expect(shouldRecycleContext(undefined, 100, 100_000)).toBe(false);
     expect(shouldRecycleContext({ maxCapturesPerContext: 10, maxContextAgeMs: 60_000 }, 9, 59_999)).toBe(false);
     expect(shouldRecycleContext({ maxCapturesPerContext: 10, maxContextAgeMs: 60_000 }, 10, 1)).toBe(true);
+    expect(shouldRecycleContext({ maxCapturesPerContext: 128 }, 127, 0)).toBe(false);
+    expect(shouldRecycleContext({ maxCapturesPerContext: 128 }, 128, 0)).toBe(true);
     expect(shouldRecycleContext({ maxCapturesPerContext: 0 }, 100, 0)).toBe(false);
   });
 });

@@ -79,7 +79,7 @@ Screenshot paths, parallelism, capture options, and PNG behavior remain unchange
 
 ## Adopting the performance roadmap modes
 
-The compatibility defaults remain `--browser-isolation process` and `--capture-protocol strict`. Existing commands therefore retain a separate browser process per active worker and fresh navigation for every capture.
+The browser isolation default remains `--browser-isolation process`, while the capture protocol default changes from `strict` to `auto`. Existing commands retain one browser process per active worker, but managed Storybooks now reuse one Preview page across stories.
 
 The new browser runtime modes are opt-in:
 
@@ -91,9 +91,9 @@ $ npx storyfreeze --browser-isolation hybrid http://localhost:9001
 $ npx storyfreeze --browser-isolation auto http://localhost:9001
 ```
 
-Use `--capture-protocol auto` to batch reset-safe variants within one story and emulation class. Unsafe or failed sessions fall back to strict capture. Use `story-session` only when you want unsafe variants to fail validation instead. Click variants need `parameters.screenshot.reset`; runtime functions and mobile/touch/DPR/orientation boundaries remain strict. Output paths and PNG semantics are unchanged.
+`auto` switches managed stories through Storybook's event channel and falls back to fresh navigation when the internal Preview protocol is unavailable. Use `--capture-protocol strict` to retain fresh navigation for every capture. Use `story-session` to require the managed protocol and fail instead of falling back. Same-story variants continue to use the existing apply/reset validation. Output paths and PNG semantics are unchanged.
 
-Long-running suites may set `--max-captures-per-context` or `--max-context-age` to recycle worker contexts deterministically. Omitting both preserves the existing lifecycle.
+Workers recycle after 128 captures by default. Set `--max-captures-per-context 0` to disable the count boundary, or set `--max-context-age` to add an age boundary.
 
 ## Migrating the CLI to Gunshi
 

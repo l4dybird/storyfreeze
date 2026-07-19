@@ -134,6 +134,7 @@ import type {
   ScreenshotOptionFragments,
   ScreenshotOptionFragmentsForVariant,
   ScreenshotOptions,
+  StorySessionResetContext,
   Variants,
   Viewport,
 } from 'storyfreeze';
@@ -142,7 +143,8 @@ const viewport: Viewport = { width: 800, height: 600, deviceScaleFactor: 2 };
 const fragments: ScreenshotOptionFragments = { viewport };
 const variant: ScreenshotOptionFragmentsForVariant = { extends: 'base', focus: '#target' };
 const variants: Variants = { focused: variant };
-const options: ScreenshotOptions = { ...fragments, variants, reset: async () => undefined };
+const reset = async ({ storyId, variantId }: StorySessionResetContext) => void [storyId, variantId];
+const options: ScreenshotOptions = { ...fragments, variants, reset };
 
 void isScreenshot;
 void withScreenshot;

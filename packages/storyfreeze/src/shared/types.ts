@@ -24,7 +24,7 @@ export interface ScreenshotOptionFragments {
   waitAssets?: boolean;
   /** @deprecated Use `waitAssets`. */
   waitImages?: boolean;
-  waitFor?: string | (() => Promise<any>);
+  waitFor?: string | (() => Promise<unknown>);
   viewport?: Viewport | string;
   fullPage?: boolean;
   hover?: string;

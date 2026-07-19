@@ -16,8 +16,7 @@ import type { BrowserBackend, BrowserLaunchOptions, ChromeChannel } from './brow
 import { Logger } from './logger.js';
 import { main } from './main.js';
 import { parseShardOptions } from './shard-utilities.js';
-import type { BrowserIsolationMode, MainOptions, PreviewMode } from './types.js';
-import type { CaptureProtocolMode } from './story-session.js';
+import type { BrowserIsolationMode, CaptureProtocolMode, MainOptions, PreviewMode } from './types.js';
 
 const packageVersion = (
   JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as { version: string }

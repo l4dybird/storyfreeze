@@ -2,7 +2,7 @@ import type { BrowserBackend, BrowserRuntimeOptions } from './browser-backend.js
 import { BrowserProcessCoordinator, type BrowserSessionSource } from './browser-process-coordinator.js';
 import { profileAffinityKey, type CapturePlan, type WorkerPlan } from './capture-plan.js';
 import type { ExecutionWorkerPlan, ExecutionWorkload } from './execution-plan.js';
-import { compareDeterministicStrings } from './capture-manifest.js';
+import { compareDeterministicStrings } from './deterministic.js';
 
 export type BrowserTopologyMode = 'process' | 'context' | 'hybrid' | 'auto';
 

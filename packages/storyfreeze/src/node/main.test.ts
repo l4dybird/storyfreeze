@@ -515,8 +515,8 @@ describe(CapturingBrowser, () => {
       false,
     ],
   ] as const)(
-    'applies a dynamic %s profile without replacing the worker session',
-    async (_label, browserIsolation, nextViewport, requiresNavigation) => {
+    'applies a dynamic %s profile at the required session boundary',
+    async (_label, browserIsolation, nextViewport, requiresSessionRestart) => {
       const order: string[] = [];
       const navigate = vi.fn(async () => {
         order.push('navigate');
@@ -560,8 +560,12 @@ describe(CapturingBrowser, () => {
         },
         viewport: { height: 600, width: 800 },
       });
-      const close = vi.spyOn(browser, 'close').mockResolvedValue(undefined);
-      const boot = vi.spyOn(browser, 'boot').mockResolvedValue(browser);
+      const restartCaptureSession = vi
+        .spyOn(browser as never, 'restartCaptureSession')
+        .mockImplementation(async (_error: unknown, sessionOptions: { viewport: typeof nextViewport }) => {
+          order.push('restart');
+          Object.assign(browser, { viewport: sessionOptions.viewport });
+        });
       const setViewport = (
         browser as unknown as {
           setViewport(
@@ -591,18 +595,15 @@ describe(CapturingBrowser, () => {
       ).resolves.toBe(true);
       deadline.dispose();
 
-      expect(close).not.toHaveBeenCalled();
-      expect(boot).not.toHaveBeenCalled();
-      expect(page.setViewport).toHaveBeenCalledWith(nextViewport);
-      if (requiresNavigation) {
-        expect(page.goto).toHaveBeenCalledWith('about:blank', {
-          timeout: expect.any(Number),
-          waitUntil: 'domcontentloaded',
-        });
+      if (requiresSessionRestart) {
+        expect(restartCaptureSession).toHaveBeenCalledWith(undefined, { viewport: nextViewport });
+        expect(page.setViewport).not.toHaveBeenCalled();
         expect(navigate).toHaveBeenCalledWith('fixture--default', expect.any(Number), 0);
         expect(waitForReady).toHaveBeenCalledTimes(1);
-        expect(order).toEqual(['about:blank', 'setViewport', 'navigate', 'preview-ready']);
+        expect(order).toEqual(['restart', 'navigate', 'preview-ready']);
       } else {
+        expect(restartCaptureSession).not.toHaveBeenCalled();
+        expect(page.setViewport).toHaveBeenCalledWith(nextViewport);
         expect(page.goto).not.toHaveBeenCalled();
         expect(navigate).not.toHaveBeenCalled();
         expect(waitForReady).not.toHaveBeenCalled();
@@ -610,6 +611,74 @@ describe(CapturingBrowser, () => {
       }
     },
   );
+
+  it('restarts the session before navigation when a planned profile changes DPR', async () => {
+    const options = {
+      browserIsolation: 'context',
+      delay: 0,
+      disableWaitAssets: false,
+      logger: new Logger('silent'),
+      reloadAfterChangeViewport: false,
+      viewportDelay: 0,
+      viewports: ['800x600'],
+    } as MainOptions;
+    const browser = new CapturingBrowser(
+      { url: 'https://example.test' } as ManagedStorybookConnection,
+      options,
+      'managed',
+      0,
+      { name: 'playwright' } as never,
+    );
+    const page = { setViewport: vi.fn(async () => {}) };
+    vi.spyOn(BaseBrowser.prototype, 'page', 'get').mockReturnValue(page as never);
+    Object.assign(browser, { viewport: { height: 600, width: 800 } });
+    const nextViewport = {
+      width: 800,
+      height: 600,
+      deviceScaleFactor: 2,
+      hasTouch: false,
+      isMobile: false,
+    };
+    const restartCaptureSession = vi
+      .spyOn(browser as never, 'restartCaptureSession')
+      .mockImplementation(async (_error: unknown, sessionOptions: { viewport: typeof nextViewport }) => {
+        Object.assign(browser, { viewport: sessionOptions.viewport });
+      });
+    const applyPreNavigationProfile = (
+      browser as unknown as {
+        applyPreNavigationProfile(
+          capture: {
+            captureId: string;
+            storyId: string;
+            variantKey: string[];
+            profile: typeof nextViewport;
+            options: { viewport: typeof nextViewport };
+            estimatedCostMs: number;
+            executionMode: 'manifest';
+          },
+          deadline: CaptureDeadline,
+        ): Promise<void>;
+      }
+    ).applyPreNavigationProfile.bind(browser);
+    const deadline = new CaptureDeadline(5000, 'fixture--default');
+
+    await applyPreNavigationProfile(
+      {
+        captureId: 'fixture--default',
+        storyId: 'fixture--default',
+        variantKey: [],
+        profile: nextViewport,
+        options: { viewport: nextViewport },
+        estimatedCostMs: 500,
+        executionMode: 'manifest',
+      },
+      deadline,
+    );
+    deadline.dispose();
+
+    expect(restartCaptureSession).toHaveBeenCalledWith(undefined, { viewport: nextViewport });
+    expect(page.setViewport).not.toHaveBeenCalled();
+  });
 
   it('closes a launched browser when post-launch setup fails', async () => {
     const options = {

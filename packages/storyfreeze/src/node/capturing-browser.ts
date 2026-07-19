@@ -295,7 +295,8 @@ export class CapturingBrowser extends BaseBrowser {
   }
 
   private async setViewport(opt: StrictScreenshotOptions, deadline: CaptureDeadline) {
-    if (!this.currentStory) {
+    const story = this.currentStory;
+    if (!story) {
       throw new InvalidCurrentStoryStateError();
     }
 
@@ -318,27 +319,22 @@ export class CapturingBrowser extends BaseBrowser {
     const currentProfile = this.viewport ? normalizeEmulationProfile(this.viewport) : undefined;
     if (!currentProfile || !sameEmulationProfile(currentProfile, nextProfile)) {
       this.debug('Change viewport', JSON.stringify(nextViewport));
-      // Changing mobile, touch, or device-scale emulation requires a fresh Storybook navigation.
-      // Orientation follows the live width/height update and does not invalidate the current document.
-      const willBeReloaded = !currentProfile || !sameEmulationClass(currentProfile, nextProfile);
-      if (willBeReloaded) {
-        // Avoid racing emulation changes against Storybook's preview lifecycle.
-        await this.page.goto('about:blank', {
-          timeout: deadline.navigationTimeout(),
-          waitUntil: 'domcontentloaded',
-        });
-        this.navigator!.invalidateDocument?.();
+      const requiresSessionRestart = currentProfile !== undefined && !sameEmulationClass(currentProfile, nextProfile);
+      if (requiresSessionRestart) {
+        await this.restartCaptureSession(undefined, { viewport: nextViewport });
+      } else {
+        await this.page.setViewport(nextViewport);
+        this.viewport = nextViewport;
       }
-      await this.page.setViewport(nextViewport);
-      this.viewport = nextViewport;
-      if (willBeReloaded || this.opt.reloadAfterChangeViewport) {
+      if (requiresSessionRestart || this.opt.reloadAfterChangeViewport) {
         // Start a fresh owned request after the viewport has settled.
         emitCaptureDiagnostic({
           type: 'viewport-triggered-navigation',
           planned: false,
           ...this.diagnosticContext(),
         });
-        await this.setCurrentStory(this.currentStory, deadline);
+        if (!requiresSessionRestart) this.navigator!.invalidateDocument();
+        await this.setCurrentStory(story, deadline);
         await deadline.wait(this.opt.viewportDelay);
       } else {
         await deadline.wait(this.opt.viewportDelay);
@@ -358,19 +354,13 @@ export class CapturingBrowser extends BaseBrowser {
     if (this.viewport && sameEmulationProfile(normalizeEmulationProfile(this.viewport), plannedCapture.profile)) return;
 
     const currentProfile = this.viewport ? normalizeEmulationProfile(this.viewport) : undefined;
-    const expensiveSwitch =
-      currentProfile !== undefined &&
-      (plannedCapture.profile.isMobile !== currentProfile.isMobile ||
-        plannedCapture.profile.hasTouch !== currentProfile.hasTouch);
+    const expensiveSwitch = currentProfile !== undefined && !sameEmulationClass(currentProfile, plannedCapture.profile);
     if (expensiveSwitch) {
-      await this.page.goto('about:blank', {
-        timeout: deadline.navigationTimeout(),
-        waitUntil: 'domcontentloaded',
-      });
-      this.navigator!.invalidateDocument?.();
+      await this.restartCaptureSession(undefined, { viewport: nextViewport });
+    } else {
+      await this.page.setViewport(nextViewport);
+      this.viewport = nextViewport;
     }
-    await this.page.setViewport(nextViewport);
-    this.viewport = nextViewport;
     await deadline.wait(this.opt.viewportDelay);
     emitCaptureDiagnostic({
       type: 'pre-navigation-profile',
@@ -520,11 +510,11 @@ export class CapturingBrowser extends BaseBrowser {
     this.previewRuntimeMetadata = undefined;
   }
 
-  private async restartCaptureSession(originalError?: unknown) {
+  private async restartCaptureSession(originalError?: unknown, sessionOptions?: BrowserSessionOptions) {
     await this.close();
     this.resetCaptureState();
     try {
-      await this.boot();
+      await this.boot(sessionOptions);
     } catch (recoveryError) {
       if (originalError !== undefined) {
         throw new AggregateError([originalError, recoveryError], 'Failed to restart the Playwright capture worker.');
@@ -597,6 +587,7 @@ export class CapturingBrowser extends BaseBrowser {
     const deadline = new CaptureDeadline(this.opt.captureTimeout, requestId, this.opt.signal);
     this.activeDeadline = deadline;
     let attemptContextGeneration: number | undefined;
+    let completedInCurrentContext = false;
     let releaseRetainedAttemptBuffer: (() => void) | undefined;
     let attemptAbandoned = false;
     const releaseAbandonedAttempt = () => {
@@ -634,7 +625,9 @@ export class CapturingBrowser extends BaseBrowser {
     });
 
     try {
-      return await Promise.race([attempt, deadline.interruption]);
+      const result = await Promise.race([attempt, deadline.interruption]);
+      completedInCurrentContext = result.succeeded;
+      return result;
     } catch (error) {
       attemptAbandoned = true;
       releaseAbandonedAttempt();
@@ -696,7 +689,10 @@ export class CapturingBrowser extends BaseBrowser {
         outcome: this.diagnosticOutcome,
         ...attemptDiagnosticContext,
       });
-      if (attemptContextGeneration !== undefined && this.contextGeneration === attemptContextGeneration) {
+      if (
+        attemptContextGeneration !== undefined &&
+        (this.contextGeneration === attemptContextGeneration || completedInCurrentContext)
+      ) {
         this.capturesInContext += 1;
       }
     }

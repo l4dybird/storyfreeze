@@ -1,6 +1,6 @@
 {
   "name": "storyfreeze",
-  "version": "0.2.0-alpha.7",
+  "version": "0.2.0-alpha.8",
   "description": "Capture screenshot images from Storybook stories via Chromium.",
   "type": "module",
   "engines": {

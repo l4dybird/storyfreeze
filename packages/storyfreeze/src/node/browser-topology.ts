@@ -1,8 +1,7 @@
 import type { BrowserBackend, BrowserRuntimeOptions } from './browser-backend.js';
 import { BrowserProcessCoordinator, type BrowserSessionSource } from './browser-process-coordinator.js';
-import type { CapturePlan, WorkerPlan } from './capture-plan.js';
+import { profileAffinityKey, type CapturePlan, type WorkerPlan } from './capture-plan.js';
 import type { ExecutionWorkerPlan, ExecutionWorkload } from './execution-plan.js';
-import { emulationProfileKey } from './emulation-profile.js';
 import { compareDeterministicStrings } from './capture-manifest.js';
 
 export type BrowserTopologyMode = 'process' | 'context' | 'hybrid' | 'auto';
@@ -130,9 +129,11 @@ export function assignWorkersToBrowserProcesses(
   const ordered = [...workerPlans].sort((left, right) => {
     const leftProfile = 'workItems' in left ? left.workItems[0]?.profile : left.captures[0]?.profile;
     const rightProfile = 'workItems' in right ? right.workItems[0]?.profile : right.captures[0]?.profile;
+    const leftHint = 'workItems' in left ? left.workItems[0]?.profileHint : left.captures[0]?.profileHint;
+    const rightHint = 'workItems' in right ? right.workItems[0]?.profileHint : right.captures[0]?.profileHint;
     const profile = compareDeterministicStrings(
-      leftProfile ? emulationProfileKey(leftProfile) : '\uffff',
-      rightProfile ? emulationProfileKey(rightProfile) : '\uffff',
+      leftProfile ? profileAffinityKey(leftProfile, leftHint) : '\uffff',
+      rightProfile ? profileAffinityKey(rightProfile, rightHint) : '\uffff',
     );
     return profile || right.estimatedRemainingMs - left.estimatedRemainingMs || left.workerId - right.workerId;
   });

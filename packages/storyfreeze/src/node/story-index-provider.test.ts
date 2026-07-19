@@ -14,7 +14,7 @@ describe(StorybookStoryIndexProvider, () => {
               id: 'button--secondary',
               title: 'Button',
               name: 'Secondary',
-              tags: ['autodocs'],
+              tags: ['autodocs', 'storyfreeze-viewport-mobile%20portrait'],
               importPath: './Button.stories.ts',
             },
             'button--docs': {
@@ -43,8 +43,9 @@ describe(StorybookStoryIndexProvider, () => {
         id: 'button--secondary',
         title: 'Button',
         name: 'Secondary',
-        tags: ['autodocs'],
+        tags: ['autodocs', 'storyfreeze-viewport-mobile%20portrait'],
         importPath: './Button.stories.ts',
+        viewportProfileHint: 'mobile portrait',
       },
     ]);
     expect(fetchMock).toHaveBeenCalledWith(new URL('https://example.test/storybook/index.json'), { signal });

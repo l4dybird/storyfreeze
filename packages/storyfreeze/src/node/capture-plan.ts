@@ -18,6 +18,7 @@ export interface PlannedCapture {
   options: NormalizedCaptureOptions;
   estimatedCostMs: number;
   executionMode: CaptureExecutionMode;
+  profileHint?: string;
 }
 
 export interface CapturePlan {
@@ -34,6 +35,7 @@ export interface WorkerPlan {
   estimatedRemainingMs: number;
   lastProfile?: EmulationProfile;
   lastStoryId?: string;
+  lastProfileHint?: string;
 }
 
 function toExecutionMode(eligibility: ManifestEligibility): CaptureExecutionMode {
@@ -49,7 +51,12 @@ function toPlannedCapture(capture: ManifestCapture): PlannedCapture {
     options: { ...capture.options, viewport: { ...capture.options.viewport } },
     estimatedCostMs: capture.planning.estimatedCostMs ?? 500,
     executionMode: toExecutionMode(capture.planning.eligibility),
+    ...(capture.planning.profileHint === undefined ? {} : { profileHint: capture.planning.profileHint }),
   };
+}
+
+export function profileAffinityKey(profile: EmulationProfile, profileHint?: string): string {
+  return profileHint === undefined ? `profile:${emulationProfileKey(profile)}` : `hint:${profileHint}`;
 }
 
 export function createCapturePlan(manifest: StoryFreezeManifest): CapturePlan {
@@ -57,7 +64,7 @@ export function createCapturePlan(manifest: StoryFreezeManifest): CapturePlan {
   return {
     manifest,
     captures,
-    profileCount: new Set(captures.map(capture => emulationProfileKey(capture.profile))).size,
+    profileCount: new Set(captures.map(capture => profileAffinityKey(capture.profile, capture.profileHint))).size,
     storyCount: new Set(captures.map(capture => capture.storyId)).size,
     estimatedCostMs: captures.reduce((total, capture) => total + capture.estimatedCostMs, 0),
   };
@@ -74,10 +81,22 @@ export function storySwitchCost(currentStoryId: string | undefined, nextStoryId:
   return !currentStoryId || currentStoryId === nextStoryId ? 0 : 25;
 }
 
+export function profileAffinitySwitchCost(
+  current: EmulationProfile | undefined,
+  currentHint: string | undefined,
+  next: EmulationProfile,
+  nextHint: string | undefined,
+): number {
+  if (currentHint !== undefined || nextHint !== undefined) {
+    return currentHint !== undefined && currentHint === nextHint ? 0 : 350;
+  }
+  return profileSwitchCost(current, next);
+}
+
 export function assignmentCost(worker: WorkerPlan, capture: PlannedCapture): number {
   return (
     worker.estimatedRemainingMs +
-    profileSwitchCost(worker.lastProfile, capture.profile) +
+    profileAffinitySwitchCost(worker.lastProfile, worker.lastProfileHint, capture.profile, capture.profileHint) +
     storySwitchCost(worker.lastStoryId, capture.storyId)
   );
 }
@@ -107,10 +126,12 @@ export function assignCapturePlan(plan: CapturePlan, workerCount: number): Worke
       }
     }
     const transitionCost =
-      profileSwitchCost(worker.lastProfile, capture.profile) + storySwitchCost(worker.lastStoryId, capture.storyId);
+      profileAffinitySwitchCost(worker.lastProfile, worker.lastProfileHint, capture.profile, capture.profileHint) +
+      storySwitchCost(worker.lastStoryId, capture.storyId);
     worker.captures.push(capture);
     worker.estimatedRemainingMs += transitionCost + capture.estimatedCostMs;
     worker.lastProfile = capture.profile;
+    worker.lastProfileHint = capture.profileHint;
     worker.lastStoryId = capture.storyId;
   }
   return workers;

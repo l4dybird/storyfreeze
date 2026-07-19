@@ -1,12 +1,13 @@
 import { compareDeterministicStrings } from './capture-manifest.js';
 import {
-  profileSwitchCost,
+  profileAffinityKey,
+  profileAffinitySwitchCost,
   storySwitchCost,
   type CaptureExecutionMode,
   type CapturePlan,
   type PlannedCapture,
 } from './capture-plan.js';
-import { emulationProfileKey, type EmulationProfile } from './emulation-profile.js';
+import type { EmulationProfile } from './emulation-profile.js';
 import { createStorySessionPlans, type CaptureProtocolMode, type StorySessionPlan } from './story-session.js';
 
 export interface ExecutionWorkItem {
@@ -19,6 +20,7 @@ export interface ExecutionWorkItem {
   session?: StorySessionPlan;
   estimatedCostMs: number;
   executionMode: CaptureExecutionMode;
+  profileHint?: string;
   highCost: boolean;
 }
 
@@ -36,10 +38,17 @@ export interface ExecutionWorkerPlan {
   estimatedRemainingMs: number;
   lastProfile?: EmulationProfile;
   lastStoryId?: string;
+  lastProfileHint?: string;
 }
 
 export interface PreparedExecutionPlan extends ExecutionWorkload {
   workers: ExecutionWorkerPlan[];
+}
+
+interface AffinityGroup {
+  key: string;
+  workItems: ExecutionWorkItem[];
+  estimatedCostMs: number;
 }
 
 function workItemExecutionMode(captures: readonly PlannedCapture[]): CaptureExecutionMode {
@@ -59,6 +68,7 @@ function toWorkItem(capture: PlannedCapture): ExecutionWorkItem {
     estimatedCostMs: capture.estimatedCostMs,
     executionMode: capture.executionMode,
     highCost: capture.options.fullPage || capture.profile.deviceScaleFactor > 1,
+    ...(capture.profileHint === undefined ? {} : { profileHint: capture.profileHint }),
   };
 }
 
@@ -75,6 +85,7 @@ function toSessionWorkItem(session: StorySessionPlan): ExecutionWorkItem {
     estimatedCostMs: captures.reduce((total, capture) => total + capture.estimatedCostMs, 0),
     executionMode: workItemExecutionMode(captures),
     highCost: captures.some(capture => capture.options.fullPage || capture.profile.deviceScaleFactor > 1),
+    ...(session.baseCapture.profileHint === undefined ? {} : { profileHint: session.baseCapture.profileHint }),
   };
 }
 
@@ -92,13 +103,55 @@ export function createExecutionWorkload(
     capturePlan,
     captureProtocol,
     workItems,
-    profileCount: new Set(workItems.map(item => emulationProfileKey(item.profile))).size,
+    profileCount: new Set(workItems.map(item => profileAffinityKey(item.profile, item.profileHint))).size,
     estimatedCostMs: workItems.reduce((total, item) => total + item.estimatedCostMs, 0),
   };
 }
 
 function incrementalAssignmentCost(worker: ExecutionWorkerPlan, item: ExecutionWorkItem) {
-  return profileSwitchCost(worker.lastProfile, item.profile) + storySwitchCost(worker.lastStoryId, item.storyId);
+  return (
+    profileAffinitySwitchCost(worker.lastProfile, worker.lastProfileHint, item.profile, item.profileHint) +
+    storySwitchCost(worker.lastStoryId, item.storyId)
+  );
+}
+
+function assignWorkItem(worker: ExecutionWorkerPlan, item: ExecutionWorkItem) {
+  worker.estimatedRemainingMs += incrementalAssignmentCost(worker, item) + item.estimatedCostMs;
+  worker.workItems.push(item);
+  worker.lastProfile = item.profile;
+  worker.lastProfileHint = item.profileHint;
+  worker.lastStoryId = item.storyId;
+}
+
+function selectWorker(workers: readonly ExecutionWorkerPlan[], item: ExecutionWorkItem) {
+  let selected = workers[0];
+  let selectedCost = selected.estimatedRemainingMs + incrementalAssignmentCost(selected, item);
+  for (let index = 1; index < workers.length; index += 1) {
+    const candidate = workers[index];
+    const candidateCost = candidate.estimatedRemainingMs + incrementalAssignmentCost(candidate, item);
+    if (candidateCost < selectedCost || (candidateCost === selectedCost && candidate.workerId < selected.workerId)) {
+      selected = candidate;
+      selectedCost = candidateCost;
+    }
+  }
+  return selected;
+}
+
+function createAffinityGroups(workItems: readonly ExecutionWorkItem[]): AffinityGroup[] {
+  const byKey = new Map<string, ExecutionWorkItem[]>();
+  for (const item of workItems) {
+    const key = profileAffinityKey(item.profile, item.profileHint);
+    const items = byKey.get(key) ?? [];
+    items.push(item);
+    byKey.set(key, items);
+  }
+  return [...byKey].map(([key, items]) => ({
+    key,
+    workItems: items.sort(
+      (left, right) => right.estimatedCostMs - left.estimatedCostMs || compareDeterministicStrings(left.id, right.id),
+    ),
+    estimatedCostMs: items.reduce((total, item) => total + item.estimatedCostMs, 0),
+  }));
 }
 
 /** Assigns each executable unit once; the resulting order is the order consumed by the runtime. */
@@ -109,25 +162,40 @@ export function prepareExecutionPlan(workload: ExecutionWorkload, workerCount: n
     workItems: [],
     estimatedRemainingMs: 0,
   }));
-  const workItems = [...workload.workItems].sort(
-    (left, right) => right.estimatedCostMs - left.estimatedCostMs || compareDeterministicStrings(left.id, right.id),
+  const groups = createAffinityGroups(workload.workItems).sort(
+    (left, right) => right.estimatedCostMs - left.estimatedCostMs || compareDeterministicStrings(left.key, right.key),
   );
+  if (groups.length === 0) return { ...workload, workers };
 
-  for (const item of workItems) {
-    let selected = workers[0];
-    let selectedCost = selected.estimatedRemainingMs + incrementalAssignmentCost(selected, item);
-    for (let index = 1; index < workers.length; index += 1) {
-      const candidate = workers[index];
-      const candidateCost = candidate.estimatedRemainingMs + incrementalAssignmentCost(candidate, item);
-      if (candidateCost < selectedCost || (candidateCost === selectedCost && candidate.workerId < selected.workerId)) {
-        selected = candidate;
-        selectedCost = candidateCost;
-      }
+  if (!workload.workItems.some(item => item.profileHint !== undefined)) {
+    const workItems = [...workload.workItems].sort(
+      (left, right) => right.estimatedCostMs - left.estimatedCostMs || compareDeterministicStrings(left.id, right.id),
+    );
+    for (const item of workItems) assignWorkItem(selectWorker(workers, item), item);
+    return { ...workload, workers };
+  }
+
+  if (groups.length <= workers.length) {
+    const groupWorkers = new Map<string, ExecutionWorkerPlan[]>();
+    groups.forEach((group, index) => groupWorkers.set(group.key, [workers[index]]));
+    for (let workerId = groups.length; workerId < workers.length; workerId += 1) {
+      const selectedGroup = [...groups].sort((left, right) => {
+        const leftCount = groupWorkers.get(left.key)!.length;
+        const rightCount = groupWorkers.get(right.key)!.length;
+        const ratio = right.estimatedCostMs / rightCount - left.estimatedCostMs / leftCount;
+        return ratio || compareDeterministicStrings(left.key, right.key);
+      })[0];
+      groupWorkers.get(selectedGroup.key)!.push(workers[workerId]);
     }
-    selected.estimatedRemainingMs += incrementalAssignmentCost(selected, item) + item.estimatedCostMs;
-    selected.workItems.push(item);
-    selected.lastProfile = item.profile;
-    selected.lastStoryId = item.storyId;
+    for (const group of groups) {
+      const candidates = groupWorkers.get(group.key)!;
+      for (const item of group.workItems) assignWorkItem(selectWorker(candidates, item), item);
+    }
+  } else {
+    for (const group of groups) {
+      const selected = selectWorker(workers, group.workItems[0]);
+      for (const item of group.workItems) assignWorkItem(selected, item);
+    }
   }
 
   return { ...workload, workers };

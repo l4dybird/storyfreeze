@@ -82,6 +82,18 @@ describe(CaptureLeaseQueue, () => {
     expect(queue.lease(1)?.capture.captureId).toBe('a-first');
   });
 
+  it('prefers a matching static viewport key when stealing runtime-discovery work', () => {
+    const queue = new CaptureLeaseQueue([
+      [
+        { ...capture('desktop', 'desktop'), profileHint: 'desktop' },
+        { ...capture('mobile', 'mobile'), profileHint: 'mobile' },
+      ],
+      [],
+    ]);
+
+    expect(queue.lease(1, desktop, undefined, 'mobile')?.capture.captureId).toBe('mobile');
+  });
+
   it('maintains pending and queued-cost counters across a large FIFO lane', () => {
     const captures = Array.from({ length: 256 }, (_, index) => ({
       ...capture(`capture-${String(index).padStart(3, '0')}`, 'story'),

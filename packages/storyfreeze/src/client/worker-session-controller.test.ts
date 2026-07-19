@@ -60,7 +60,10 @@ describe(initializeWorkerSessionController, () => {
     await expect(
       protocol.selectStory({ requestId: 'worker-0-3', storyId: 'button--secondary' }),
     ).resolves.toMatchObject({ generation: 2 });
-    expect(channel.emitted.at(-1)).toEqual({ eventName: 'forceRemount', args: [] });
+    expect(channel.emitted.at(-1)).toEqual({
+      eventName: 'forceRemount',
+      args: [{ storyId: 'button--secondary' }],
+    });
   });
 
   it('rejects overlapping, duplicate, and stale selections', async () => {

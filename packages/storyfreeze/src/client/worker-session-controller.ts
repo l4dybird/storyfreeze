@@ -187,7 +187,7 @@ export function initializeWorkerSessionController(
         status: 'booting',
       };
       if (currentStoryId === request.storyId) {
-        channel.emit(eventNames.FORCE_REMOUNT);
+        channel.emit(eventNames.FORCE_REMOUNT, { storyId: request.storyId });
         return Promise.resolve(active);
       }
       return new Promise<WorkerStorySelection>((resolve, reject) => {

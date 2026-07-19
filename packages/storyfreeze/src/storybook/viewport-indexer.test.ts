@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vite-plus/test';
-import { addViewportProfileTags } from './viewport-indexer.js';
+import { addViewportProfileTags, resolveStoryFileTestRegexp, storyfreezeViewportIndexer } from './viewport-indexer.js';
 
 const options = { makeTitle: (title: string) => title };
 
@@ -55,5 +55,23 @@ describe(addViewportProfileTags, () => {
       Inherited: ['storyfreeze-viewport-desktop'],
       Override: ['storyfreeze-viewport-mobile'],
     });
+  });
+});
+
+describe(resolveStoryFileTestRegexp, () => {
+  it('uses the Storybook 10.5 matcher when the internal export is unavailable', () => {
+    const matcher = resolveStoryFileTestRegexp({});
+
+    expect(matcher).toEqual(/(stories|story)\.(m?js|ts)x?$/);
+    expect(matcher.test('/fixture/Example.stories.ts')).toBe(true);
+    expect(matcher.test('/fixture/Example.story.mjs')).toBe(true);
+    expect(matcher.test('/fixture/Example.stories.mdx')).toBe(false);
+  });
+
+  it('uses Storybook-provided matcher when it is available', () => {
+    const matcher = /custom-story$/;
+
+    expect(resolveStoryFileTestRegexp({ STORY_FILE_TEST_REGEXP: matcher })).toBe(matcher);
+    expect(storyfreezeViewportIndexer.test).toBeInstanceOf(RegExp);
   });
 });

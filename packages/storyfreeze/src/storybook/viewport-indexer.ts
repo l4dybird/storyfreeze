@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises';
-import { STORY_FILE_TEST_REGEXP } from 'storybook/internal/common';
+import * as storybookCommon from 'storybook/internal/common';
 import { loadCsf } from 'storybook/internal/csf-tools';
 import { types } from 'storybook/internal/babel';
 import type { IndexInput, Indexer, IndexerOptions } from 'storybook/internal/types';
@@ -10,6 +10,17 @@ type ProfileResolution = { kind: 'found'; profileKey: string } | { kind: 'absent
 
 const absent = { kind: 'absent' } as const;
 const unknown = { kind: 'unknown' } as const;
+
+// Storybook 10.0-10.4 do not export STORY_FILE_TEST_REGEXP. Keep this as a
+// namespace import so those versions can load the preset, and mirror the
+// matcher introduced by Storybook 10.5.0 when the export is unavailable.
+const STORYBOOK_10_5_STORY_FILE_TEST_REGEXP = /(stories|story)\.(m?js|ts)x?$/;
+
+export function resolveStoryFileTestRegexp(
+  common: { readonly STORY_FILE_TEST_REGEXP?: RegExp } = storybookCommon,
+): RegExp {
+  return common.STORY_FILE_TEST_REGEXP ?? STORYBOOK_10_5_STORY_FILE_TEST_REGEXP;
+}
 
 function unwrap(node: types.Node | null | undefined): types.Node | undefined {
   let current = node ?? undefined;
@@ -142,7 +153,7 @@ export function addViewportProfileTags(code: string, fileName: string, options: 
 }
 
 export const storyfreezeViewportIndexer: Indexer = {
-  test: STORY_FILE_TEST_REGEXP,
+  test: resolveStoryFileTestRegexp(),
   async createIndex(fileName, options) {
     const code = await readFile(fileName, 'utf8');
     if (!code.trim()) return [];

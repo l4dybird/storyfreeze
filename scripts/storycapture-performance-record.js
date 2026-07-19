@@ -85,6 +85,12 @@ function validateImplementation(name, spec, parallel) {
   if (commandParallel(spec.args) !== parallel) {
     throw new Error(`${name}.args must explicitly set --parallel ${parallel}.`);
   }
+  const commandTemplate = [spec.command, ...spec.args].join('\0');
+  for (const placeholder of ['{chromiumPath}', '{outDir}', '{storybookUrl}']) {
+    if (!commandTemplate.includes(placeholder)) {
+      throw new Error(`${name} command must include the ${placeholder} placeholder.`);
+    }
+  }
 }
 
 function listPngs(directory) {
@@ -188,6 +194,15 @@ async function waitForObservedProcesses(observed, clockTicksPerSecond) {
   } while (true);
 }
 
+function signalProcessGroup(pid, signal) {
+  if (!Number.isInteger(pid) || pid <= 0) return;
+  try {
+    process.kill(-pid, signal);
+  } catch (error) {
+    if (error?.code !== 'ESRCH') throw error;
+  }
+}
+
 function parseCaptureTime(log, pattern) {
   if (pattern) {
     const match = log.match(new RegExp(pattern, 'g'))?.at(-1)?.match(new RegExp(pattern));
@@ -225,6 +240,7 @@ async function measureCommand({
   invalidPngHashes,
   artifactDir,
   configDir,
+  commandTimeoutMs,
 }) {
   const replacements = {
     chromiumPath: implementation.chromiumPath,
@@ -237,6 +253,7 @@ async function measureCommand({
   fs.mkdirSync(outputDir, { recursive: true });
   const child = spawn(command, args, {
     cwd,
+    detached: true,
     env: { ...process.env, ...(implementation.env ?? {}) },
     shell: false,
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -264,6 +281,13 @@ async function measureCommand({
   const startedAt = process.hrtime.bigint();
   sample();
   const sampler = setInterval(sample, sampleIntervalMs);
+  let commandTimedOut = false;
+  let forceKillTimer;
+  const commandTimeout = setTimeout(() => {
+    commandTimedOut = true;
+    signalProcessGroup(child.pid, 'SIGTERM');
+    forceKillTimer = setTimeout(() => signalProcessGroup(child.pid, 'SIGKILL'), processExitTimeoutMs);
+  }, commandTimeoutMs);
   let exit;
   try {
     exit = await new Promise((resolve, reject) => {
@@ -271,12 +295,25 @@ async function measureCommand({
       child.once('close', (code, signal) => resolve({ code, signal }));
     });
   } finally {
+    clearTimeout(commandTimeout);
+    clearTimeout(forceKillTimer);
     clearInterval(sampler);
   }
   sample();
   const wallTimeMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
   const residual = await waitForObservedProcesses(observed, clockTicksPerSecond);
-  const log = `${stdout}\n${stderr}`.replace(/\u001B\[[0-?]*[ -/]*[@-~]/g, '');
+  if (residual.length > 0) {
+    signalProcessGroup(child.pid, 'SIGTERM');
+    const remaining = await waitForObservedProcesses(observed, clockTicksPerSecond);
+    if (remaining.length > 0) {
+      signalProcessGroup(child.pid, 'SIGKILL');
+      await waitForObservedProcesses(observed, clockTicksPerSecond);
+    }
+  }
+  const timeoutMessage = commandTimedOut
+    ? `\n[recorder] command exceeded ${commandTimeoutMs} ms and was terminated.`
+    : '';
+  const log = `${stdout}\n${stderr}${timeoutMessage}`.replace(/\u001B\[[0-?]*[ -/]*[@-~]/g, '');
   fs.mkdirSync(artifactDir, { recursive: true });
   fs.writeFileSync(path.join(artifactDir, `${label}.log`), log);
   const pngs = listPngs(outputDir);
@@ -298,6 +335,7 @@ async function measureCommand({
     ).length,
     wallTimeMs,
     exitCode: exit.code ?? -1,
+    exitSignal: exit.signal,
     pngCount: pngs.length,
     crashCount: [...log.matchAll(/(?:Target closed|browser process.*crash|Failed to launch the browser)/gi)].length,
     duplicatePngCount: Math.max(0, storedPaths.length - new Set(storedPaths).size),
@@ -309,7 +347,8 @@ async function measureCommand({
     pixelMismatchCount: 0,
     residualProcessCount: residual.length,
     retryCount: [...log.matchAll(/Retry to screenshot this story after this sequence\./g)].length,
-    timeoutCount: [...log.matchAll(/(?:did not become ready|timeout exceeded|TimeoutError)/gi)].length,
+    timeoutCount:
+      Number(commandTimedOut) + [...log.matchAll(/(?:did not become ready|timeout exceeded|TimeoutError)/gi)].length,
     unexpectedPngCount: pngs.filter(relativePath => !expectedSet.has(relativePath)).length,
   };
   return { outputDir, result };
@@ -330,14 +369,43 @@ function validateConfig(config) {
   if (typeof config.staticBuildDir !== 'string' || !config.staticBuildDir)
     throw new Error('staticBuildDir is required.');
   if (typeof config.chromiumPath !== 'string' || !config.chromiumPath) throw new Error('chromiumPath is required.');
+  if (!Number.isFinite(config.commandTimeoutMs) || config.commandTimeoutMs <= 0) {
+    throw new Error('commandTimeoutMs must be a positive finite number.');
+  }
   if (config.azureImage !== undefined && (typeof config.azureImage !== 'string' || !config.azureImage)) {
     throw new Error('azureImage must be a non-empty string when provided.');
   }
-  if (typeof config.rc0?.cpuP50Ms !== 'number' || config.rc0.cpuP50Ms <= 0) {
-    throw new Error('rc0.cpuP50Ms must be a positive number.');
+  if (config.rc0?.schemaVersion !== 1 || config.rc0?.kind !== 'storyfreeze-rc0-resource-baseline') {
+    throw new Error('rc0 must be a storyfreeze-rc0-resource-baseline schema version 1 record.');
   }
-  if (typeof config.rc0?.peakRssP50Bytes !== 'number' || config.rc0.peakRssP50Bytes <= 0) {
-    throw new Error('rc0.peakRssP50Bytes must be a positive number.');
+  for (const field of ['commit', 'packageHash', 'tree', 'version']) {
+    if (typeof config.rc0.storyfreeze?.[field] !== 'string' || !config.rc0.storyfreeze[field]) {
+      throw new Error(`rc0.storyfreeze.${field} is required.`);
+    }
+  }
+  if (config.rc0.storyfreeze.version !== '0.2.0-rc.0') {
+    throw new Error('rc0.storyfreeze.version must be 0.2.0-rc.0.');
+  }
+  for (const field of ['azureImage', 'chromium', 'optionsHash', 'staticBuildHash']) {
+    if (typeof config.rc0.scenario?.[field] !== 'string' || !config.rc0.scenario[field]) {
+      throw new Error(`rc0.scenario.${field} is required.`);
+    }
+  }
+  if (
+    config.rc0.scenario.expectedCaptures !== config.expectedCaptures ||
+    config.rc0.scenario.parallel !== config.parallel
+  ) {
+    throw new Error('rc0 scenario capture count and parallelism must match the representative scenario.');
+  }
+  if (!Array.isArray(config.rc0.runs) || config.rc0.runs.length < 3) {
+    throw new Error('rc0.runs must contain at least three raw resource measurements.');
+  }
+  for (const [index, run] of config.rc0.runs.entries()) {
+    for (const field of ['cpuTimeMs', 'peakRssBytes']) {
+      if (!Number.isFinite(run?.[field]) || run[field] <= 0) {
+        throw new Error(`rc0.runs[${index}].${field} must be a positive finite number.`);
+      }
+    }
   }
   if (!Array.isArray(config.invalidPngHashes) || config.invalidPngHashes.length === 0) {
     throw new Error('invalidPngHashes must contain at least one decoded No Preview/error-page hash.');
@@ -426,11 +494,43 @@ async function recordComparison(config, { configDir, outputFile }) {
       invalidPngHashes,
       artifactDir,
       configDir,
+      commandTimeoutMs: config.commandTimeoutMs,
     });
   const run = (name, label) => runImplementation(implementations[name], label);
+  const options = {
+    commandTimeoutMs: config.commandTimeoutMs,
+    parallel: config.parallel,
+    storybookUrl: config.storybookUrl,
+    storycapture: config.implementations.storycapture.args,
+    storyfreeze: config.implementations.storyfreeze.args,
+  };
+  const scenario = {
+    azureImage,
+    chromium,
+    expectedCaptures: config.expectedCaptures,
+    options,
+    optionsHash: hashBuffer(Buffer.from(JSON.stringify(options))),
+    parallel: config.parallel,
+    staticBuildHash: hashPath(staticBuildDir),
+  };
   try {
     const warmupOrder = measuredOrder(0, ['storycapture', 'storyfreeze'], config.startingImplementation);
-    for (const name of warmupOrder) await run(name, `warmup-${name}`);
+    const measuredWarmup = {};
+    for (const name of warmupOrder) measuredWarmup[name] = await run(name, `warmup-${name}`);
+    const warmupPixelMismatchCount = comparePngDirectories(
+      measuredWarmup.storycapture.outputDir,
+      measuredWarmup.storyfreeze.outputDir,
+      expectedPaths,
+    );
+    measuredWarmup.storycapture.result.pixelMismatchCount = warmupPixelMismatchCount;
+    measuredWarmup.storyfreeze.result.pixelMismatchCount = warmupPixelMismatchCount;
+    const warmups = [
+      {
+        order: warmupOrder,
+        storycapture: measuredWarmup.storycapture.result,
+        storyfreeze: measuredWarmup.storyfreeze.result,
+      },
+    ];
     const pairs = [];
     for (let index = 0; index < 5; index += 1) {
       const order = measuredOrder(index, ['storycapture', 'storyfreeze'], config.startingImplementation);
@@ -449,25 +549,11 @@ async function recordComparison(config, { configDir, outputFile }) {
         storyfreeze: measured.storyfreeze.result,
       });
     }
-    const options = {
-      parallel: config.parallel,
-      storybookUrl: config.storybookUrl,
-      storycapture: config.implementations.storycapture.args,
-      storyfreeze: config.implementations.storyfreeze.args,
-    };
     const record = {
       schemaVersion: 1,
       kind: 'storycapture-performance-comparison',
       recordedAt: new Date().toISOString(),
-      scenario: {
-        azureImage,
-        chromium,
-        expectedCaptures: config.expectedCaptures,
-        options,
-        optionsHash: hashBuffer(Buffer.from(JSON.stringify(options))),
-        parallel: config.parallel,
-        staticBuildHash: hashPath(staticBuildDir),
-      },
+      scenario,
       storycapture: storycaptureMetadata,
       storyfreeze: {
         ...storyfreezeMetadata,
@@ -475,6 +561,7 @@ async function recordComparison(config, { configDir, outputFile }) {
         tree: storyfreezeTree,
       },
       rc0: config.rc0,
+      warmups,
       pairs,
     };
     const initialEvaluation = evaluateStoryCaptureGate(record);
@@ -550,6 +637,7 @@ if (require.main === module) {
 module.exports = {
   comparePngDirectories,
   hashPath,
+  measureCommand,
   measuredOrder,
   parseCaptureTime,
   pngVisualHash,

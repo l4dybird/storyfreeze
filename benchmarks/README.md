@@ -45,7 +45,7 @@ STORYFREEZE_BENCHMARK_START_PROTOCOL=strict \
 node scripts/e2e-prestorybook.js examples/react-vite browser-performance-benchmark.js persistent-preview.json
 ```
 
-The representative release gate is separate because the 452-capture consumer project and Azure image are not public repository fixtures. Generate its five alternating raw pairs on Azure with `node scripts/storycapture-performance-record.js <config.json> <record.json>`. The config supplies the private StoryCapture and packed StoryFreeze command/argument arrays (using `{outDir}`, `{storybookUrl}`, and `{chromiumPath}` placeholders), package paths, the static-build directory, the exact 452-path contract, a single Chromium executable, RC.0 CPU/RSS, and the served Storybook URL. Both command arrays must explicitly set `--parallel 4`; both receive the same resolved Chromium executable. It must also provide decoded hashes for known Storybook No Preview/error images; generate each hash with `node scripts/storycapture-performance-record.js --hash-png <file.png>`. The recorder hashes the package/static inputs, records the executable's reported Chromium version, samples the complete Linux process tree, preserves raw logs, validates path/count/known-invalid images, and compares decoded RGBA before writing the record and evaluation. If the main gate passes and `noRecycleExperiment.default128`/`unlimited` command specifications are present, it then records the independent three-pair lifetime experiment. The standalone `node scripts/storycapture-performance-gate.js <record.json> [evaluation.json]` command can reevaluate the artifact. The gate recomputes raw-run p50/p95 and requires StoryFreeze/StoryCapture wall p50 `<=0.90`, wall p95 `<=1.00`, StoryFreeze/RC.0 CPU `<=0.90`, peak RSS `<=1.05`, exactly 452 outputs, and zero capture, visual, or lifecycle failures. A ratio `<=0.50` is reported as the non-blocking stretch goal.
+The representative release gate is separate because the 452-capture consumer project and Azure image are not public repository fixtures. Generate its five alternating raw pairs on Azure with `node scripts/storycapture-performance-record.js <config.json> <record.json>`. The config supplies the private StoryCapture and packed StoryFreeze command/argument arrays, package paths, the static-build directory, the exact 452-path contract, a single Chromium executable, a provenance-bearing RC.0 baseline, and the served Storybook URL. Both command templates must contain `{outDir}`, `{storybookUrl}`, and `{chromiumPath}`, and must explicitly set `--parallel 4`; this makes both implementations use the same resolved Chromium executable. It must also provide decoded hashes for known Storybook No Preview/error images; generate each hash with `node scripts/storycapture-performance-record.js --hash-png <file.png>`. The recorder hashes the package/static inputs, records the executable's reported Chromium version, samples the complete Linux process tree, preserves and validates the warmup pair separately from measured statistics, preserves raw logs, validates path/count/known-invalid images, and compares decoded RGBA before writing the record and evaluation. Each command runs in its own process group and is terminated at `commandTimeoutMs`; leaked descendants are also terminated and make the gate fail. If the main gate passes and `noRecycleExperiment.default128`/`unlimited` command specifications are present, it then records the independent three-pair lifetime experiment. The standalone `node scripts/storycapture-performance-gate.js <record.json> [evaluation.json]` command can reevaluate the artifact. The gate recomputes raw-run p50/p95 and RC.0 resource medians and requires matching Azure image, Chromium, static build, options, capture count, and parallelism. It then requires StoryFreeze/StoryCapture wall p50 `<=0.90`, wall p95 `<=1.00`, StoryFreeze/RC.0 CPU `<=0.90`, peak RSS `<=1.05`, exactly 452 outputs, and zero capture, visual, warmup, or lifecycle failures. A ratio `<=0.50` is reported as the non-blocking stretch goal.
 
 ```json
 {
@@ -56,11 +56,34 @@ The representative release gate is separate because the 452-capture consumer pro
   "expectedCaptures": 452,
   "parallel": 4,
   "chromiumPath": "./.cache/chromium/chrome",
+  "commandTimeoutMs": 600000,
   "azureImage": "ubuntu-24.04@<Azure image version>",
   "storyfreezeCommit": "<commit SHA>",
   "storyfreezeTree": "<tree SHA>",
   "invalidPngHashes": ["<decoded No Preview hash>"],
-  "rc0": { "cpuP50Ms": 1, "peakRssP50Bytes": 1 },
+  "rc0": {
+    "schemaVersion": 1,
+    "kind": "storyfreeze-rc0-resource-baseline",
+    "storyfreeze": {
+      "commit": "<RC.0 commit SHA>",
+      "tree": "<RC.0 tree SHA>",
+      "packageHash": "<RC.0 packed tarball SHA-256>",
+      "version": "0.2.0-rc.0"
+    },
+    "scenario": {
+      "azureImage": "ubuntu-24.04@<Azure image version>",
+      "chromium": "<exact chromium --version output>",
+      "expectedCaptures": 452,
+      "optionsHash": "<matching options hash>",
+      "parallel": 4,
+      "staticBuildHash": "<matching static build hash>"
+    },
+    "runs": [
+      { "cpuTimeMs": 1, "peakRssBytes": 1 },
+      { "cpuTimeMs": 1, "peakRssBytes": 1 },
+      { "cpuTimeMs": 1, "peakRssBytes": 1 }
+    ]
+  },
   "implementations": {
     "storycapture": {
       "command": "node",

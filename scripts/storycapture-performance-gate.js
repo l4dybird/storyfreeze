@@ -89,11 +89,11 @@ function validateRun(run, label, expectedCaptures, errors) {
   }
 }
 
-function validateAlternatingPairs(pairs, labels, errors) {
+function validateAlternatingPairs(pairs, labels, errors, collectionName = 'pairs') {
   let previous;
   pairs.forEach((pair, index) => {
     if (!pair || typeof pair !== 'object') {
-      errors.push(`pairs[${index}] must be an object.`);
+      errors.push(`${collectionName}[${index}] must be an object.`);
       return;
     }
     if (
@@ -101,18 +101,57 @@ function validateAlternatingPairs(pairs, labels, errors) {
       pair.order.length !== labels.length ||
       new Set(pair.order).size !== labels.length
     ) {
-      errors.push(`pairs[${index}].order must contain ${labels.join(' and ')} exactly once.`);
+      errors.push(`${collectionName}[${index}].order must contain ${labels.join(' and ')} exactly once.`);
       return;
     }
     if (pair.order.some(label => !labels.includes(label))) {
-      errors.push(`pairs[${index}].order contains an unknown implementation.`);
+      errors.push(`${collectionName}[${index}].order contains an unknown implementation.`);
     }
-    if (previous === pair.order[0]) errors.push(`pairs[${index}] does not alternate the starting implementation.`);
+    if (previous === pair.order[0]) {
+      errors.push(`${collectionName}[${index}] does not alternate the starting implementation.`);
+    }
     previous = pair.order[0];
   });
 }
 
-function evaluateRecycleExperiment(record, expectedCaptures) {
+function validateRc0Baseline(rc0, scenario, errors) {
+  if (rc0?.schemaVersion !== 1 || rc0?.kind !== 'storyfreeze-rc0-resource-baseline') {
+    errors.push('Expected rc0 storyfreeze-rc0-resource-baseline schema version 1.');
+  }
+  for (const field of ['commit', 'packageHash', 'tree', 'version']) {
+    if (missingIdentifier(rc0?.storyfreeze?.[field])) errors.push(`rc0.storyfreeze.${field} is required.`);
+  }
+  if (rc0?.storyfreeze?.version !== '0.2.0-rc.0') {
+    errors.push(`rc0.storyfreeze.version must be 0.2.0-rc.0, got ${rc0?.storyfreeze?.version}.`);
+  }
+  for (const field of ['azureImage', 'chromium', 'optionsHash', 'staticBuildHash']) {
+    if (missingIdentifier(rc0?.scenario?.[field])) errors.push(`rc0.scenario.${field} is required.`);
+    else if (rc0.scenario[field] !== scenario[field]) {
+      errors.push(`rc0.scenario.${field} must match scenario.${field}.`);
+    }
+  }
+  for (const field of ['expectedCaptures', 'parallel']) {
+    if (rc0?.scenario?.[field] !== scenario[field]) {
+      errors.push(`rc0.scenario.${field} must match scenario.${field}.`);
+    }
+  }
+  const runs = Array.isArray(rc0?.runs) ? rc0.runs : [];
+  if (runs.length < 3) errors.push(`rc0.runs requires at least three raw runs, got ${runs.length}.`);
+  runs.forEach((run, index) => {
+    for (const field of ['cpuTimeMs', 'peakRssBytes']) {
+      if (typeof run?.[field] !== 'number' || !Number.isFinite(run[field]) || run[field] <= 0) {
+        errors.push(`rc0.runs[${index}].${field} must be a positive finite number.`);
+      }
+    }
+  });
+  return {
+    cpuP50Ms: percentile(runs.map(run => run?.cpuTimeMs).filter(Number.isFinite), 0.5),
+    peakRssP50Bytes: percentile(runs.map(run => run?.peakRssBytes).filter(Number.isFinite), 0.5),
+    runs: runs.length,
+  };
+}
+
+function evaluateRecycleExperiment(record, expectedCaptures, rc0Summary) {
   if (!Array.isArray(record?.noRecyclePairs) || record.noRecyclePairs.length === 0) return { measured: false };
   const errors = [];
   if (record.noRecyclePairs.length < 3) errors.push('noRecyclePairs requires at least three measured pairs.');
@@ -129,7 +168,7 @@ function evaluateRecycleExperiment(record, expectedCaptures) {
   const defaultSummary = summarize(defaultRuns);
   const unlimitedSummary = summarize(unlimitedRuns);
   const wallP50Ratio = ratio(unlimitedSummary.wallP50Ms, defaultSummary.wallP50Ms);
-  const rssToRc0 = ratio(unlimitedSummary.peakRssP50Bytes, record.rc0?.peakRssP50Bytes);
+  const rssToRc0 = ratio(unlimitedSummary.peakRssP50Bytes, rc0Summary.peakRssP50Bytes);
   const adopt = errors.length === 0 && wallP50Ratio <= 0.95 && rssToRc0 <= 1.1;
   return {
     adopt,
@@ -163,10 +202,16 @@ function evaluateStoryCaptureGate(record) {
       errors.push(`storycapture.${field} is required.`);
     }
   }
-  if (typeof record?.rc0?.cpuP50Ms !== 'number' || record.rc0.cpuP50Ms <= 0) errors.push('rc0.cpuP50Ms is required.');
-  if (typeof record?.rc0?.peakRssP50Bytes !== 'number' || record.rc0.peakRssP50Bytes <= 0) {
-    errors.push('rc0.peakRssP50Bytes is required.');
-  }
+  const rc0Summary = validateRc0Baseline(record?.rc0, scenario, errors);
+
+  const warmups = Array.isArray(record?.warmups) ? record.warmups : [];
+  if (warmups.length !== 1) errors.push(`Exactly one warmup pair is required, got ${warmups.length}.`);
+  validateAlternatingPairs(warmups, ['storycapture', 'storyfreeze'], errors, 'warmups');
+  warmups.forEach((pair, index) => {
+    const entry = pair && typeof pair === 'object' ? pair : {};
+    validateRun(entry.storycapture, `warmups[${index}].storycapture`, expectedCaptures, errors);
+    validateRun(entry.storyfreeze, `warmups[${index}].storyfreeze`, expectedCaptures, errors);
+  });
 
   const pairs = Array.isArray(record?.pairs) ? record.pairs : [];
   if (pairs.length < 5) errors.push(`At least five measured pairs are required, got ${pairs.length}.`);
@@ -184,8 +229,8 @@ function evaluateStoryCaptureGate(record) {
   const storycapture = summarize(storycaptureRuns);
   const storyfreeze = summarize(storyfreezeRuns);
   const ratios = {
-    cpuToRc0: ratio(storyfreeze.cpuP50Ms, record?.rc0?.cpuP50Ms),
-    peakRssToRc0: ratio(storyfreeze.peakRssP50Bytes, record?.rc0?.peakRssP50Bytes),
+    cpuToRc0: ratio(storyfreeze.cpuP50Ms, rc0Summary.cpuP50Ms),
+    peakRssToRc0: ratio(storyfreeze.peakRssP50Bytes, rc0Summary.peakRssP50Bytes),
     wallP50ToStoryCapture: ratio(storyfreeze.wallP50Ms, storycapture.wallP50Ms),
     wallP95ToStoryCapture: ratio(storyfreeze.wallP95Ms, storycapture.wallP95Ms),
   };
@@ -202,7 +247,7 @@ function evaluateStoryCaptureGate(record) {
     errors.push(`StoryFreeze/RC.0 peak RSS ratio must be <= 1.05, got ${ratios.peakRssToRc0}.`);
   }
 
-  const recycleExperiment = evaluateRecycleExperiment(record, expectedCaptures);
+  const recycleExperiment = evaluateRecycleExperiment(record, expectedCaptures, rc0Summary);
   if (errors.length > 0 && recycleExperiment.measured) recycleExperiment.adopt = false;
   return {
     schemaVersion: 1,
@@ -212,8 +257,9 @@ function evaluateStoryCaptureGate(record) {
       scenario,
       storycapture: record?.storycapture,
       storyfreeze: record?.storyfreeze,
+      rc0: record?.rc0,
     },
-    summaries: { storycapture, storyfreeze },
+    summaries: { rc0: rc0Summary, storycapture, storyfreeze },
     ratios,
     recycleExperiment,
     stretchGoalPassed: ratios.wallP50ToStoryCapture !== null && ratios.wallP50ToStoryCapture <= 0.5,

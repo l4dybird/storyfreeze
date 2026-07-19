@@ -27,21 +27,40 @@ function run(overrides = {}) {
 }
 
 function record() {
+  const scenario = {
+    azureImage: 'ubuntu-24.04',
+    chromium: '149.0.0.0',
+    expectedCaptures: 452,
+    optionsHash: 'options',
+    parallel: 4,
+    staticBuildHash: 'static',
+  };
   return {
     schemaVersion: 1,
     kind: 'storycapture-performance-comparison',
     recordedAt: '2026-07-20T00:00:00.000Z',
-    scenario: {
-      azureImage: 'ubuntu-24.04',
-      chromium: '149.0.0.0',
-      expectedCaptures: 452,
-      optionsHash: 'options',
-      parallel: 4,
-      staticBuildHash: 'static',
-    },
+    scenario,
     storycapture: { packageHash: 'storycapture', version: '9.0.0' },
     storyfreeze: { commit: 'commit', packageHash: 'storyfreeze', tree: 'tree', version: '0.2.0-rc.1' },
-    rc0: { cpuP50Ms: 1000, peakRssP50Bytes: 1000 },
+    rc0: {
+      schemaVersion: 1,
+      kind: 'storyfreeze-rc0-resource-baseline',
+      storyfreeze: {
+        commit: 'rc0-commit',
+        packageHash: 'rc0-package',
+        tree: 'rc0-tree',
+        version: '0.2.0-rc.0',
+      },
+      scenario: { ...scenario },
+      runs: Array.from({ length: 3 }, () => ({ cpuTimeMs: 1000, peakRssBytes: 1000 })),
+    },
+    warmups: [
+      {
+        order: ['storycapture', 'storyfreeze'],
+        storycapture: run({ captureTimeMs: 1100, cpuTimeMs: 900, peakRssBytes: 900, wallTimeMs: 1100 }),
+        storyfreeze: run(),
+      },
+    ],
     pairs: Array.from({ length: 5 }, (_, index) => ({
       order: index % 2 === 0 ? ['storycapture', 'storyfreeze'] : ['storyfreeze', 'storycapture'],
       storycapture: run({ captureTimeMs: 1100, cpuTimeMs: 900, peakRssBytes: 900, wallTimeMs: 1100 }),
@@ -64,7 +83,7 @@ test('blocks regressions, invalid output, and unbalanced execution order', () =>
   const input = record();
   input.pairs[1].order = ['storycapture', 'storyfreeze'];
   input.pairs[2].storyfreeze = run({ missingPngCount: 1, pngCount: 451, wallTimeMs: 1300 });
-  input.rc0.cpuP50Ms = 700;
+  input.rc0.runs.forEach(run => (run.cpuTimeMs = 700));
   const evaluation = evaluateStoryCaptureGate(input);
   assert.equal(evaluation.gate.passed, false);
   assert.match(evaluation.gate.errors.join('\n'), /does not alternate/);
@@ -91,6 +110,17 @@ test('rejects placeholder provenance instead of accepting an unverifiable record
   assert.equal(evaluation.gate.passed, false);
   assert.match(evaluation.gate.errors.join('\n'), /scenario\.azureImage is required/);
   assert.match(evaluation.gate.errors.join('\n'), /storyfreeze\.commit is required/);
+});
+
+test('rejects an RC.0 baseline from a different scenario and a failed warmup', () => {
+  const input = record();
+  input.rc0.scenario.chromium = '148.0.0.0';
+  input.warmups[0].storyfreeze.residualProcessCount = 1;
+  const evaluation = evaluateStoryCaptureGate(input);
+
+  assert.equal(evaluation.gate.passed, false);
+  assert.match(evaluation.gate.errors.join('\n'), /rc0\.scenario\.chromium must match/);
+  assert.match(evaluation.gate.errors.join('\n'), /warmups\[0\]\.storyfreeze\.residualProcessCount/);
 });
 
 test('only recommends unlimited session lifetime after the stretch criteria pass', () => {

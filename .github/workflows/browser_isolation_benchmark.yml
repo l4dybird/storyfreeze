@@ -88,6 +88,7 @@ on:
       - 'scripts/performance-roadmap-benchmark*.js'
       - 'scripts/performance-roadmap-scenarios*.js'
       - 'scripts/storycapture-performance-gate*.js'
+      - 'scripts/storycapture-performance-record*.js'
 
 permissions:
   contents: read

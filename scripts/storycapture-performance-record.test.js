@@ -8,6 +8,7 @@ const { PNG } = require('pngjs');
 const {
   comparePngDirectories,
   hashPath,
+  measureCommand,
   measuredOrder,
   parseCaptureTime,
   readExpectedPaths,
@@ -65,18 +66,32 @@ test('requires the fixed representative scenario', () => {
     storybookUrl: 'http://127.0.0.1:6006',
     staticBuildDir: 'storybook-static',
     chromiumPath: '/chromium',
+    commandTimeoutMs: 600_000,
     azureImage: 'ubuntu-24.04@20260720.1',
     invalidPngHashes: ['invalid-preview'],
-    rc0: { cpuP50Ms: 1, peakRssP50Bytes: 1 },
+    rc0: {
+      schemaVersion: 1,
+      kind: 'storyfreeze-rc0-resource-baseline',
+      storyfreeze: { commit: 'commit', packageHash: 'package', tree: 'tree', version: '0.2.0-rc.0' },
+      scenario: {
+        azureImage: 'ubuntu-24.04@20260720.1',
+        chromium: 'Chromium 149.0.0.0',
+        expectedCaptures: 452,
+        optionsHash: 'options',
+        parallel: 4,
+        staticBuildHash: 'static',
+      },
+      runs: Array.from({ length: 3 }, () => ({ cpuTimeMs: 1, peakRssBytes: 1 })),
+    },
     implementations: {
       storycapture: {
         command: 'storycapture',
-        args: ['--parallel', '4'],
+        args: ['{storybookUrl}', '--chromium-path', '{chromiumPath}', '--out-dir', '{outDir}', '--parallel', '4'],
         packagePath: 'storycapture.tgz',
       },
       storyfreeze: {
         command: 'storyfreeze',
-        args: ['--parallel=4'],
+        args: ['{storybookUrl}', '--chromium-path', '{chromiumPath}', '--out-dir', '{outDir}', '--parallel=4'],
         packagePath: 'storyfreeze.tgz',
       },
     },
@@ -94,4 +109,50 @@ test('requires the fixed representative scenario', () => {
       }),
     /storycapture.args must explicitly set --parallel 4/,
   );
+  assert.throws(
+    () =>
+      validateConfig({
+        ...config,
+        implementations: {
+          ...config.implementations,
+          storycapture: {
+            ...config.implementations.storycapture,
+            args: config.implementations.storycapture.args.filter(argument => argument !== '{chromiumPath}'),
+          },
+        },
+      }),
+    /storycapture command must include the \{chromiumPath\} placeholder/,
+  );
+  assert.throws(() => validateConfig({ ...config, commandTimeoutMs: 0 }), /commandTimeoutMs/);
 });
+
+test(
+  'terminates a command process group at the configured deadline',
+  { skip: process.platform !== 'linux' },
+  async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'storyfreeze-record-timeout-'));
+    try {
+      const measured = await measureCommand({
+        implementation: {
+          command: process.execPath,
+          args: ['-e', 'setInterval(() => {}, 1000)'],
+          chromiumPath: '/chromium',
+          storybookUrl: 'http://127.0.0.1:6006',
+        },
+        label: 'timeout',
+        outputDir: path.join(root, 'output'),
+        expectedPaths: [],
+        invalidPngHashes: new Set(),
+        artifactDir: path.join(root, 'artifacts'),
+        configDir: root,
+        commandTimeoutMs: 100,
+      });
+
+      assert.notEqual(measured.result.exitCode, 0);
+      assert.equal(measured.result.timeoutCount, 1);
+      assert.equal(measured.result.residualProcessCount, 0);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  },
+);

@@ -32,6 +32,7 @@ interface CaptureRequest {
   count: number;
   queuedAt?: number;
   profile?: EmulationProfile;
+  profileHint?: string;
   estimatedCostMs?: number;
   plannedCapture?: PlannedCapture;
   sessionId?: string;
@@ -45,6 +46,7 @@ function createRequest({
   plannedCapture,
   sessionId,
   sessionVariants,
+  profileHint,
 }: {
   story: Story;
   variantKey?: VariantKey;
@@ -52,6 +54,7 @@ function createRequest({
   plannedCapture?: PlannedCapture;
   sessionId?: string;
   sessionVariants?: SessionVariantRequest[];
+  profileHint?: string;
 }): CaptureRequest {
   const effectiveVariantKey = plannedCapture
     ? { isDefault: plannedCapture.variantKey.length === 0, keys: [...plannedCapture.variantKey] }
@@ -73,8 +76,10 @@ function createRequest({
           plannedCapture,
           profile: plannedCapture.profile,
           estimatedCostMs: plannedCapture.estimatedCostMs,
+          ...(plannedCapture.profileHint === undefined ? {} : { profileHint: plannedCapture.profileHint }),
         }
       : {}),
+    ...(!plannedCapture && profileHint !== undefined ? { profileHint } : {}),
     ...(sessionId ? { sessionId } : {}),
     ...(sessionVariants ? { sessionVariants } : {}),
   };
@@ -293,6 +298,7 @@ export function createScreenshotService({
           })
         : () => false;
       const lastProfiles: Array<EmulationProfile | undefined> = workers.map(() => undefined);
+      const lastProfileHints: Array<string | undefined> = workers.map(() => undefined);
       const lastStoryIds: Array<string | undefined> = workers.map(() => undefined);
       const outputCaptureIds = new Set<string>();
       let captured = 0;
@@ -419,7 +425,12 @@ export function createScreenshotService({
       const runWorker = async (worker: ScreenshotWorker, workerId: number) => {
         if (!(await activations[workerId])) return;
         while (firstFailure === undefined) {
-          const lease = queue.lease(workerId, lastProfiles[workerId], lastStoryIds[workerId]);
+          const lease = queue.lease(
+            workerId,
+            lastProfiles[workerId],
+            lastStoryIds[workerId],
+            lastProfileHints[workerId],
+          );
           if (!lease) {
             if (queue.isDrained()) {
               deactivateDormantWorkers();
@@ -442,6 +453,7 @@ export function createScreenshotService({
               if (switchCost >= 350) queueDiagnostics.expensiveProfileSwitchCount += 1;
             }
             lastProfiles[workerId] = request.profile;
+            lastProfileHints[workerId] = request.profileHint;
           }
           lastStoryIds[workerId] = request.story.id;
 
@@ -497,6 +509,7 @@ export function createScreenshotService({
                 plannedCapture: request.plannedCapture,
                 sessionId: request.sessionId,
                 sessionVariants: request.sessionVariants,
+                profileHint: request.profileHint,
               });
               queue.requeue(request.captureId, retry, workerId);
               requeued = true;
@@ -566,6 +579,7 @@ export function createScreenshotService({
                     story: request.story,
                     variantKey: fallback.variantKey,
                     plannedCapture: fallback.plannedCapture,
+                    profileHint: request.profileHint,
                   }),
                 );
               }
@@ -576,6 +590,7 @@ export function createScreenshotService({
                     story: request.story,
                     variantKey: candidate.variantKey,
                     plannedCapture: candidate.plannedCapture,
+                    profileHint: request.profileHint,
                   }),
                 );
               }

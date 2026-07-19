@@ -1,9 +1,12 @@
+import { parseViewportProfileTag } from '../shared/viewport-profile-tag.js';
+
 export interface StoryDescriptor {
   id: string;
   title: string;
   name: string;
   tags?: readonly string[];
   importPath?: string;
+  viewportProfileHint?: string;
 }
 
 export interface StoryIndexProvider {
@@ -79,6 +82,11 @@ export class StorybookStoryIndexProvider implements StoryIndexProvider {
           throw new Error(`Invalid Storybook index: entries[${JSON.stringify(key)}].tags must be an array of strings.`);
         }
         story.tags = value.tags;
+        const profileHints = value.tags.flatMap(tag => {
+          const profile = parseViewportProfileTag(tag);
+          return profile === undefined ? [] : [profile];
+        });
+        if (profileHints.length > 0) story.viewportProfileHint = profileHints[profileHints.length - 1];
       }
       if (value.importPath !== undefined) {
         if (typeof value.importPath !== 'string') {

@@ -43,6 +43,7 @@ export interface ManifestStory {
   name: string;
   importPath?: string;
   tags?: string[];
+  viewportProfileHint?: string;
 }
 
 export interface ManifestCapture {
@@ -54,6 +55,7 @@ export interface ManifestCapture {
   planning: {
     estimatedCostMs?: number;
     eligibility: ManifestEligibility;
+    profileHint?: string;
   };
   isolation: {
     freshDocument: true;
@@ -196,12 +198,13 @@ function classifyCapture(
 export function generateCaptureManifest(options: ManifestGeneratorOptions): StoryFreezeManifest {
   const base = options.baseOptions;
   const sortedStoryInputs = [...options.stories].sort((left, right) => compareDeterministicStrings(left.id, right.id));
-  const stories = sortedStoryInputs.map(({ id, title, name, importPath, tags }) => ({
+  const stories = sortedStoryInputs.map(({ id, title, name, importPath, tags, viewportProfileHint }) => ({
     storyId: id,
     title,
     name,
     ...(importPath === undefined ? {} : { importPath }),
     ...(tags === undefined ? {} : { tags: [...tags].sort(compareDeterministicStrings) }),
+    ...(viewportProfileHint === undefined ? {} : { viewportProfileHint }),
   }));
   const captures: ManifestCapture[] = [];
   const warnings: string[] = [];
@@ -222,6 +225,9 @@ export function generateCaptureManifest(options: ManifestGeneratorOptions): Stor
       const normalized =
         resolved ??
         normalizeCaptureOptions({ ...selected, viewport: { width: 800, height: 600 } }, options.deviceDescriptors)!;
+      const eligibility = resolved
+        ? classifyCapture(story, variantKey, options.mode, hasRuntimeValue)
+        : 'runtime-discovery';
       captures.push({
         captureId: createCaptureId(story.id, variantKey.keys),
         storyId: story.id,
@@ -229,10 +235,11 @@ export function generateCaptureManifest(options: ManifestGeneratorOptions): Stor
         profile: { ...normalized.viewport },
         options: normalized,
         planning: {
-          eligibility: resolved
-            ? classifyCapture(story, variantKey, options.mode, hasRuntimeValue)
-            : 'runtime-discovery',
+          eligibility,
           estimatedCostMs: estimateCaptureCostMs(normalized),
+          ...(eligibility === 'runtime-discovery' && story.viewportProfileHint
+            ? { profileHint: story.viewportProfileHint }
+            : {}),
         },
         isolation: { freshDocument: true, freshContext: options.freshContext ?? false },
       });
@@ -286,6 +293,9 @@ export function validateCaptureManifest(value: unknown): asserts value is StoryF
     assertString(raw.storyId, `manifest.stories[${index}].storyId`);
     assertString(raw.title, `manifest.stories[${index}].title`);
     assertString(raw.name, `manifest.stories[${index}].name`);
+    if (raw.viewportProfileHint !== undefined && typeof raw.viewportProfileHint !== 'string') {
+      throw new Error(`manifest.stories[${index}].viewportProfileHint must be a string.`);
+    }
     if (storyIds.has(raw.storyId)) throw new Error(`Duplicate manifest story id: ${raw.storyId}.`);
     storyIds.add(raw.storyId);
   });
@@ -307,6 +317,9 @@ export function validateCaptureManifest(value: unknown): asserts value is StoryF
       !['static', 'runtime-validation', 'runtime-discovery'].includes(String(raw.planning.eligibility))
     ) {
       throw new Error(`manifest.captures[${index}].planning.eligibility is invalid.`);
+    }
+    if (raw.planning.profileHint !== undefined && typeof raw.planning.profileHint !== 'string') {
+      throw new Error(`manifest.captures[${index}].planning.profileHint must be a string.`);
     }
     if (!isRecord(raw.isolation) || raw.isolation.freshDocument !== true) {
       throw new Error(`manifest.captures[${index}].isolation.freshDocument must be true.`);

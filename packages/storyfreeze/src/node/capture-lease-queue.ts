@@ -1,4 +1,4 @@
-import { profileSwitchCost, storySwitchCost } from './capture-plan.js';
+import { profileAffinitySwitchCost, storySwitchCost } from './capture-plan.js';
 import type { EmulationProfile } from './emulation-profile.js';
 import { compareDeterministicStrings } from './capture-manifest.js';
 
@@ -8,6 +8,7 @@ export interface LeaseableCapture {
   captureId: string;
   storyId: string;
   profile?: EmulationProfile;
+  profileHint?: string;
   estimatedCostMs?: number;
 }
 
@@ -97,14 +98,19 @@ export class CaptureLeaseQueue<T extends LeaseableCapture> {
     return true;
   }
 
-  lease(workerId: number, lastProfile?: EmulationProfile, lastStoryId?: string): CaptureLease<T> | undefined {
+  lease(
+    workerId: number,
+    lastProfile?: EmulationProfile,
+    lastStoryId?: string,
+    lastProfileHint?: string,
+  ): CaptureLease<T> | undefined {
     this.assertWorkerId(workerId);
     let ownerWorkerId = workerId;
     let capture = this.takeFront(this.lanes[workerId]);
     if (!capture) {
       let selected: { candidateWorkerId: number; capture: T; index: number; affinityCost: number } | undefined;
       for (let candidateWorkerId = 0; candidateWorkerId < this.lanes.length; candidateWorkerId += 1) {
-        const candidate = this.peekBest(this.lanes[candidateWorkerId], lastProfile, lastStoryId);
+        const candidate = this.peekBest(this.lanes[candidateWorkerId], lastProfile, lastStoryId, lastProfileHint);
         if (
           candidate &&
           (!selected ||
@@ -130,8 +136,9 @@ export class CaptureLeaseQueue<T extends LeaseableCapture> {
     const stolen = ownerWorkerId !== workerId;
     if (stolen) this.diagnostics.stealCount += 1;
     if (lastProfile && capture.profile) {
-      if (profileSwitchCost(lastProfile, capture.profile) === 0) this.diagnostics.affinityHitCount += 1;
-      else this.diagnostics.affinityMissCount += 1;
+      if (profileAffinitySwitchCost(lastProfile, lastProfileHint, capture.profile, capture.profileHint) === 0) {
+        this.diagnostics.affinityHitCount += 1;
+      } else this.diagnostics.affinityMissCount += 1;
     }
     return { capture, ownerWorkerId, stolen };
   }
@@ -200,10 +207,16 @@ export class CaptureLeaseQueue<T extends LeaseableCapture> {
     return selectedWorkerId;
   }
 
-  private affinityCost(capture: T, lastProfile?: EmulationProfile, lastStoryId?: string): number {
+  private affinityCost(
+    capture: T,
+    lastProfile?: EmulationProfile,
+    lastStoryId?: string,
+    lastProfileHint?: string,
+  ): number {
     return (
-      (capture.profile ? profileSwitchCost(lastProfile, capture.profile) : 0) +
-      storySwitchCost(lastStoryId, capture.storyId)
+      (capture.profile
+        ? profileAffinitySwitchCost(lastProfile, lastProfileHint, capture.profile, capture.profileHint)
+        : 0) + storySwitchCost(lastStoryId, capture.storyId)
     );
   }
 
@@ -225,11 +238,11 @@ export class CaptureLeaseQueue<T extends LeaseableCapture> {
     return capture;
   }
 
-  private peekBest(lane: QueueLane<T>, lastProfile?: EmulationProfile, lastStoryId?: string) {
+  private peekBest(lane: QueueLane<T>, lastProfile?: EmulationProfile, lastStoryId?: string, lastProfileHint?: string) {
     let selected: { capture: T; index: number; affinityCost: number } | undefined;
     for (let index = lane.head; index < lane.items.length; index += 1) {
       const capture = lane.items[index];
-      const affinityCost = this.affinityCost(capture, lastProfile, lastStoryId);
+      const affinityCost = this.affinityCost(capture, lastProfile, lastStoryId, lastProfileHint);
       if (
         !selected ||
         affinityCost < selected.affinityCost ||

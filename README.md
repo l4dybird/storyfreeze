@@ -149,6 +149,25 @@ module.exports = {
 The addon automatically registers StoryFreeze's preview hooks. Configure capture
 behavior with the `screenshot` parameter; do not register the decorator manually.
 
+For Storybook viewport globals, the addon also adds a namespaced viewport-key tag
+to `index.json` when the value can be determined statically. StoryFreeze uses the
+tag only as a scheduling hint so stories that select the same viewport stay on
+adjacent workers; the preview runtime remains authoritative for the actual width,
+height, and device settings.
+
+Direct literals and local object spreads are supported:
+
+```js
+const desktop = { globals: { viewport: { value: 'desktop' } } };
+
+export const Account_PC = {
+  ...desktop,
+};
+```
+
+Imported helpers, function results, and other dynamic values are not guessed and
+continue through runtime viewport discovery.
+
 ```js
 /* .storybook/preview.js */
 

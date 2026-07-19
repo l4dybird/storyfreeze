@@ -16,6 +16,10 @@
     "./preview": {
       "types": "./dist/storybook/preview.d.ts",
       "import": "./dist/storybook/preview.js"
+    },
+    "./preset": {
+      "types": "./dist/storybook/preset.d.ts",
+      "import": "./dist/storybook/preset.js"
     }
   },
   "sideEffects": [

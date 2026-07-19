@@ -193,6 +193,17 @@ void options;
   );
   assertEqual(preview, 'afterEach,decorators', 'preview exports');
 
+  const preset = run(
+    process.execPath,
+    [
+      '--input-type=module',
+      '--eval',
+      "const preset = await import('storyfreeze/preset'); process.stdout.write(Object.keys(preset).sort().join(','));",
+    ],
+    { cwd: consumerDir },
+  );
+  assertEqual(preset, 'experimental_indexers', 'preset exports');
+
   const requireCheck = run(
     process.execPath,
     [

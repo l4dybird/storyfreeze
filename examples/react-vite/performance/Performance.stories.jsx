@@ -87,6 +87,9 @@ const manyStory = index => ({
   args: { index, kind: 'many-story' },
 });
 
+const desktopViewport = { globals: { viewport: { value: 'desktop' } } };
+const mobileViewport = { globals: { viewport: { value: 'mobile' } } };
+
 const variantEntries = [
   ...Array.from({ length: 4 }, (_, index) => [`hover-${index + 1}`, { hover: '.benchmark-target' }]),
   ...Array.from({ length: 4 }, (_, index) => [`focus-${index + 1}`, { focus: '.benchmark-target' }]),
@@ -112,30 +115,30 @@ export const Single = {
   name: 'Single/Default',
 };
 
-export const Many01 = manyStory(1);
-export const Many02 = manyStory(2);
-export const Many03 = manyStory(3);
-export const Many04 = manyStory(4);
-export const Many05 = manyStory(5);
-export const Many06 = manyStory(6);
-export const Many07 = manyStory(7);
-export const Many08 = manyStory(8);
-export const Many09 = manyStory(9);
-export const Many10 = manyStory(10);
-export const Many11 = manyStory(11);
-export const Many12 = manyStory(12);
-export const Many13 = manyStory(13);
-export const Many14 = manyStory(14);
-export const Many15 = manyStory(15);
-export const Many16 = manyStory(16);
-export const Many17 = manyStory(17);
-export const Many18 = manyStory(18);
-export const Many19 = manyStory(19);
-export const Many20 = manyStory(20);
-export const Many21 = manyStory(21);
-export const Many22 = manyStory(22);
-export const Many23 = manyStory(23);
-export const Many24 = manyStory(24);
+export const Many01 = { ...manyStory(1), ...desktopViewport };
+export const Many02 = { ...manyStory(2), ...desktopViewport };
+export const Many03 = { ...manyStory(3), ...desktopViewport };
+export const Many04 = { ...manyStory(4), ...desktopViewport };
+export const Many05 = { ...manyStory(5), ...mobileViewport };
+export const Many06 = { ...manyStory(6), ...mobileViewport };
+export const Many07 = { ...manyStory(7), ...mobileViewport };
+export const Many08 = { ...manyStory(8), ...mobileViewport };
+export const Many09 = { ...manyStory(9), ...desktopViewport };
+export const Many10 = { ...manyStory(10), ...desktopViewport };
+export const Many11 = { ...manyStory(11), ...desktopViewport };
+export const Many12 = { ...manyStory(12), ...desktopViewport };
+export const Many13 = { ...manyStory(13), ...mobileViewport };
+export const Many14 = { ...manyStory(14), ...mobileViewport };
+export const Many15 = { ...manyStory(15), ...mobileViewport };
+export const Many16 = { ...manyStory(16), ...mobileViewport };
+export const Many17 = { ...manyStory(17), ...desktopViewport };
+export const Many18 = { ...manyStory(18), ...desktopViewport };
+export const Many19 = { ...manyStory(19), ...desktopViewport };
+export const Many20 = { ...manyStory(20), ...desktopViewport };
+export const Many21 = { ...manyStory(21), ...mobileViewport };
+export const Many22 = { ...manyStory(22), ...mobileViewport };
+export const Many23 = { ...manyStory(23), ...mobileViewport };
+export const Many24 = { ...manyStory(24), ...mobileViewport };
 
 export const VariantHeavy = {
   name: 'Variant Heavy/Default',

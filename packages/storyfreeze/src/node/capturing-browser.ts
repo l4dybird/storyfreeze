@@ -857,7 +857,9 @@ export class CapturingBrowser extends BaseBrowser {
         await this.measurePhase('metrics', () => this.waitBrowserMetricsStable('postEmit', deadline));
       }
 
-      if (shouldWaitForVisualCommit(this.mode, viewportChanged || postPreviewResourceActivity, this.touched)) {
+      // Preview already commits its final visual state before publishing ready. Resource-only activity still needs
+      // post metrics above, but repeating the full visual wait here adds no stronger capture guarantee.
+      if (shouldWaitForVisualCommit(this.mode, viewportChanged, this.touched)) {
         await this.measurePhase('visual-commit', async () => {
           const visualCommitDiagnostic = await this.page.waitForVisualCommit(
             { paintFallbackMs: 250, timeoutMs: deadline.remaining(3000) },

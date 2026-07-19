@@ -17,6 +17,7 @@ import { CAPTURE_DIAGNOSTIC_PREFIX } from './capture-diagnostics.js';
 import { CaptureAttemptTimeoutError, PreviewReadyTimeoutError } from './errors.js';
 import { CaptureDeadline } from './capture-deadline.js';
 import { StoryNavigator } from './story-navigator.js';
+import { createBaseScreenshotOptions } from '../shared/screenshot-options-helper.js';
 
 function completeStdoutWrite(...args: unknown[]) {
   const callback = args.find(value => typeof value === 'function') as (() => void) | undefined;
@@ -381,6 +382,77 @@ describe(CapturingBrowser, () => {
     await resetIfTouched();
     expect(page.resetPointer).toHaveBeenCalledTimes(1);
     expect(page.goto).not.toHaveBeenCalled();
+  });
+
+  it('does not repeat the preview visual commit for resource-only activity', async () => {
+    const options = {
+      captureMaxRetryCount: 0,
+      captureTimeout: 5000,
+      delay: 0,
+      disableCssAnimation: false,
+      disableWaitAssets: false,
+      logger: new Logger('silent'),
+      metricsWatchRetryCount: 3,
+      viewportDelay: 0,
+      viewports: ['800x600'],
+    } as MainOptions;
+    const screenshotOptions = createBaseScreenshotOptions(options);
+    const browser = new CapturingBrowser(
+      { url: 'https://example.test' } as ManagedStorybookConnection,
+      options,
+      'managed',
+      0,
+      { name: 'playwright' } as never,
+    );
+    const waitForVisualCommit = vi.fn(async () => ({
+      didTimeout: false,
+      elapsedMs: 0,
+      fontsStatus: 'loaded' as const,
+      imageCount: 0,
+      imageDecodeFailureCount: 0,
+      usedAnimationFrameFallback: false,
+      visibilityState: 'visible' as const,
+    }));
+    const page = {
+      screenshot: vi.fn(async () => Buffer.from('png')),
+      subscribeConsole: vi.fn(() => () => {}),
+      waitForVisualCommit,
+    };
+    vi.spyOn(BaseBrowser.prototype, 'page', 'get').mockReturnValue(page as never);
+    const resourceWatcher = { clear: vi.fn(), generation: 2 };
+    const navigator = {
+      navigate: vi.fn(async () => {}),
+      waitForReady: vi.fn(async () => {
+        Object.assign(browser, { previewSettledResourceGeneration: 1 });
+        return screenshotOptions;
+      }),
+    };
+    Object.assign(browser, {
+      navigator,
+      resourceWatcher,
+      viewport: { height: 600, width: 800 },
+    });
+    const waitForResources = vi.spyOn(browser as never, 'waitForResources').mockResolvedValue(undefined);
+    const waitBrowserMetricsStable = vi
+      .spyOn(browser as never, 'waitBrowserMetricsStable')
+      .mockResolvedValue(undefined);
+
+    await expect(
+      browser.screenshot(
+        'fixture--default',
+        { id: 'fixture--default', kind: 'Fixture', story: 'Default', version: 'v5' },
+        { isDefault: true, keys: [] },
+        0,
+        options.logger,
+        false,
+        false,
+        {} as never,
+      ),
+    ).resolves.toMatchObject({ buffer: Buffer.from('png'), succeeded: true });
+
+    expect(waitForResources).toHaveBeenCalledOnce();
+    expect(waitBrowserMetricsStable).toHaveBeenCalledWith('postEmit', expect.any(CaptureDeadline));
+    expect(waitForVisualCommit).not.toHaveBeenCalled();
   });
 
   it.each([

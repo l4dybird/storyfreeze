@@ -22,6 +22,7 @@
     "reject-redirected-previews",
     "resolve-viewport-globals",
     "safe-browser-sandbox",
+    "skip-duplicate-visual-wait",
     "stop-capture-queue",
     "stream-playwright-traces",
     "validate-cli-numbers"

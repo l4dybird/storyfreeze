@@ -1,5 +1,11 @@
 # storyfreeze
 
+## 0.2.0-alpha.8
+
+### Patch Changes
+
+- 872b091: Apply runtime-discovered viewport orientation changes to the current page instead of navigating the Storybook preview a second time.
+
 ## 0.2.0-alpha.7
 
 ### Patch Changes

@@ -21,6 +21,7 @@
     "protect-capture-paths",
     "quick-screenshots-rest",
     "reject-redirected-previews",
+    "resize-runtime-viewport",
     "resolve-viewport-globals",
     "safe-browser-sandbox",
     "skip-duplicate-visual-wait",

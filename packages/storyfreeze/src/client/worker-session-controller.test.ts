@@ -56,6 +56,11 @@ describe(initializeWorkerSessionController, () => {
     await expect(selecting).resolves.toMatchObject({ generation: 1 });
     protocol.completeCapture('worker-0-2');
     expect(getWorkerSessionIdentity(target)).toBeUndefined();
+
+    await expect(
+      protocol.selectStory({ requestId: 'worker-0-3', storyId: 'button--secondary' }),
+    ).resolves.toMatchObject({ generation: 2 });
+    expect(channel.emitted.at(-1)).toEqual({ eventName: 'forceRemount', args: [] });
   });
 
   it('rejects overlapping, duplicate, and stale selections', async () => {
@@ -106,6 +111,7 @@ describe(initializeWorkerSessionController, () => {
 
   it('uses Storybook 10 event string fallbacks when a namespace omits an export', () => {
     expect(resolveCoreEvent({}, 'SET_CURRENT_STORY')).toBe('setCurrentStory');
+    expect(resolveCoreEvent({}, 'FORCE_REMOUNT')).toBe('forceRemount');
     expect(resolveCoreEvent({ SET_CURRENT_STORY: 'customSetStory' }, 'SET_CURRENT_STORY')).toBe('customSetStory');
   });
 });

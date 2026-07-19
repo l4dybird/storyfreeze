@@ -28,6 +28,7 @@ type WorkerSessionWindow = typeof window & {
 
 type EventName =
   | 'CURRENT_STORY_WAS_SET'
+  | 'FORCE_REMOUNT'
   | 'PLAY_FUNCTION_THREW_EXCEPTION'
   | 'SET_CURRENT_STORY'
   | 'STORY_ERRORED'
@@ -36,6 +37,7 @@ type EventName =
 
 const eventFallbacks: Record<EventName, string> = {
   CURRENT_STORY_WAS_SET: 'currentStoryWasSet',
+  FORCE_REMOUNT: 'forceRemount',
   PLAY_FUNCTION_THREW_EXCEPTION: 'playFunctionThrewException',
   SET_CURRENT_STORY: 'setCurrentStory',
   STORY_ERRORED: 'storyErrored',
@@ -78,6 +80,15 @@ function defaultChannel(): PreviewChannel | undefined {
   }
 }
 
+function initialStoryId(target: WorkerSessionWindow): string | undefined {
+  try {
+    const storyId = new URL(target.location.href).searchParams.get('id');
+    return storyId || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function getWorkerSessionIdentity(
   target: WorkerSessionWindow | undefined = typeof window === 'undefined' ? undefined : (window as WorkerSessionWindow),
 ): SelectWorkerStoryRequest | undefined {
@@ -96,6 +107,7 @@ export function initializeWorkerSessionController(
     Object.keys(eventFallbacks).map(name => [name, resolveCoreEvent(coreEvents, name as EventName)]),
   ) as Record<EventName, string>;
   let active: WorkerStorySelection | undefined;
+  let currentStoryId = initialStoryId(target);
   let generation = 0;
   let pending:
     | {
@@ -135,6 +147,7 @@ export function initializeWorkerSessionController(
       return;
     }
     const resolve = pending.resolve;
+    currentStoryId = actualStoryId;
     pending = undefined;
     resolve(active!);
   };
@@ -173,6 +186,10 @@ export function initializeWorkerSessionController(
         ...createPreviewStateBase(request.storyId, request.requestId),
         status: 'booting',
       };
+      if (currentStoryId === request.storyId) {
+        channel.emit(eventNames.FORCE_REMOUNT);
+        return Promise.resolve(active);
+      }
       return new Promise<WorkerStorySelection>((resolve, reject) => {
         pending = { request, resolve, reject };
         channel.emit(eventNames.SET_CURRENT_STORY, { storyId: request.storyId, viewMode: 'story' });

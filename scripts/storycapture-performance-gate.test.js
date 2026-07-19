@@ -82,6 +82,17 @@ test('reports malformed pair records without throwing', () => {
   assert.match(evaluation.gate.errors.join('\n'), /pairs\[2\]\.storyfreeze is missing/);
 });
 
+test('rejects placeholder provenance instead of accepting an unverifiable record', () => {
+  const input = record();
+  input.scenario.azureImage = 'unknown@unknown';
+  input.storyfreeze.commit = 'unknown';
+  const evaluation = evaluateStoryCaptureGate(input);
+
+  assert.equal(evaluation.gate.passed, false);
+  assert.match(evaluation.gate.errors.join('\n'), /scenario\.azureImage is required/);
+  assert.match(evaluation.gate.errors.join('\n'), /storyfreeze\.commit is required/);
+});
+
 test('only recommends unlimited session lifetime after the stretch criteria pass', () => {
   const input = record();
   input.noRecyclePairs = Array.from({ length: 3 }, (_, index) => ({

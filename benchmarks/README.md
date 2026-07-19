@@ -45,7 +45,57 @@ STORYFREEZE_BENCHMARK_START_PROTOCOL=strict \
 node scripts/e2e-prestorybook.js examples/react-vite browser-performance-benchmark.js persistent-preview.json
 ```
 
-The representative release gate is separate because the 452-capture consumer project and Azure image are not public repository fixtures. Its record must contain five alternating raw pairs using the same Storybook static-build hash, Chromium, Azure image, `parallel=4`, and option hash, plus StoryFreeze commit/tree/package hashes. Evaluate it with `node scripts/storycapture-performance-gate.js <record.json> [evaluation.json]`. The gate recomputes raw-run p50/p95 and requires StoryFreeze/StoryCapture wall p50 `<=0.90`, wall p95 `<=1.00`, StoryFreeze/RC.0 CPU `<=0.90`, peak RSS `<=1.05`, exactly 452 outputs, and zero capture, visual, or lifecycle failures. A ratio `<=0.50` is reported as the non-blocking stretch goal.
+The representative release gate is separate because the 452-capture consumer project and Azure image are not public repository fixtures. Generate its five alternating raw pairs on Azure with `node scripts/storycapture-performance-record.js <config.json> <record.json>`. The config supplies the private StoryCapture and packed StoryFreeze command/argument arrays (using `{outDir}`, `{storybookUrl}`, and `{chromiumPath}` placeholders), package paths, the static-build directory, the exact 452-path contract, a single Chromium executable, RC.0 CPU/RSS, and the served Storybook URL. Both command arrays must explicitly set `--parallel 4`; both receive the same resolved Chromium executable. It must also provide decoded hashes for known Storybook No Preview/error images; generate each hash with `node scripts/storycapture-performance-record.js --hash-png <file.png>`. The recorder hashes the package/static inputs, records the executable's reported Chromium version, samples the complete Linux process tree, preserves raw logs, validates path/count/known-invalid images, and compares decoded RGBA before writing the record and evaluation. If the main gate passes and `noRecycleExperiment.default128`/`unlimited` command specifications are present, it then records the independent three-pair lifetime experiment. The standalone `node scripts/storycapture-performance-gate.js <record.json> [evaluation.json]` command can reevaluate the artifact. The gate recomputes raw-run p50/p95 and requires StoryFreeze/StoryCapture wall p50 `<=0.90`, wall p95 `<=1.00`, StoryFreeze/RC.0 CPU `<=0.90`, peak RSS `<=1.05`, exactly 452 outputs, and zero capture, visual, or lifecycle failures. A ratio `<=0.50` is reported as the non-blocking stretch goal.
+
+```json
+{
+  "schemaVersion": 1,
+  "storybookUrl": "http://127.0.0.1:6006",
+  "staticBuildDir": "./storybook-static",
+  "expectedPngPathsFile": "./expected-png-paths.txt",
+  "expectedCaptures": 452,
+  "parallel": 4,
+  "chromiumPath": "./.cache/chromium/chrome",
+  "azureImage": "ubuntu-24.04@<Azure image version>",
+  "storyfreezeCommit": "<commit SHA>",
+  "storyfreezeTree": "<tree SHA>",
+  "invalidPngHashes": ["<decoded No Preview hash>"],
+  "rc0": { "cpuP50Ms": 1, "peakRssP50Bytes": 1 },
+  "implementations": {
+    "storycapture": {
+      "command": "node",
+      "args": [
+        "./node_modules/storycapture/lib/node/cli.js",
+        "--parallel",
+        "4",
+        "--chromiumPath",
+        "{chromiumPath}",
+        "--outDir",
+        "{outDir}",
+        "{storybookUrl}"
+      ],
+      "packagePath": "./node_modules/storycapture"
+    },
+    "storyfreeze": {
+      "command": "node",
+      "args": [
+        "./node_modules/storyfreeze/dist/node/cli.js",
+        "--parallel",
+        "4",
+        "--capture-protocol",
+        "auto",
+        "--chromium-path",
+        "{chromiumPath}",
+        "--out-dir",
+        "{outDir}",
+        "{storybookUrl}"
+      ],
+      "packagePath": "./storyfreeze-0.2.0-rc.1.tgz",
+      "version": "0.2.0-rc.1"
+    }
+  }
+}
+```
 
 The optional no-recycle experiment is evaluated only after the 128-capture default passes. At least three alternating `default128`/`unlimited` pairs are required; unlimited is recommended only when wall p50 improves by at least 5%, peak RSS remains within `1.10` of RC.0, and correctness remains clean. No representative Azure result is recorded yet, so stable release remains blocked rather than inferring success from the smaller CI fixture.
 

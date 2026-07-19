@@ -27,6 +27,10 @@ function ratio(numerator, denominator) {
     : null;
 }
 
+function missingIdentifier(value) {
+  return typeof value !== 'string' || value.length === 0 || value.toLowerCase().includes('unknown');
+}
+
 function summarize(runs) {
   return {
     captureP50Ms: percentile(
@@ -147,16 +151,15 @@ function evaluateStoryCaptureGate(record) {
   if (expectedCaptures !== 452) errors.push(`scenario.expectedCaptures must be 452, got ${expectedCaptures}.`);
   if (scenario.parallel !== 4) errors.push(`scenario.parallel must be 4, got ${scenario.parallel}.`);
   for (const field of ['azureImage', 'chromium', 'optionsHash', 'staticBuildHash']) {
-    if (typeof scenario[field] !== 'string' || scenario[field].length === 0)
-      errors.push(`scenario.${field} is required.`);
+    if (missingIdentifier(scenario[field])) errors.push(`scenario.${field} is required.`);
   }
   for (const field of ['commit', 'packageHash', 'tree', 'version']) {
-    if (typeof record?.storyfreeze?.[field] !== 'string' || record.storyfreeze[field].length === 0) {
+    if (missingIdentifier(record?.storyfreeze?.[field])) {
       errors.push(`storyfreeze.${field} is required.`);
     }
   }
   for (const field of ['packageHash', 'version']) {
-    if (typeof record?.storycapture?.[field] !== 'string' || record.storycapture[field].length === 0) {
+    if (missingIdentifier(record?.storycapture?.[field])) {
       errors.push(`storycapture.${field} is required.`);
     }
   }

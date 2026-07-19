@@ -1,5 +1,11 @@
 # storyfreeze
 
+## 0.2.0-alpha.5
+
+### Patch Changes
+
+- f68e8c6: Reduce screenshot-buffer contention by measuring reservation pressure and sizing full-page reservations from the resolved layout dimensions.
+
 ## 0.2.0-alpha.4
 
 ### Minor Changes

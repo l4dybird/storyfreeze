@@ -4,10 +4,10 @@ const fs = require('fs');
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
 const { PNG } = require('pngjs');
+const { resolvePnpmCommand } = require('./pnpm-command.js');
 
 const fixtureDir = path.resolve(process.cwd(), process.argv[2] || '.');
 const repoDir = path.resolve(__dirname, '..');
-const pnpmCli = process.env.npm_execpath;
 
 const interactionScreenshotPaths = [
   'Compatibility/Fixture/Interactions_clicked.png',
@@ -33,13 +33,10 @@ const simpleScreenshotPaths = [
 const retryScreenshotPaths = ['Compatibility/Fixture/Retry_LARGE.png', 'Compatibility/Fixture/Retry_SMALL.png'].sort();
 
 function runPnpm(script) {
-  const inheritedPnpmCli = pnpmCli && /pnpm(?:\.cjs)?$/i.test(path.basename(pnpmCli)) ? pnpmCli : undefined;
-  const command = inheritedPnpmCli ? process.execPath : process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm';
-  const args = inheritedPnpmCli ? [inheritedPnpmCli, 'run', script] : ['--dir', fixtureDir, 'run', script];
-  const result = spawnSync(command, args, {
-    cwd: inheritedPnpmCli ? fixtureDir : repoDir,
+  const invocation = resolvePnpmCommand(['--dir', fixtureDir, 'run', script]);
+  const result = spawnSync(invocation.command, invocation.args, {
+    cwd: repoDir,
     encoding: 'utf8',
-    shell: process.platform === 'win32' && !inheritedPnpmCli,
     env: {
       ...process.env,
       CI: 'true',
@@ -64,14 +61,11 @@ function runPnpm(script) {
 }
 
 function runPnpmAsync(script) {
-  const inheritedPnpmCli = pnpmCli && /pnpm(?:\.cjs)?$/i.test(path.basename(pnpmCli)) ? pnpmCli : undefined;
-  const command = inheritedPnpmCli ? process.execPath : process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm';
-  const args = inheritedPnpmCli ? [inheritedPnpmCli, 'run', script] : ['--dir', fixtureDir, 'run', script];
+  const invocation = resolvePnpmCommand(['--dir', fixtureDir, 'run', script]);
 
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
-      cwd: inheritedPnpmCli ? fixtureDir : repoDir,
-      shell: process.platform === 'win32' && !inheritedPnpmCli,
+    const child = spawn(invocation.command, invocation.args, {
+      cwd: repoDir,
       env: {
         ...process.env,
         CI: 'true',

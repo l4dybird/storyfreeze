@@ -4,16 +4,11 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
+const { resolvePnpmCommand } = require('./pnpm-command.js');
 
 function runPnpm(args, options) {
-  const inheritedPnpmCli = process.env.npm_execpath;
-  if (inheritedPnpmCli && /pnpm(?:\.cjs)?$/i.test(path.basename(inheritedPnpmCli))) {
-    return execFileSync(process.execPath, [inheritedPnpmCli, ...args], options);
-  }
-  return execFileSync(process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm', args, {
-    ...options,
-    shell: process.platform === 'win32',
-  });
+  const invocation = resolvePnpmCommand(args);
+  return execFileSync(invocation.command, invocation.args, options);
 }
 
 function runNpm(args, options) {

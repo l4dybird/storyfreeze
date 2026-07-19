@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events';
 import type { Browser, BrowserContext, CDPSession, Page, Request } from 'playwright-core';
 import { describe, expect, it, vi } from 'vite-plus/test';
-import { ChromiumNotFoundError, type BrowserRequest } from './browser-backend.js';
+import { ChromiumNotFoundError, type BrowserRequest, type ScreenshotCaptureController } from './browser-backend.js';
 import { PlaywrightBrowserBackend, PlaywrightCapturePage } from './playwright-browser-backend.js';
 
 class FakePage extends EventEmitter {
@@ -200,11 +200,19 @@ describe(PlaywrightCapturePage, () => {
       return {};
     });
     const page = new PlaywrightCapturePage(rawPage, rawCdp as unknown as CDPSession);
+    const controller: ScreenshotCaptureController = {
+      capture: vi.fn(async (dimensions, capture) => {
+        expect(dimensions).toEqual({ width: 641, height: 961, deviceScaleFactor: 2 });
+        expect(rawCdp.send.mock.calls.some(([method]) => method === 'Page.captureScreenshot')).toBe(false);
+        return capture();
+      }),
+    };
 
     await page.setViewport({ width: 375, height: 667, deviceScaleFactor: 2, isMobile: true });
     await expect(
-      page.screenshot({ fullPage: true, omitBackground: true, captureBeyondViewport: false }),
+      page.screenshot({ fullPage: true, omitBackground: true, captureBeyondViewport: false }, controller),
     ).resolves.toEqual(png);
+    expect(controller.capture).toHaveBeenCalledOnce();
     expect(rawPage.bringToFront).not.toHaveBeenCalled();
     expect(rawCdp.send).toHaveBeenCalledWith('Page.captureScreenshot', {
       format: 'png',

@@ -27,6 +27,7 @@ import {
   type CapturePage,
   type NavigationOptions,
   type RequestListeners,
+  type ScreenshotCaptureController,
   type ScreenshotCaptureOptions,
   type TraceSink,
 } from './browser-backend.js';
@@ -191,7 +192,7 @@ export class PlaywrightCapturePage implements CapturePage {
     return waitForVisualCommitWithAbort(this.rawPage.evaluate(waitForVisualCommitInPage, options), signal);
   }
 
-  async screenshot(options: ScreenshotCaptureOptions) {
+  async screenshot(options: ScreenshotCaptureOptions, controller?: ScreenshotCaptureController) {
     if (options.clip && options.fullPage) {
       throw new Error('options.clip and options.fullPage are exclusive');
     }
@@ -219,7 +220,7 @@ export class PlaywrightCapturePage implements CapturePage {
     let backgroundOverridden = false;
     let viewportOverridden = false;
     let captureFailure: { error: unknown } | undefined;
-    let buffer: Buffer | undefined;
+    let buffer: Buffer | null | undefined;
 
     try {
       if (options.fullPage) {
@@ -250,12 +251,28 @@ export class PlaywrightCapturePage implements CapturePage {
           color: { r: 0, g: 0, b: 0, a: 0 },
         });
       }
-      const result = (await this.cdp.send('Page.captureScreenshot', {
-        format: 'png',
-        ...(clip ? { clip } : {}),
-        captureBeyondViewport,
-      })) as { data: string };
-      buffer = Buffer.from(result.data, 'base64');
+      const dimensions = clip
+        ? {
+            width: clip.width,
+            height: clip.height,
+            deviceScaleFactor: this.viewport?.deviceScaleFactor || 1,
+          }
+        : this.viewport
+          ? {
+              width: this.viewport.width,
+              height: this.viewport.height,
+              deviceScaleFactor: this.viewport.deviceScaleFactor || 1,
+            }
+          : undefined;
+      const capture = async () => {
+        const result = (await this.cdp.send('Page.captureScreenshot', {
+          format: 'png',
+          ...(clip ? { clip } : {}),
+          captureBeyondViewport,
+        })) as { data: string };
+        return Buffer.from(result.data, 'base64');
+      };
+      buffer = controller ? await controller.capture(dimensions, capture) : await capture();
     } catch (error) {
       captureFailure = { error };
     }

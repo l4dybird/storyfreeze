@@ -3,7 +3,7 @@ import fsSync from 'node:fs';
 import os from 'os';
 import path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vite-plus/test';
-import { FileSystem } from './file.js';
+import { estimateScreenshotBufferReservation, FileSystem } from './file.js';
 import type { MainOptions } from './types.js';
 import { subscribeCaptureDiagnostics, type CaptureDiagnosticEvent } from './capture-diagnostics.js';
 
@@ -25,6 +25,15 @@ describe(FileSystem, () => {
   function createFileSystem(flat: boolean) {
     return new FileSystem({ outDir, flat } as MainOptions);
   }
+
+  it('estimates screenshot reservations from the resolved layout and device scale factor', () => {
+    expect(estimateScreenshotBufferReservation({ width: 800, height: 600, deviceScaleFactor: 1 })).toBe(3_007_588);
+    expect(estimateScreenshotBufferReservation({ width: 800, height: 600, deviceScaleFactor: 2 })).toBe(8_883_400);
+    expect(estimateScreenshotBufferReservation(undefined)).toBeUndefined();
+    expect(
+      estimateScreenshotBufferReservation({ width: Number.MAX_SAFE_INTEGER, height: 600, deviceScaleFactor: 1 }),
+    ).toBeUndefined();
+  });
 
   it('preserves the nested output path and variant suffix contract', async () => {
     const fileSystem = createFileSystem(false);

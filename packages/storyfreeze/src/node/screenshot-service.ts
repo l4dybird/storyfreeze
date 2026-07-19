@@ -16,11 +16,11 @@ import { sameEmulationProfile, type EmulationProfile } from './emulation-profile
 import { variantKeyIdentifier } from '../shared/screenshot-options-helper.js';
 import {
   SessionOutputConsumedError,
-  type CaptureProtocolMode,
   type SessionVariantExecutionResult,
   type SessionVariantOutput,
   type SessionVariantRequest,
 } from './story-session.js';
+import type { CaptureProtocolMode } from './types.js';
 import type { PreparedExecutionPlan } from './execution-plan.js';
 
 interface CaptureRequest {

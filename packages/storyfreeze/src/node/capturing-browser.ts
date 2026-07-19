@@ -10,7 +10,7 @@ import type { BrowserSessionSource } from './browser-process-coordinator.js';
 import type { Story } from './story.js';
 import type { ManagedStorybookConnection } from './managed-storybook-connection.js';
 
-import type { MainOptions, RecyclingPolicy, RunMode } from './types.js';
+import type { CaptureProtocolMode, MainOptions, RecyclingPolicy, RunMode } from './types.js';
 import type {
   VariantKey,
   ScreenshotOptions,
@@ -46,12 +46,12 @@ import {
   toViewport,
 } from './emulation-profile.js';
 import type { PlannedCapture } from './capture-plan.js';
-import { createCaptureId, deterministicSerialize, normalizeCaptureOptions } from './capture-manifest.js';
+import { createCaptureId, normalizeCaptureOptions } from './capture-manifest.js';
+import { deterministicSerialize } from './deterministic.js';
 import type { PreviewRuntimeMetadata } from '../shared/preview-protocol.js';
 import {
   classifyBatchEligibility,
   SessionOutputConsumedError,
-  type CaptureProtocolMode,
   type SessionVariantExecutionResult,
   type SessionVariantOutput,
   type SessionVariantRequest,

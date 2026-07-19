@@ -1,6 +1,6 @@
 import { profileAffinitySwitchCost, storySwitchCost } from './capture-plan.js';
 import type { EmulationProfile } from './emulation-profile.js';
-import { compareDeterministicStrings } from './capture-manifest.js';
+import { compareDeterministicStrings } from './deterministic.js';
 
 export type CaptureExecutionState = 'planned' | 'leased' | 'running' | 'completed' | 'failed' | 'requeued';
 

@@ -1,7 +1,6 @@
 import type { Logger } from './logger.js';
 import type { BrowserLaunchOptions, BrowserRuntimeOptions, ChromeChannel } from './browser-backend.js';
 import type { StorybookConnectionOptions } from './managed-storybook-connection.js';
-import type { CaptureProtocolMode } from './story-session.js';
 
 /**
  *
@@ -23,6 +22,9 @@ export type PreviewMode = 'auto' | RunMode;
  *
  **/
 export type BrowserIsolationMode = 'process' | 'context' | 'hybrid' | 'auto';
+
+/** Selects how variants may share one Storybook document. */
+export type CaptureProtocolMode = 'strict' | 'story-session' | 'auto';
 
 export interface RecyclingPolicy {
   maxCapturesPerContext?: number;

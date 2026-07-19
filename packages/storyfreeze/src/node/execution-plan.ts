@@ -1,4 +1,4 @@
-import { compareDeterministicStrings } from './capture-manifest.js';
+import { compareDeterministicStrings } from './deterministic.js';
 import {
   profileAffinityKey,
   profileAffinitySwitchCost,
@@ -8,7 +8,8 @@ import {
   type PlannedCapture,
 } from './capture-plan.js';
 import type { EmulationProfile } from './emulation-profile.js';
-import { createStorySessionPlans, type CaptureProtocolMode, type StorySessionPlan } from './story-session.js';
+import { createStorySessionPlans, type StorySessionPlan } from './story-session.js';
+import type { CaptureProtocolMode } from './types.js';
 
 export interface ExecutionWorkItem {
   id: string;

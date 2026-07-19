@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { BrowserDeviceDescriptor } from './browser-backend.js';
+import { compareDeterministicStrings, deterministicSerialize } from './deterministic.js';
 import type { RunMode } from './types.js';
 import type { StoryDescriptor } from './story-index-provider.js';
 import {
@@ -91,24 +92,6 @@ export interface ManifestGeneratorOptions {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-export function compareDeterministicStrings(left: string, right: string): number {
-  return left < right ? -1 : left > right ? 1 : 0;
-}
-
-function canonicalize(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(canonicalize);
-  if (!isRecord(value)) return value;
-  return Object.fromEntries(
-    Object.entries(value)
-      .sort(([left], [right]) => compareDeterministicStrings(left, right))
-      .map(([key, child]) => [key, canonicalize(child)]),
-  );
-}
-
-export function deterministicSerialize(value: unknown): string {
-  return JSON.stringify(canonicalize(value));
 }
 
 function hash(value: unknown): string {
@@ -345,5 +328,3 @@ export function parseCaptureManifest(source: string): StoryFreezeManifest {
   validateCaptureManifest(value);
   return value;
 }
-
-export type { EmulationProfile } from './emulation-profile.js';

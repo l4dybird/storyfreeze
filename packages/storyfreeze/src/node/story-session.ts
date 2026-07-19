@@ -1,8 +1,7 @@
 import type { PlannedCapture } from './capture-plan.js';
+import { compareDeterministicStrings } from './deterministic.js';
 import type { EmulationProfile } from './emulation-profile.js';
-import { compareDeterministicStrings } from './capture-manifest.js';
-
-export type CaptureProtocolMode = 'strict' | 'story-session' | 'auto';
+import type { CaptureProtocolMode } from './types.js';
 
 export type BatchEligibility = { mode: 'safe' } | { mode: 'validated' } | { mode: 'strict'; reason: string };
 

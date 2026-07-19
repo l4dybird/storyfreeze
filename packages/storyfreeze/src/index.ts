@@ -4,6 +4,7 @@ export type {
   ScreenshotOptionFragments,
   ScreenshotOptionFragmentsForVariant,
   ScreenshotOptions,
+  StorySessionResetContext,
   Variants,
   Viewport,
 } from './shared/types.js';

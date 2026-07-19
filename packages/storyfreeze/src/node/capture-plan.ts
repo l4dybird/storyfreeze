@@ -1,12 +1,11 @@
-import {
-  compareDeterministicStrings,
-  type EmulationProfile,
-  type ManifestCapture,
-  type ManifestEligibility,
-  type NormalizedCaptureOptions,
-  type StoryFreezeManifest,
+import type {
+  ManifestCapture,
+  ManifestEligibility,
+  NormalizedCaptureOptions,
+  StoryFreezeManifest,
 } from './capture-manifest.js';
-import { emulationProfileKey, sameEmulationProfile } from './emulation-profile.js';
+import { compareDeterministicStrings } from './deterministic.js';
+import { emulationProfileKey, sameEmulationProfile, type EmulationProfile } from './emulation-profile.js';
 
 export type CaptureExecutionMode = 'manifest' | 'runtime-validation' | 'runtime-discovery';
 

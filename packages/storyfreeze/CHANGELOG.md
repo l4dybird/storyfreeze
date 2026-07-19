@@ -1,5 +1,11 @@
 # storyfreeze
 
+## 0.2.0-rc.1
+
+### Patch Changes
+
+- a61310c: Reuse managed Storybook Preview pages across stories while preserving capture output and worker isolation, and gate the release against StoryCapture performance.
+
 ## 0.2.0-rc.0
 
 ### Patch Changes

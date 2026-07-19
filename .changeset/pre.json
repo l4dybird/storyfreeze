@@ -25,6 +25,7 @@
     "reject-redirected-previews",
     "resize-runtime-viewport",
     "resolve-viewport-globals",
+    "reuse-persistent-previews",
     "safe-browser-sandbox",
     "skip-duplicate-visual-wait",
     "stop-capture-queue",

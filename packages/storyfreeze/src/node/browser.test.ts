@@ -12,6 +12,7 @@ import type {
 import { BaseBrowser, ChromiumNotFoundError, getDeviceDescriptors } from './browser.js';
 import { MetricsWatcher } from './metrics-watcher.js';
 import type { BrowserSessionSource } from './browser-process-coordinator.js';
+import { subscribeCaptureDiagnostics } from './capture-diagnostics.js';
 import { findChrome, type FindChromeOptions, type FindChromeResult } from './chromium-resolver.js';
 
 class TestBackend implements BrowserBackend {
@@ -93,6 +94,34 @@ describe(BaseBrowser, () => {
       expect(String(write.mock.calls[0][1])).toContain('"type":"browser-launch"');
       expect(String(write.mock.calls[0][1])).toContain('"source":"direct"');
     } finally {
+      await browser.close();
+      write.mockRestore();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('reports every successful capture-worker session generation', async () => {
+    vi.stubEnv('STORYFREEZE_CAPTURE_DIAGNOSTICS', '1');
+    const write = vi.spyOn(fs, 'write').mockImplementation(((...args: unknown[]) => {
+      const callback = args.find(value => typeof value === 'function') as (() => void) | undefined;
+      callback?.();
+    }) as never);
+    const backend = new TestBackend();
+    const browser = new BaseBrowser({}, backend, { role: 'capture-worker', workerId: 2 });
+    const events: Array<{ type: string; role?: unknown; source?: unknown; workerId?: unknown }> = [];
+    const unsubscribe = subscribeCaptureDiagnostics(event => events.push(event));
+
+    try {
+      await browser.boot();
+      await browser.close();
+      await browser.boot();
+
+      expect(events.filter(event => event.type === 'browser-session-open')).toEqual([
+        expect.objectContaining({ role: 'capture-worker', source: 'direct', workerId: 2 }),
+        expect.objectContaining({ role: 'capture-worker', source: 'direct', workerId: 2 }),
+      ]);
+    } finally {
+      unsubscribe();
       await browser.close();
       write.mockRestore();
       vi.unstubAllEnvs();

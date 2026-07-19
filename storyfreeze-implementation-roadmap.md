@@ -1235,6 +1235,18 @@ nightly:
 - memory、CPU、process数
 - artifactとしてJSONとtraceを保存
 
+## 14.7 Phase 6P — 常駐Preview実行モデル
+
+StoryCaptureとの代表案件比較で劣後した主因であるcapture単位の`page.goto()`を廃止する。`process` isolationと既定4 workerを維持し、managed workerはsession generationごとにPreviewを1回だけ開く。以後は内部worker-session protocolでStorybookのrender/remount eventを送り、request IDとStory IDをready/play/errorへ相関させる。
+
+- PR-620: Preview側protocol v1。stale/duplicate/mismatch/render error/abortをhard errorにし、Storybook 10.0〜10.5のcore eventはnamespace importと既知文字列fallbackで扱う。
+- PR-621: Node側のcross-story worker session。既定を`auto`へ変更し、managedはpersistent、simple/protocol非対応はstrict fallback、`story-session`は強制検証とする。Page単位watcherをcapture単位でresetし、128 captureで安全に再生成する。
+- PR-622: 既存static fixtureを使うstrict/persistent paired CIと、Azure 452枚のStoryCapture比較record gate。新しいfixture、smoke suite、pixel suiteは追加しない。
+
+正式リリースにはAzure上の同一static build、Chromium、`parallel=4`、optionsによる5 paired runsを要求する。StoryFreeze/StoryCaptureのwall p50比`<=0.90`、wall p95比`<=1.00`、RC.0比CPU`<=0.90`、peak RSS`<=1.05`、全452出力、画像差・失敗・retry・timeout・crash・leakがすべて0になるまでstable releaseを停止する。wall p50比`<=0.50`はstretch goalとして記録する。
+
+設計判断と状態分離のtrade-offは[ADR-015](docs/adr/015-persistent-preview-worker-session.md)へ記録する。
+
 ## 15. PR分割一覧
 
 | PR  | 内容                                | 主な変更対象       |
@@ -1284,6 +1296,9 @@ nightly:
 | 601 | browser lifecycle soak              | stability/CI       |
 | 602 | current Storybook 10 fixture        | fixture/lockfile   |
 | 603 | stable release gate                 | release/publish    |
+| 620 | persistent Preview protocol         | addon/runtime      |
+| 621 | cross-story worker session          | runtime/scheduler  |
+| 622 | StoryCapture performance gate       | benchmark/ADR      |
 
 ## 16. 同じPRへ入れてはいけない変更
 
@@ -1316,6 +1331,8 @@ nightly:
 | [ADR-011](docs/adr/011-cpu-trace-parallelism.md)                 | CPU traceとparallelism                                   |
 | [ADR-012](docs/adr/012-browser-isolation.md)                     | process/context isolationのdefault                       |
 | [ADR-013](docs/adr/013-phase-5g-throughput.md)                   | Phase 5Gのthroughput最適化と計測判断                     |
+| [ADR-014](docs/adr/014-performance-roadmap-phase-1-3.md)         | manifest scheduling、topology、story session             |
+| [ADR-015](docs/adr/015-persistent-preview-worker-session.md)     | cross-story Preview reuseとstable release性能gate        |
 
 ## 18. IssueラベルとMilestone
 

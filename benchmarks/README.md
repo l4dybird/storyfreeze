@@ -31,6 +31,97 @@ The blocking differential gate requires the same observed Chromium executable, s
 
 The workflow runs the PR profile with explicit browser installation when benchmark-related files change. Manual dispatch selects the `pr` or `record` profile, parallelism, first backend, and whether to run the independent trace control. A pinned official Playwright container comparison remains available only through `workflow_dispatch` with `compare_container=true`.
 
+## Persistent Preview and StoryCapture gate
+
+Phase 6P reuses the same packed React/Vite managed static fixture and Linux process-tree sampler; it does not add a fixture, smoke suite, or pixel-test job. Set `STORYFREEZE_BENCHMARK_COMPARISON=protocol` to compare `process + strict` with `process + auto` (persistent Preview). Pull requests run one warm-up and three alternating measured pairs at `parallel=4`. Manual `record` runs use two warm-ups and five measured pairs. Each schema 1 `persistent-preview-differential` artifact includes source commit/tree and installed-package hash, Chromium and runner identity, raw execution order and runs, wall/capture/CPU/peak RSS, navigation/story-switch/context-recycle diagnostics, browser launch and cleanup counts, and decoded-RGBA comparisons.
+
+The PR gate blocks capture, output, lifecycle, and pixel failures. It also requires the `auto` lane to emit completed cross-story switch diagnostics, so a fallback to strict navigation cannot be recorded as a persistent-Preview result. It records performance ratios but does not block on a single GitHub-hosted runner. Run it manually with:
+
+```sh
+STORYFREEZE_BENCHMARK_COMPARISON=protocol \
+STORYFREEZE_BENCHMARK_PROFILE=record \
+STORYFREEZE_BENCHMARK_PARALLEL=4 \
+STORYFREEZE_BENCHMARK_START_PROTOCOL=strict \
+node scripts/e2e-prestorybook.js examples/react-vite browser-performance-benchmark.js persistent-preview.json
+```
+
+The representative release gate is separate because the 452-capture consumer project and Azure image are not public repository fixtures. Generate its five alternating raw pairs on Azure with `node scripts/storycapture-performance-record.js <config.json> <record.json>`. The config supplies the private StoryCapture and packed StoryFreeze command/argument arrays, package paths, the static-build directory, the exact 452-path contract, a single Chromium executable, a provenance-bearing RC.0 baseline, and the served Storybook URL. Both command templates must contain `{outDir}`, `{storybookUrl}`, and `{chromiumPath}`, and must explicitly set `--parallel 4`; this makes both implementations use the same resolved Chromium executable. It must also provide decoded hashes for known Storybook No Preview/error images; generate each hash with `node scripts/storycapture-performance-record.js --hash-png <file.png>`. The recorder hashes the package/static inputs, records the executable's reported Chromium version, samples the complete Linux process tree, preserves and validates the warmup pair separately from measured statistics, preserves raw logs, validates path/count/known-invalid images, requires completed persistent cross-story switches, and compares decoded RGBA before writing the record and evaluation. Each command runs in its own process group and is terminated at `commandTimeoutMs`; leaked descendants are also terminated and make the gate fail. If the main gate passes and `noRecycleExperiment.default128`/`unlimited` command specifications are present, it then records the independent three-pair lifetime experiment. The standalone `node scripts/storycapture-performance-gate.js <record.json> [evaluation.json]` command can reevaluate the artifact. The gate recomputes raw-run p50/p95 and RC.0 resource medians and requires matching Azure image, Chromium, static build, options, capture count, and parallelism. It then requires StoryFreeze/StoryCapture wall p50 `<=0.90`, wall p95 `<=1.00`, StoryFreeze/RC.0 CPU `<=0.90`, peak RSS `<=1.05`, exactly 452 outputs, and zero capture, visual, warmup, or lifecycle failures. A ratio `<=0.50` is reported as the non-blocking stretch goal.
+
+```json
+{
+  "schemaVersion": 1,
+  "storybookUrl": "http://127.0.0.1:6006",
+  "staticBuildDir": "./storybook-static",
+  "expectedPngPathsFile": "./expected-png-paths.txt",
+  "expectedCaptures": 452,
+  "parallel": 4,
+  "chromiumPath": "./.cache/chromium/chrome",
+  "commandTimeoutMs": 600000,
+  "azureImage": "ubuntu-24.04@<Azure image version>",
+  "storyfreezeCommit": "<commit SHA>",
+  "storyfreezeTree": "<tree SHA>",
+  "invalidPngHashes": ["<decoded No Preview hash>"],
+  "rc0": {
+    "schemaVersion": 1,
+    "kind": "storyfreeze-rc0-resource-baseline",
+    "storyfreeze": {
+      "commit": "<RC.0 commit SHA>",
+      "tree": "<RC.0 tree SHA>",
+      "packageHash": "<RC.0 packed tarball SHA-256>",
+      "version": "0.2.0-rc.0"
+    },
+    "scenario": {
+      "azureImage": "ubuntu-24.04@<Azure image version>",
+      "chromium": "<exact chromium --version output>",
+      "expectedCaptures": 452,
+      "optionsHash": "<matching options hash>",
+      "parallel": 4,
+      "staticBuildHash": "<matching static build hash>"
+    },
+    "runs": [
+      { "cpuTimeMs": 1, "peakRssBytes": 1 },
+      { "cpuTimeMs": 1, "peakRssBytes": 1 },
+      { "cpuTimeMs": 1, "peakRssBytes": 1 }
+    ]
+  },
+  "implementations": {
+    "storycapture": {
+      "command": "node",
+      "args": [
+        "./node_modules/storycapture/lib/node/cli.js",
+        "--parallel",
+        "4",
+        "--chromiumPath",
+        "{chromiumPath}",
+        "--outDir",
+        "{outDir}",
+        "{storybookUrl}"
+      ],
+      "packagePath": "./node_modules/storycapture"
+    },
+    "storyfreeze": {
+      "command": "node",
+      "args": [
+        "./node_modules/storyfreeze/dist/node/cli.js",
+        "--parallel",
+        "4",
+        "--capture-protocol",
+        "auto",
+        "--chromium-path",
+        "{chromiumPath}",
+        "--out-dir",
+        "{outDir}",
+        "{storybookUrl}"
+      ],
+      "packagePath": "./storyfreeze-0.2.0-rc.1.tgz",
+      "version": "0.2.0-rc.1"
+    }
+  }
+}
+```
+
+The optional no-recycle experiment is evaluated only after the 128-capture default passes. At least three alternating `default128`/`unlimited` pairs are required; unlimited is recommended only when wall p50 improves by at least 5%, peak RSS remains within `1.10` of RC.0, and correctness remains clean. No representative Azure result is recorded yet, so stable release remains blocked rather than inferring success from the smaller CI fixture.
+
 ## Browser isolation differential
 
 The isolation differential is independent of the schema 3 browser backend comparison above. It compares Playwright `process` and `context` isolation with the same packed React/Vite managed static fixture, explicit `playwright-core` Chromium executable, launch options, viewport data, and story selection. It does not add a fixture, smoke job, or pixel suite; the existing Storybook 10 E2E remains responsible for broad path, filter, shard, retry, and lifecycle coverage.

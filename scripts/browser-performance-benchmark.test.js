@@ -1,13 +1,19 @@
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const test = require('node:test');
 
 const {
   benchmarkProfilesForComparison,
   chromiumProcessType,
   findObservedProcesses,
+  hashDirectory,
   isolationExecutionOrder,
+  parseCaptureLog,
   parseParallel,
   processIdentity,
+  protocolRunGateErrors,
   summarizeRuns,
 } = require('./browser-performance-benchmark.js');
 
@@ -17,6 +23,10 @@ test('uses complete measured rotations for each comparison profile', () => {
     record: { measuredRuns: 9, warmupRuns: 2 },
   });
   assert.deepEqual(benchmarkProfilesForComparison('isolation').record, { measuredRuns: 10, warmupRuns: 2 });
+  assert.deepEqual(benchmarkProfilesForComparison('protocol'), {
+    pr: { measuredRuns: 3, warmupRuns: 1 },
+    record: { measuredRuns: 5, warmupRuns: 2 },
+  });
 });
 
 test('rotates every benchmark lane through every execution position', () => {
@@ -32,6 +42,33 @@ test('accepts exploratory parallel values without accepting arbitrary worker cou
   assert.equal(parseParallel('16'), 16);
   assert.throws(() => parseParallel('3'), /Unsupported benchmark parallel value/);
   assert.throws(() => parseParallel('many'), /Unsupported benchmark parallel value/);
+});
+
+test('parses integer and persistent-session fractional capture timings', () => {
+  const parsed = parseCaptureLog(
+    [
+      'Found 2 stories.',
+      'Screenshot stored: first.png in 123 msec.',
+      'Screenshot stored: second.png in 216.4918 msec.',
+    ].join('\n'),
+  );
+  assert.equal(parsed.storyCount, 2);
+  assert.deepEqual(parsed.storyDurationsMs, [123, 216.4918]);
+});
+
+test('rejects a protocol comparison that silently falls back to strict navigation', () => {
+  const run = {
+    captureDiagnostics: [],
+    errors: [],
+    label: 'persistent',
+    runtimeBrowserLaunchCount: 4,
+    sessionGenerationCount: 4,
+    topology: { browserProcessCount: 4, workerCount: 4 },
+  };
+  assert.match(protocolRunGateErrors(run, 'persistent').join('\n'), /did not exercise the persistent/);
+  run.captureDiagnostics.push({ type: 'capture-phase', phase: 'story-switch', state: 'end' });
+  assert.deepEqual(protocolRunGateErrors(run, 'persistent'), []);
+  assert.match(protocolRunGateErrors(run, 'strict').join('\n'), /strict unexpectedly emitted/);
 });
 
 test('classifies independently sampled Chromium process types', () => {
@@ -57,6 +94,24 @@ test('tracks observed processes by PID and Linux start time', () => {
   assert.deepEqual(findObservedProcesses(processes, new Set(['101:1000', '202:3000'])), [second]);
 });
 
+test('hashes package files deterministically without workspace dependencies', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'storyfreeze-package-hash-'));
+  try {
+    fs.mkdirSync(path.join(directory, 'dist'));
+    fs.writeFileSync(path.join(directory, 'package.json'), '{"name":"fixture"}');
+    fs.writeFileSync(path.join(directory, 'dist', 'index.js'), 'export {};');
+    fs.mkdirSync(path.join(directory, 'node_modules'));
+    fs.writeFileSync(path.join(directory, 'node_modules', 'ignored.js'), 'ignored');
+    const first = hashDirectory(directory);
+    fs.writeFileSync(path.join(directory, 'node_modules', 'ignored.js'), 'changed');
+    assert.equal(hashDirectory(directory), first);
+    fs.writeFileSync(path.join(directory, 'dist', 'index.js'), 'export const changed = true;');
+    assert.notEqual(hashDirectory(directory), first);
+  } finally {
+    fs.rmSync(directory, { force: true, recursive: true });
+  }
+});
+
 test('summarizes capture/runtime phases, queue utilization, and topology', () => {
   const summary = summarizeRuns([
     {
@@ -65,6 +120,8 @@ test('summarizes capture/runtime phases, queue utilization, and topology', () =>
       browserCloseEventCount: 5,
       captureDiagnostics: [
         { durationMs: 100, phase: 'navigation', state: 'end', type: 'capture-phase' },
+        { durationMs: 10, phase: 'story-switch', state: 'end', type: 'capture-phase' },
+        { capturesInContext: 128, type: 'context-recycle' },
         { durationMs: 250, phase: 'capture-worker-boot', state: 'end', type: 'runtime-phase' },
         { durationMs: 7, state: 'start', type: 'queue-task' },
         {
@@ -103,6 +160,7 @@ test('summarizes capture/runtime phases, queue utilization, and topology', () =>
       residualChromiumProcessCount: 0,
       runtimeBrowserLaunchCount: 1,
       runtimeDisposeEventCount: 1,
+      sessionGenerationCount: 1,
       storyDurationsMs: [800],
       success: true,
       timeoutCount: 0,
@@ -112,6 +170,10 @@ test('summarizes capture/runtime phases, queue utilization, and topology', () =>
   ]);
 
   assert.deepEqual(summary.diagnostics.phaseTimings.navigation, { p50Ms: 100, p95Ms: 100, samples: 1 });
+  assert.equal(summary.diagnostics.navigationCount, 1);
+  assert.equal(summary.diagnostics.storySwitchCount, 1);
+  assert.equal(summary.diagnostics.contextRecycleCount, 1);
+  assert.equal(summary.sessionGenerationCount, 1);
   assert.deepEqual(summary.diagnostics.runtimePhaseTimings['capture-worker-boot'], {
     p50Ms: 250,
     p95Ms: 250,

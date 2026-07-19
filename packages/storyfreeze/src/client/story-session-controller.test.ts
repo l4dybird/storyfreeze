@@ -48,6 +48,8 @@ describe(initializeStorySessionController, () => {
       profileHash: 'desktop',
     });
     expect(opened).toEqual({ storyId: 'button--primary', sessionGeneration: 1, profileHash: 'desktop' });
+    await expect(protocol.resetVariant('__base__')).resolves.toEqual(opened);
+    expect(reset).toHaveBeenLastCalledWith({ storyId: 'button--primary', variantId: '__base__' });
     await expect(protocol.applyVariant('hovered')).resolves.toMatchObject({
       sessionGeneration: 1,
       variantGeneration: 1,

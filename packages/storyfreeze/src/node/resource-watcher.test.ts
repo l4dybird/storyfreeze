@@ -79,6 +79,21 @@ describe(ResourceWatcher, () => {
     expect(watcher.getDiagnosticSnapshot().pending).toEqual([]);
   });
 
+  it('tracks finite non-GET HTTP requests without allocating diagnostic detail on the fast path', async () => {
+    const post = { ...request('https://example.test/data'), method: 'POST', resourceType: 'fetch' };
+    page.start(post);
+    expect(watcher.pendingCount).toBe(1);
+    page.finish(post);
+
+    await expect(watcher.waitForRequestsComplete({ quietMs: 0, includeDetails: false })).resolves.toMatchObject({
+      didTimeout: false,
+      pendingCount: 0,
+      pending: [],
+      requestedUrlCount: 1,
+      requestedUrls: [],
+    });
+  });
+
   it('restarts the quiet window when a new request arrives', async () => {
     vi.useFakeTimers();
     const first = request('https://example.test/first.png');

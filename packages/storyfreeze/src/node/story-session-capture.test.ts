@@ -56,18 +56,33 @@ describe(CapturingBrowser.prototype.screenshotSessionVariants, () => {
     const { browser } = createBrowserFixture();
     const order: string[] = [];
     let paintCount = 0;
+    let tickCount = 0;
+    let generation = 0;
     let pending = false;
     let observedPaintRequest = false;
     const page = {
+      waitForRenderTick: vi.fn(async () => {
+        tickCount += 1;
+        order.push(`tick-${tickCount}`);
+        if (tickCount === 1) {
+          pending = true;
+          generation += 1;
+        }
+      }),
       waitForVisualCommit: vi.fn(async () => {
         paintCount += 1;
         order.push(`paint-${paintCount}`);
-        if (paintCount === 1) pending = true;
         return { didTimeout: false };
       }),
     };
     vi.spyOn(BaseBrowser.prototype, 'page', 'get').mockReturnValue(page as never);
     const resourceWatcher = {
+      get generation() {
+        return generation;
+      },
+      get pendingCount() {
+        return pending ? 1 : 0;
+      },
       getDiagnosticSnapshot: vi.fn(() => {
         order.push('snapshot');
         return {
@@ -79,7 +94,15 @@ describe(CapturingBrowser.prototype.screenshotSessionVariants, () => {
         order.push('requests');
         observedPaintRequest = pending;
         pending = false;
-        return { didTimeout: false, elapsedMs: 0, pending: [], requestedUrls: [] };
+        generation += 1;
+        return {
+          didTimeout: false,
+          elapsedMs: 0,
+          pendingCount: 0,
+          pending: [],
+          requestedUrlCount: 1,
+          requestedUrls: [],
+        };
       }),
     };
     const verification = resetVerification();
@@ -108,7 +131,7 @@ describe(CapturingBrowser.prototype.screenshotSessionVariants, () => {
     }
 
     expect(observedPaintRequest).toBe(true);
-    expect(order).toEqual(['reset', 'paint-1', 'requests', 'paint-2', 'snapshot', 'verify']);
+    expect(order).toEqual(['reset', 'tick-1', 'requests', 'tick-2', 'paint-1', 'verify']);
   });
 
   it('captures a click variant with custom reset without another Storybook navigation and verifies reset', async () => {
@@ -135,10 +158,10 @@ describe(CapturingBrowser.prototype.screenshotSessionVariants, () => {
     const evaluate = vi
       .fn()
       .mockResolvedValueOnce(session)
-      .mockResolvedValueOnce(reset)
+      .mockResolvedValueOnce(session)
       .mockResolvedValueOnce(reset)
       .mockResolvedValueOnce({ ...session, variantId: 'hovered', variantGeneration: 1 })
-      .mockResolvedValueOnce(reset)
+      .mockResolvedValueOnce(session)
       .mockResolvedValueOnce(reset)
       .mockResolvedValueOnce(undefined);
     const unsubscribe = vi.fn();
@@ -151,6 +174,7 @@ describe(CapturingBrowser.prototype.screenshotSessionVariants, () => {
       screenshot: vi.fn(async () => Buffer.from('png')),
       setViewport: vi.fn(async () => {}),
       subscribeConsole: vi.fn(() => unsubscribe),
+      waitForRenderTick: vi.fn(async () => {}),
       waitForVisualCommit: vi.fn(async () => ({ didTimeout: false })),
     };
     vi.spyOn(BaseBrowser.prototype, 'page', 'get').mockReturnValue(page as never);
@@ -166,6 +190,8 @@ describe(CapturingBrowser.prototype.screenshotSessionVariants, () => {
       },
       resourceWatcher: {
         clear: vi.fn(),
+        generation: 0,
+        pendingCount: 0,
         getDiagnosticSnapshot: vi.fn(() => ({ pending: [], requestedUrls: [] })),
         getRequestedUrls: vi.fn(() => []),
         waitForRequestsComplete: vi.fn(async () => ({
@@ -205,9 +231,77 @@ describe(CapturingBrowser.prototype.screenshotSessionVariants, () => {
     expect(page.screenshot).toHaveBeenCalledTimes(1);
     expect(page.resetPointer).toHaveBeenCalledTimes(1);
     expect(page.setViewport).not.toHaveBeenCalled();
-    expect(evaluate).toHaveBeenCalledTimes(7);
+    expect(evaluate.mock.calls.map(([, payload]) => payload.method)).toEqual([
+      'openSession',
+      'resetVariant',
+      'verifyReset',
+      'applyVariant',
+      'resetVariant',
+      'verifyReset',
+      'closeSession',
+    ]);
     expect(unsubscribe).toHaveBeenCalledTimes(1);
     expect((browser as unknown as { capturesInContext: number }).capturesInContext).toBe(1);
+  });
+
+  it('does not repeat metrics or capture paint settling for a passive session variant', async () => {
+    const { browser, logger } = createBrowserFixture();
+    const session = { storyId: story.id, sessionGeneration: 1, profileHash };
+    const verification = resetVerification(session);
+    const evaluate = vi
+      .fn()
+      .mockResolvedValueOnce(session)
+      .mockResolvedValueOnce(verification)
+      .mockResolvedValueOnce({ ...session, variantId: 'transparent', variantGeneration: 1 })
+      .mockResolvedValueOnce(session)
+      .mockResolvedValueOnce(verification)
+      .mockResolvedValueOnce(undefined);
+    const page = {
+      evaluate,
+      screenshot: vi.fn(async () => Buffer.from('png')),
+      subscribeConsole: vi.fn(() => vi.fn()),
+      waitForRenderTick: vi.fn(async () => {}),
+      waitForVisualCommit: vi.fn(async () => ({ didTimeout: false })),
+    };
+    vi.spyOn(BaseBrowser.prototype, 'page', 'get').mockReturnValue(page as never);
+    const metrics = vi.spyOn(browser as never, 'waitBrowserMetricsStable').mockResolvedValue(undefined);
+    const waitForRequestsComplete = vi.fn(async () => ({
+      didTimeout: false,
+      elapsedMs: 0,
+      pendingCount: 0,
+      pending: [],
+      requestedUrlCount: 0,
+      requestedUrls: [],
+    }));
+    const rootOptions = createBaseScreenshotOptions({ delay: 0, disableWaitAssets: false, viewports: ['800x600'] });
+    rootOptions.variants = { transparent: { omitBackground: true } };
+    Object.assign(browser, {
+      _currentStory: story,
+      previewRuntimeMetadata: {
+        hasCustomReset: false,
+        hasRuntimeWaitFor: false,
+        runtimeWaitForVariants: [],
+      },
+      resourceWatcher: {
+        clear: vi.fn(),
+        generation: 0,
+        pendingCount: 0,
+        waitForRequestsComplete,
+      },
+      rootScreenshotOptions: rootOptions,
+      viewport: { width: 800, height: 600 },
+    });
+    const request = { variantKey: { isDefault: false, keys: ['transparent'] } };
+
+    await expect(
+      browser.screenshotSessionVariants('button-desktop', story, [request], logger, false, false, {} as never, 'auto'),
+    ).resolves.toEqual({
+      outputs: [{ variantKey: request.variantKey, buffer: Buffer.from('png'), durationMs: expect.any(Number) }],
+      strictFallbacks: [],
+    });
+    expect(metrics).not.toHaveBeenCalled();
+    expect(page.waitForVisualCommit).toHaveBeenCalledTimes(1);
+    expect(waitForRequestsComplete).toHaveBeenCalledTimes(1);
   });
 
   it('restarts the worker and returns the failed and remaining variants to strict mode after reset mismatch', async () => {
@@ -236,9 +330,8 @@ describe(CapturingBrowser.prototype.screenshotSessionVariants, () => {
       .fn()
       .mockResolvedValueOnce(session)
       .mockResolvedValueOnce(validReset)
-      .mockResolvedValueOnce(validReset)
       .mockResolvedValueOnce({ ...session, variantId: 'hovered', variantGeneration: 1 })
-      .mockResolvedValueOnce(validReset)
+      .mockResolvedValueOnce(session)
       .mockResolvedValueOnce(invalidReset)
       .mockResolvedValueOnce(undefined);
     const page = {
@@ -250,6 +343,7 @@ describe(CapturingBrowser.prototype.screenshotSessionVariants, () => {
       screenshot: vi.fn(async () => Buffer.from('png')),
       setViewport: vi.fn(async () => {}),
       subscribeConsole: vi.fn(() => vi.fn()),
+      waitForRenderTick: vi.fn(async () => {}),
       waitForVisualCommit: vi.fn(async () => ({ didTimeout: false })),
     };
     vi.spyOn(BaseBrowser.prototype, 'page', 'get').mockReturnValue(page as never);
@@ -269,6 +363,8 @@ describe(CapturingBrowser.prototype.screenshotSessionVariants, () => {
       },
       resourceWatcher: {
         clear: vi.fn(),
+        generation: 0,
+        pendingCount: 0,
         getDiagnosticSnapshot: vi.fn(() => ({ pending: [], requestedUrls: [] })),
         getRequestedUrls: vi.fn(() => []),
         waitForRequestsComplete: vi.fn(async () => ({
@@ -298,6 +394,29 @@ describe(CapturingBrowser.prototype.screenshotSessionVariants, () => {
     ).resolves.toEqual({ outputs: [], strictFallbacks: [hovered, focused] });
     expect(restart).toHaveBeenCalledOnce();
     expect(page.screenshot).toHaveBeenCalledOnce();
+  });
+
+  it('rejects request activity that starts and finishes while the reset fingerprint is verified', async () => {
+    const { browser } = createBrowserFixture();
+    let generation = 0;
+    Object.assign(browser, {
+      resourceWatcher: {
+        get generation() {
+          return generation;
+        },
+        pendingCount: 0,
+      },
+    });
+    const protocol = {
+      verifyReset: vi.fn(async () => {
+        generation += 1;
+        return resetVerification();
+      }),
+    };
+
+    await expect((browser as any).verifyStorySessionState(protocol, 'hovered')).rejects.toThrow(
+      '"requestActivityChanged":true',
+    );
   });
 
   it('throws in forced story-session mode when the prepared story state is missing', async () => {
@@ -348,7 +467,6 @@ describe(CapturingBrowser.prototype.screenshotSessionVariants, () => {
     const evaluate = vi
       .fn()
       .mockResolvedValueOnce(session)
-      .mockResolvedValueOnce(session)
       .mockResolvedValueOnce(validReset)
       .mockResolvedValueOnce(undefined);
     const page = {
@@ -359,7 +477,7 @@ describe(CapturingBrowser.prototype.screenshotSessionVariants, () => {
     vi.spyOn(BaseBrowser.prototype, 'page', 'get').mockReturnValue(page as never);
     vi.spyOn(browser as never, 'captureStorySessionVariant').mockResolvedValue(Buffer.from('png'));
     const restart = vi.spyOn(browser as never, 'restartCaptureSession').mockImplementation(async () => {
-      expect(evaluate).toHaveBeenCalledTimes(4);
+      expect(evaluate).toHaveBeenCalledTimes(3);
     });
     const rootOptions = createBaseScreenshotOptions({ delay: 0, disableWaitAssets: false, viewports: ['800x600'] });
     rootOptions.variants = { hovered: { hover: '#button' } };
@@ -372,6 +490,7 @@ describe(CapturingBrowser.prototype.screenshotSessionVariants, () => {
         runtimeWaitForVariants: [],
       },
       resourceWatcher: {
+        pendingCount: 0,
         getDiagnosticSnapshot: vi.fn(() => ({ pending: [], requestedUrls: [] })),
         waitForRequestsComplete: vi.fn(async () => ({ pending: [] })),
       },
@@ -408,7 +527,7 @@ describe(CapturingBrowser.prototype.screenshotSessionVariants, () => {
     const evaluate = vi
       .fn()
       .mockResolvedValueOnce(session)
-      .mockResolvedValueOnce(validReset)
+      .mockResolvedValueOnce(session)
       .mockResolvedValueOnce(validReset)
       .mockResolvedValueOnce({ ...session, variantId: 'hovered', variantGeneration: 1 })
       .mockImplementationOnce(() => new Promise(() => {}));
@@ -419,6 +538,7 @@ describe(CapturingBrowser.prototype.screenshotSessionVariants, () => {
       resetPointer: vi.fn(async () => {}),
       screenshot: vi.fn(async () => Buffer.from('png')),
       subscribeConsole: vi.fn(() => vi.fn()),
+      waitForRenderTick: vi.fn(async () => {}),
       waitForVisualCommit: vi.fn(async () => ({ didTimeout: false })),
     };
     vi.spyOn(BaseBrowser.prototype, 'page', 'get').mockReturnValue(page as never);
@@ -434,6 +554,8 @@ describe(CapturingBrowser.prototype.screenshotSessionVariants, () => {
       },
       resourceWatcher: {
         clear: vi.fn(),
+        generation: 0,
+        pendingCount: 0,
         getDiagnosticSnapshot: vi.fn(() => ({ pending: [], requestedUrls: [] })),
         getRequestedUrls: vi.fn(() => []),
         waitForRequestsComplete: vi.fn(async () => ({

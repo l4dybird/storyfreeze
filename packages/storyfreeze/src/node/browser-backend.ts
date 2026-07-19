@@ -68,6 +68,7 @@ export interface TraceSink {
 }
 
 export interface CapturePage {
+  activate(): Promise<void>;
   addStyleFile(path: string): Promise<void>;
   click(selector: string): Promise<void>;
   currentUrl(): string;
@@ -92,6 +93,7 @@ export interface CapturePage {
   stopTrace(): Promise<void>;
   subscribeConsole(listener: (message: BrowserConsoleMessage) => void): () => void;
   subscribeRequests(listeners: RequestListeners): () => void;
+  waitForRenderTick(): Promise<void>;
   waitForVisualCommit(options: VisualCommitOptions, signal?: AbortSignal): Promise<VisualCommitResult>;
 }
 

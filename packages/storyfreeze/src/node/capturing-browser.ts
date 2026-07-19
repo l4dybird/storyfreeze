@@ -1,16 +1,11 @@
 import { fileURLToPath } from 'node:url';
-import { BaseBrowser, MetricsWatcher } from './browser.js';
-import type {
-  BrowserBackend,
-  BrowserConsoleMessage,
-  BrowserSessionOptions,
-  ScreenshotCaptureController,
-} from './browser-backend.js';
+import { BaseBrowser } from './browser.js';
+import type { BrowserBackend, BrowserConsoleMessage, BrowserSessionOptions } from './browser-backend.js';
 import type { BrowserSessionSource } from './browser-process-coordinator.js';
 import type { Story } from './story.js';
 import type { ManagedStorybookConnection } from './managed-storybook-connection.js';
 
-import type { CaptureProtocolMode, MainOptions, RecyclingPolicy, RunMode } from './types.js';
+import type { CaptureProtocolMode, MainOptions, RunMode } from './types.js';
 import type {
   VariantKey,
   ScreenshotOptions,
@@ -28,12 +23,7 @@ import {
   type InvalidVariantKeysReason,
 } from '../shared/screenshot-options-helper.js';
 import { Logger } from './logger.js';
-import {
-  estimateScreenshotBufferReservation,
-  FileSystem,
-  type ScreenshotBudgetDiagnosticContext,
-  type TraceFile,
-} from './file.js';
+import { FileSystem, type TraceFile } from './file.js';
 import { ResourceWatcher } from './resource-watcher.js';
 import { StoryNavigator } from './story-navigator.js';
 import { captureDiagnosticsEnabled, emitCaptureDiagnostic, measureCaptureDiagnostic } from './capture-diagnostics.js';
@@ -58,51 +48,18 @@ import {
 } from './story-session.js';
 import { StorySessionProtocolClient } from './story-session-protocol.js';
 import { raceAgainstTimeout } from './async-utils.js';
+import {
+  CaptureAttemptDidNotDrainError,
+  containsUndrainedAttemptError,
+  shouldRecoverPlaywrightWorker,
+  shouldRecycleContext,
+  shouldWaitForVisualCommit,
+  StorySessionOutputCallbackError,
+} from './capture-policy.js';
+import { MetricsWatcher } from './metrics-watcher.js';
+import { createScreenshotCaptureController, releaseCapturedScreenshot } from './screenshot-capture-controller.js';
 
 const disableAnimationStylePath = fileURLToPath(new URL('../../assets/disable-animation.css', import.meta.url));
-
-function createScreenshotCaptureController(
-  fileSystem: FileSystem,
-  signal?: AbortSignal,
-  diagnosticContext?: ScreenshotBudgetDiagnosticContext,
-): ScreenshotCaptureController {
-  return {
-    capture(dimensions, capture) {
-      if (typeof fileSystem.captureScreenshot !== 'function') return capture();
-      return fileSystem.captureScreenshot(
-        estimateScreenshotBufferReservation(dimensions),
-        capture,
-        signal,
-        diagnosticContext,
-      );
-    },
-  };
-}
-
-function releaseCapturedScreenshot(fileSystem: FileSystem, buffer: Buffer | null | undefined) {
-  fileSystem.releaseScreenshotBuffer?.(buffer);
-}
-
-class StorySessionOutputCallbackError extends Error {
-  constructor(readonly outputError: unknown) {
-    super('A story-session output callback failed.');
-    this.name = 'StorySessionOutputCallbackError';
-  }
-}
-
-class CaptureAttemptDidNotDrainError extends Error {
-  constructor(message: string, cause: unknown) {
-    super(message, { cause });
-    this.name = 'CaptureAttemptDidNotDrainError';
-  }
-}
-
-function containsUndrainedAttemptError(error: unknown): boolean {
-  return (
-    error instanceof CaptureAttemptDidNotDrainError ||
-    (error instanceof AggregateError && error.errors.some(containsUndrainedAttemptError))
-  );
-}
 
 export { resolveViewport } from './emulation-profile.js';
 
@@ -122,33 +79,6 @@ interface ScreenshotResult {
   succeeded: boolean;
   variantKeysToPush: VariantKey[];
   defaultVariantSuffix?: string;
-}
-
-export function shouldWaitForVisualCommit(mode: RunMode, viewportChanged: boolean, touched: boolean) {
-  return mode === 'simple' || viewportChanged || touched;
-}
-
-export function shouldRecoverPlaywrightWorker(options: {
-  aborted: boolean;
-  healthy: boolean;
-  maxRetryCount: number;
-  retryCount: number;
-}) {
-  return !options.aborted && !options.healthy && options.retryCount < options.maxRetryCount;
-}
-
-export function shouldRecycleContext(
-  policy: RecyclingPolicy | undefined,
-  capturesInContext: number,
-  contextAgeMs: number,
-) {
-  if (!policy) return false;
-  return (
-    (policy.maxCapturesPerContext !== undefined &&
-      policy.maxCapturesPerContext > 0 &&
-      capturesInContext >= policy.maxCapturesPerContext) ||
-    (policy.maxContextAgeMs !== undefined && policy.maxContextAgeMs > 0 && contextAgeMs >= policy.maxContextAgeMs)
-  );
 }
 
 /**

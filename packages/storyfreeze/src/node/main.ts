@@ -1,6 +1,7 @@
 import nanomatch from 'nanomatch';
 import { availableParallelism, freemem } from 'node:os';
-import { BaseBrowser, ChromiumNotFoundError, lazyPlaywrightBrowserBackend } from './browser.js';
+import { BaseBrowser, ChromiumNotFoundError } from './browser.js';
+import { lazyPlaywrightBrowserBackend } from './playwright-backend-loader.js';
 import type { BrowserBackend, BrowserSessionOptions } from './browser-backend.js';
 import { BrowserProcessCoordinator, type BrowserSessionSource } from './browser-process-coordinator.js';
 import type { Story } from './story.js';

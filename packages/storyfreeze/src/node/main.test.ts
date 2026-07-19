@@ -1,13 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vite-plus/test';
 import fs from 'node:fs';
 import { BaseBrowser } from './browser.js';
-import {
-  CapturingBrowser,
-  resolveViewport,
-  shouldRecycleContext,
-  shouldRecoverPlaywrightWorker,
-  shouldWaitForVisualCommit,
-} from './capturing-browser.js';
+import { CapturingBrowser, resolveViewport } from './capturing-browser.js';
+import { shouldRecycleContext, shouldRecoverPlaywrightWorker, shouldWaitForVisualCommit } from './capture-policy.js';
 import { Logger } from './logger.js';
 import { ManagedStorybookConnection } from './managed-storybook-connection.js';
 import type { MainOptions } from './types.js';

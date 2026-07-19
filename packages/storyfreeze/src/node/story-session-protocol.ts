@@ -199,11 +199,16 @@ export class StorySessionProtocolClient {
   private invoke(method: ProtocolMethod, argument?: unknown): Promise<unknown> {
     return this.page.evaluate(
       async ({ argument, globalName, method, protocolVersion }) => {
-        const protocol = (window as unknown as Record<string, any>)[globalName];
-        if (!protocol || protocol.protocolVersion !== protocolVersion || typeof protocol[method] !== 'function') {
+        const protocol = (window as unknown as Record<string, unknown>)[globalName];
+        if (typeof protocol !== 'object' || protocol === null) {
           throw new Error('StoryFreeze story-session preview protocol is unavailable or incompatible.');
         }
-        return argument === undefined ? protocol[method]() : protocol[method](argument);
+        const record = protocol as Record<string, unknown>;
+        const handler = record[method];
+        if (record.protocolVersion !== protocolVersion || typeof handler !== 'function') {
+          throw new Error('StoryFreeze story-session preview protocol is unavailable or incompatible.');
+        }
+        return argument === undefined ? handler.call(protocol) : handler.call(protocol, argument);
       },
       {
         argument,

@@ -1,5 +1,11 @@
 # storyfreeze
 
+## 0.2.0-alpha.6
+
+### Patch Changes
+
+- e17e183: Avoid repeating the preview's completed visual-commit wait when only resource activity occurred before capture.
+
 ## 0.2.0-alpha.5
 
 ### Patch Changes

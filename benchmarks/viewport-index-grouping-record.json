@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "kind": "viewport-index-grouping",
+  "recordedAt": "2026-07-19T10:51:00.000Z",
+  "environment": {
+    "os": "windows-11-pro@10.0.26200",
+    "node": "22.14.0",
+    "pnpm": "11.11.0",
+    "playwrightCore": "1.61.1",
+    "chromiumRevision": "1228",
+    "parallel": 4,
+    "browserIsolation": "process",
+    "captureProtocol": "strict"
+  },
+  "fixture": {
+    "source": "examples/react-vite/performance/Performance.stories.jsx",
+    "storyCount": 24,
+    "pngCount": 24,
+    "viewportSequence": "four desktop stories followed by four mobile stories, repeated",
+    "desktop": "1280x720",
+    "mobile": "414x896"
+  },
+  "baseline": {
+    "version": "0.2.0-alpha.6",
+    "commit": "613e4d608f224af7f433e0d7588079cbe8358821",
+    "tree": "d970385ead35651f3e070ad28149b414bfc3d26e",
+    "wallMs": [6625, 7879, 7165],
+    "wallMedianMs": 7165,
+    "navigationCount": [44, 42, 44],
+    "viewportTriggeredNavigationCount": [20, 18, 20],
+    "profileCount": 1
+  },
+  "candidate": {
+    "commit": "1c3452baa9a45f1660bbd06d7e4ec72978191959",
+    "tree": "8881a9de9c0f6f8302e4139f684323e045cd3862",
+    "wallMs": [6120, 6238, 5386],
+    "wallMedianMs": 6120,
+    "navigationCount": [27, 27, 26],
+    "viewportTriggeredNavigationCount": [3, 3, 2],
+    "profileCount": 2
+  },
+  "comparison": {
+    "wallMedianRatio": 0.8542,
+    "wallMedianReduction": 0.1458,
+    "navigationMedianReduction": 0.3864,
+    "viewportTriggeredNavigationMedianReduction": 0.85
+  },
+  "validation": {
+    "exitFailures": 0,
+    "pngMismatches": 0,
+    "retries": 0,
+    "timeouts": 0
+  },
+  "notes": [
+    "Runs were paired in alternating baseline/candidate order after warm-up against the same static Storybook build and Chromium executable.",
+    "The record isolates index-driven grouping; live viewport resize was not enabled."
+  ]
+}

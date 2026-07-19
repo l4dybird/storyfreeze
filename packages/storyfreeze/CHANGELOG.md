@@ -1,5 +1,11 @@
 # storyfreeze
 
+## 0.2.0-alpha.7
+
+### Patch Changes
+
+- 96630cd: Group statically resolvable Storybook viewport globals before capture so runtime-discovery stories avoid repeated viewport-triggered navigation.
+
 ## 0.2.0-alpha.6
 
 ### Patch Changes

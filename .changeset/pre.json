@@ -12,6 +12,7 @@
     "capture-attempt-deadline",
     "fast-explicit-builds",
     "freeze-public-types",
+    "group-viewport-globals",
     "guard-rendered-previews",
     "harden-browser-path-handling",
     "isolate-browser-runtimes",

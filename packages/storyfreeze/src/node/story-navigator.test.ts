@@ -197,6 +197,18 @@ describe(StoryNavigator, () => {
     }
   });
 
+  it('keeps a protocol-unavailable document on the fresh-navigation path', async () => {
+    const page = pageWithState(() => state('ready'));
+    const navigator = new StoryNavigator(page, new URL('https://example.test/storybook'), 7);
+
+    await navigator.navigate('button--primary');
+    expect(navigator.canSelectStory).toBe(true);
+    navigator.markWorkerSessionUnavailable();
+    expect(navigator.canSelectStory).toBe(false);
+    await navigator.navigate('button--secondary');
+    expect(navigator.canSelectStory).toBe(false);
+  });
+
   it.each([
     ['protocol version', { ...state('booting'), protocolVersion: 2 }, 'protocol mismatch'],
     ['addon version', { ...state('booting'), addonVersion: 'old' }, 'addon version mismatch'],

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vite-plus/test';
 
-import { WorkerSessionProtocolClient } from './worker-session-protocol.js';
+import { isWorkerSessionProtocolFault, WorkerSessionProtocolClient } from './worker-session-protocol.js';
 
 describe(WorkerSessionProtocolClient, () => {
   it('validates selection identity and completes the active request', async () => {
@@ -37,5 +37,15 @@ describe(WorkerSessionProtocolClient, () => {
     await client.selectStory({ requestId: '0-2', storyId: 'button--secondary' });
 
     await expect(client.selectStory({ requestId: '0-3', storyId: 'button--tertiary' })).rejects.toThrow('still active');
+  });
+
+  it('classifies corrupted selection responses as recoverable protocol faults', () => {
+    expect(isWorkerSessionProtocolFault(new Error('Worker-session selection mismatch: stale response.'))).toBe(true);
+    expect(
+      isWorkerSessionProtocolFault(
+        new Error('StoryFreeze worker-session preview protocol is unavailable or incompatible.'),
+      ),
+    ).toBe(false);
+    expect(isWorkerSessionProtocolFault(new Error('Storybook render failed.'))).toBe(false);
   });
 });

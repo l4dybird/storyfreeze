@@ -13,7 +13,12 @@ import type {
   Exposed,
   PreviewCaptureDiagnostic,
 } from '../shared/types.js';
-import { InvalidCurrentStoryStateError, PreviewReadyTimeoutError, SimplePreviewReadyTimeoutError } from './errors.js';
+import {
+  InvalidCurrentStoryStateError,
+  PreviewReadyTimeoutError,
+  PreviewStateMismatchError,
+  SimplePreviewReadyTimeoutError,
+} from './errors.js';
 import {
   createBaseScreenshotOptions,
   mergeScreenshotOptions,
@@ -58,7 +63,7 @@ import {
 } from './capture-policy.js';
 import { MetricsWatcher } from './metrics-watcher.js';
 import { createScreenshotCaptureController, releaseCapturedScreenshot } from './screenshot-capture-controller.js';
-import { isWorkerSessionProtocolUnavailable } from './worker-session-protocol.js';
+import { isWorkerSessionProtocolFault, isWorkerSessionProtocolUnavailable } from './worker-session-protocol.js';
 
 const disableAnimationStylePath = fileURLToPath(new URL('../../assets/disable-animation.css', import.meta.url));
 
@@ -77,6 +82,7 @@ export { resolveViewport } from './emulation-profile.js';
  **/
 interface ScreenshotResult {
   buffer: Buffer | null;
+  resolvedProfile?: import('./emulation-profile.js').EmulationProfile;
   succeeded: boolean;
   variantKeysToPush: VariantKey[];
   defaultVariantSuffix?: string;
@@ -246,6 +252,7 @@ export class CapturingBrowser extends BaseBrowser {
       } catch (error) {
         if (this.opt.captureProtocol === 'story-session' || !isWorkerSessionProtocolUnavailable(error)) throw error;
         this.opt.logger.warn('Persistent Preview protocol is unavailable. Falling back to fresh navigation.');
+        this.navigator!.markWorkerSessionUnavailable();
         this.navigator!.invalidateDocument?.();
         await this.measurePhase('navigation', async () => {
           await this.navigator!.navigate(story.id, deadline.navigationTimeout(), this.currentStoryRetryCount);
@@ -329,7 +336,11 @@ export class CapturingBrowser extends BaseBrowser {
   }
 
   private async applyPreNavigationProfile(plannedCapture: PlannedCapture | undefined, deadline: CaptureDeadline) {
-    if (!plannedCapture || plannedCapture.executionMode === 'runtime-discovery') return;
+    if (
+      !plannedCapture ||
+      (plannedCapture.executionMode === 'runtime-discovery' && !plannedCapture.runtimeProfileResolved)
+    )
+      return;
     const nextViewport = toViewport(plannedCapture.profile);
     if (this.viewport && sameEmulationProfile(normalizeEmulationProfile(this.viewport), plannedCapture.profile)) return;
 
@@ -655,6 +666,7 @@ export class CapturingBrowser extends BaseBrowser {
         aborted: this.opt.signal?.aborted ?? false,
         healthy: this.isSessionHealthy(),
         maxRetryCount: this.opt.captureMaxRetryCount,
+        protocolFault: isWorkerSessionProtocolFault(error) || error instanceof PreviewStateMismatchError,
         retryCount: this.currentStoryRetryCount,
       });
       if (!shouldRecover) throw error;
@@ -852,6 +864,7 @@ export class CapturingBrowser extends BaseBrowser {
 
       return {
         buffer,
+        ...(this.viewport ? { resolvedProfile: normalizeEmulationProfile(this.viewport) } : {}),
         succeeded: true,
         variantKeysToPush,
         defaultVariantSuffix,

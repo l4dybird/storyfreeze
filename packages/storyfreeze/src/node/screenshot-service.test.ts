@@ -546,4 +546,69 @@ describe(createScreenshotService, () => {
 
     await expect(service.execute()).rejects.toThrow(expected);
   });
+
+  it('reuses a runtime-discovered profile for later captures with the same hint', async () => {
+    const stories = [
+      { ...story, id: 'button--primary', story: 'Primary' },
+      { ...story, id: 'button--secondary', story: 'Secondary' },
+    ];
+    const descriptors = stories.map(item => ({
+      id: item.id,
+      title: item.kind,
+      name: item.story,
+      viewportProfileHint: 'desktop',
+    }));
+    const executionPlan = prepareExecutionPlan(
+      createExecutionWorkload(
+        createCapturePlan(
+          generateCaptureManifest({
+            stories: descriptors,
+            baseOptions: createBaseScreenshotOptions({ delay: 0, disableWaitAssets: false, viewports: ['800x600'] }),
+            deviceDescriptors: [],
+            mode: 'managed',
+          }),
+        ),
+        'auto',
+      ),
+      1,
+    );
+    const resolvedProfile = {
+      width: 1280,
+      height: 720,
+      deviceScaleFactor: 1,
+      hasTouch: false,
+      isMobile: false,
+    };
+    const plannedProfiles: unknown[] = [];
+    const screenshot = vi.fn(async (...args: unknown[]) => {
+      const plannedCapture = args[8] as { profile: unknown; runtimeProfileResolved?: boolean };
+      plannedProfiles.push({
+        profile: plannedCapture.profile,
+        runtimeProfileResolved: plannedCapture.runtimeProfileResolved,
+      });
+      return {
+        buffer: Buffer.from('png'),
+        resolvedProfile,
+        succeeded: true,
+        variantKeysToPush: [],
+        defaultVariantSuffix: '',
+      };
+    });
+    const service = createScreenshotService({
+      workers: [{ screenshot }],
+      stories,
+      executionPlan,
+      fileSystem: { saveScreenshot: vi.fn(async () => 'screenshot.png') } as unknown as FileSystem,
+      logger: {
+        log: vi.fn(),
+        color: { magenta: (value: string) => value },
+      } as unknown as Logger,
+      forwardConsoleLogs: false,
+      trace: false,
+    });
+
+    await expect(service.execute()).resolves.toBe(2);
+    expect(plannedProfiles[0]).toMatchObject({ runtimeProfileResolved: undefined });
+    expect(plannedProfiles[1]).toEqual({ profile: resolvedProfile, runtimeProfileResolved: true });
+  });
 });

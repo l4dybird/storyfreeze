@@ -40,6 +40,28 @@ describe(createExecutionWorkload, () => {
     expect(selectWorkerCount(workload, 4)).toEqual({ initialWorkerCount: 1, workerCount: 4 });
   });
 
+  it('uses story-session only to require the persistent Preview protocol', () => {
+    const plan = createCapturePlan(
+      generateCaptureManifest({
+        stories: [
+          {
+            id: 'button--async',
+            title: 'Button',
+            name: 'Async',
+            eligibility: 'static',
+            screenshotOptions: { variants: { loaded: { waitFor: 'loaded' } } },
+          },
+        ],
+        baseOptions: createBaseScreenshotOptions({ delay: 0, disableWaitAssets: false, viewports: ['800x600'] }),
+        deviceDescriptors: [],
+        mode: 'managed',
+      }),
+    );
+
+    expect(() => createExecutionWorkload(plan, 'story-session')).not.toThrow();
+    expect(createExecutionWorkload(plan, 'story-session').workItems.flatMap(item => item.captures)).toHaveLength(2);
+  });
+
   it('keeps one authoritative work-item order and includes transition cost in worker load', () => {
     const capturePlan = createCapturePlan(
       generateCaptureManifest({

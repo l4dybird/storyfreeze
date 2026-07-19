@@ -945,6 +945,7 @@ describe(shouldRecoverPlaywrightWorker, () => {
   it('only recovers an unhealthy Playwright worker below the retry limit', () => {
     expect(shouldRecoverPlaywrightWorker(recoverable)).toBe(true);
     expect(shouldRecoverPlaywrightWorker({ ...recoverable, healthy: true })).toBe(false);
+    expect(shouldRecoverPlaywrightWorker({ ...recoverable, healthy: true, protocolFault: true })).toBe(true);
     expect(shouldRecoverPlaywrightWorker({ ...recoverable, aborted: true })).toBe(false);
     expect(shouldRecoverPlaywrightWorker({ ...recoverable, retryCount: 3 })).toBe(false);
   });

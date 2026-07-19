@@ -87,3 +87,8 @@ export function isWorkerSessionProtocolUnavailable(error: unknown): boolean {
     error instanceof Error && error.message.includes('worker-session preview protocol is unavailable or incompatible')
   );
 }
+
+export function isWorkerSessionProtocolFault(error: unknown): boolean {
+  if (!(error instanceof Error) || isWorkerSessionProtocolUnavailable(error)) return false;
+  return /(?:Worker-session selection mismatch|selection generation|request .* is still active)/i.test(error.message);
+}

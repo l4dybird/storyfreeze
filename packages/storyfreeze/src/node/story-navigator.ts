@@ -195,6 +195,7 @@ export class StoryNavigator {
   private _rootOptions?: NormalizedScreenshotOptions;
   private _runtimeMetadata?: PreviewRuntimeMetadata;
   private reusableDocument = false;
+  private workerSessionSupport: 'unknown' | 'supported' | 'unsupported' = 'unknown';
   private readonly workerSession: WorkerSessionProtocolClient;
 
   constructor(
@@ -214,7 +215,7 @@ export class StoryNavigator {
   }
 
   get canSelectStory() {
-    return this.reusableDocument;
+    return this.reusableDocument && this.workerSessionSupport !== 'unsupported';
   }
 
   async navigate(storyId: string, timeout = 60_000, retryCount = 0): Promise<void> {
@@ -236,6 +237,7 @@ export class StoryNavigator {
     this._rootOptions = undefined;
     this._runtimeMetadata = undefined;
     await this.workerSession.selectStory(this.current);
+    this.workerSessionSupport = 'supported';
   }
 
   async completeCapture(): Promise<void> {
@@ -244,6 +246,11 @@ export class StoryNavigator {
 
   invalidateDocument(): void {
     this.reusableDocument = false;
+    this.workerSession.invalidate();
+  }
+
+  markWorkerSessionUnavailable(): void {
+    this.workerSessionSupport = 'unsupported';
     this.workerSession.invalidate();
   }
 

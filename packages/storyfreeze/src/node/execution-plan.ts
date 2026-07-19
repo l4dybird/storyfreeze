@@ -95,7 +95,13 @@ export function createExecutionWorkload(
   capturePlan: CapturePlan,
   captureProtocol: CaptureProtocolMode,
 ): ExecutionWorkload {
-  const sessionPlanning = createStorySessionPlans(capturePlan, captureProtocol);
+  // `story-session` now forces the cross-story Preview protocol. Same-story
+  // variant reuse remains best-effort and must not inherit the legacy
+  // "reject every unsafe variant" meaning of that CLI value.
+  const sessionPlanning = createStorySessionPlans(
+    capturePlan,
+    captureProtocol === 'story-session' ? 'auto' : captureProtocol,
+  );
   const workItems = [
     ...sessionPlanning.strictCaptures.map(toWorkItem),
     ...sessionPlanning.sessions.map(toSessionWorkItem),

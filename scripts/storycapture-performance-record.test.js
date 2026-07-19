@@ -6,6 +6,7 @@ const test = require('node:test');
 const { PNG } = require('pngjs');
 
 const {
+  captureWorkerSessionGenerationCount,
   comparePngDirectories,
   hashPath,
   measureCommand,
@@ -23,6 +24,18 @@ test('alternates the paired starting implementation', () => {
 test('parses total and per-capture timings', () => {
   assert.equal(parseCaptureTime('Screenshot was ended successfully in 1234.5 msec'), 1234.5);
   assert.equal(parseCaptureTime('Screenshot stored: a.png in 12.5 msec.\nScreenshot stored: b.png in 7 msec.'), 19.5);
+});
+
+test('counts capture-worker sessions independently of browser-process topology', () => {
+  assert.equal(
+    captureWorkerSessionGenerationCount([
+      { type: 'browser-launch', role: 'capture-worker', source: 'direct' },
+      { type: 'browser-session-open', role: 'story-index', source: 'direct' },
+      { type: 'browser-session-open', role: 'capture-worker', source: 'direct' },
+      { type: 'browser-session-open', role: 'capture-worker', source: 'coordinator' },
+    ]),
+    2,
+  );
 });
 
 test('hashes deterministic directory contents and reads path contracts', () => {
@@ -152,6 +165,61 @@ test(
       assert.equal(measured.result.timeoutCount, 1);
       assert.equal(measured.result.residualProcessCount, 0);
     } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  'settles the deadline and fails when an escaped descendant keeps stdio open',
+  { skip: process.platform !== 'linux' },
+  async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'storyfreeze-record-escaped-process-'));
+    const pidFile = path.join(root, 'escaped.pid');
+    const escapedScript = 'setInterval(() => {}, 1000)';
+    const rootScript = `
+      const fs = require('node:fs');
+      const { spawn } = require('node:child_process');
+      const child = spawn(process.execPath, ['-e', ${JSON.stringify(escapedScript)}], {
+        detached: true,
+        stdio: ['ignore', process.stdout, process.stderr],
+      });
+      fs.writeFileSync(${JSON.stringify(pidFile)}, String(child.pid));
+      child.unref();
+      setInterval(() => {}, 1000);
+    `;
+    const startedAt = Date.now();
+    try {
+      await assert.rejects(
+        measureCommand({
+          implementation: {
+            command: process.execPath,
+            args: ['-e', rootScript],
+            chromiumPath: '/chromium',
+            storybookUrl: 'http://127.0.0.1:6006',
+          },
+          label: 'escaped',
+          outputDir: path.join(root, 'output'),
+          expectedPaths: [],
+          invalidPngHashes: new Set(),
+          artifactDir: path.join(root, 'artifacts'),
+          configDir: root,
+          commandTimeoutMs: 500,
+          processExitGraceMs: 100,
+        }),
+        /Failed to clean up escaped/,
+      );
+      assert.ok(Date.now() - startedAt < 3_000, 'the recorder must retain its own bounded deadline');
+      assert.equal(fs.existsSync(path.join(root, 'artifacts', 'escaped.log')), true);
+    } finally {
+      if (fs.existsSync(pidFile)) {
+        const pid = Number(fs.readFileSync(pidFile, 'utf8'));
+        try {
+          process.kill(pid, 'SIGKILL');
+        } catch (error) {
+          if (error?.code !== 'ESRCH') throw error;
+        }
+      }
       fs.rmSync(root, { recursive: true, force: true });
     }
   },

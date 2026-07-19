@@ -182,8 +182,8 @@ function processIdentity(process) {
   return `${process.pid}:${process.startedAt}`;
 }
 
-async function waitForObservedProcesses(observed, clockTicksPerSecond) {
-  const deadline = Date.now() + processExitTimeoutMs;
+async function waitForObservedProcesses(observed, clockTicksPerSecond, timeoutMs = processExitTimeoutMs) {
+  const deadline = Date.now() + timeoutMs;
   let remaining = [];
   do {
     remaining = [...readLinuxProcesses(clockTicksPerSecond).values()].filter(process =>
@@ -228,6 +228,10 @@ function parseDiagnostics(log) {
     .filter(Boolean);
 }
 
+function captureWorkerSessionGenerationCount(diagnostics) {
+  return diagnostics.filter(event => event.type === 'browser-session-open' && event.role === 'capture-worker').length;
+}
+
 function explicitFailureCount(log) {
   return [...log.matchAll(/(?:failed to capture|capture failed|\(error\):)/gi)].length;
 }
@@ -241,6 +245,7 @@ async function measureCommand({
   artifactDir,
   configDir,
   commandTimeoutMs,
+  processExitGraceMs = processExitTimeoutMs,
 }) {
   const replacements = {
     chromiumPath: implementation.chromiumPath,
@@ -283,31 +288,56 @@ async function measureCommand({
   const sampler = setInterval(sample, sampleIntervalMs);
   let commandTimedOut = false;
   let forceKillTimer;
+  let finalSettlementTimer;
+  const signalErrors = [];
+  const signalGroup = signal => {
+    try {
+      signalProcessGroup(child.pid, signal);
+    } catch (error) {
+      signalErrors.push(error);
+    }
+  };
+  let settleForcedCompletion;
+  const forcedCompletion = new Promise(resolve => {
+    settleForcedCompletion = resolve;
+  });
   const commandTimeout = setTimeout(() => {
     commandTimedOut = true;
-    signalProcessGroup(child.pid, 'SIGTERM');
-    forceKillTimer = setTimeout(() => signalProcessGroup(child.pid, 'SIGKILL'), processExitTimeoutMs);
+    signalGroup('SIGTERM');
+    forceKillTimer = setTimeout(() => {
+      signalGroup('SIGKILL');
+      finalSettlementTimer = setTimeout(() => {
+        child.stdout.destroy();
+        child.stderr.destroy();
+        settleForcedCompletion({ code: null, forced: true, signal: 'SIGKILL' });
+      }, processExitGraceMs);
+    }, processExitGraceMs);
   }, commandTimeoutMs);
   let exit;
   try {
-    exit = await new Promise((resolve, reject) => {
-      child.once('error', reject);
-      child.once('close', (code, signal) => resolve({ code, signal }));
-    });
+    exit = await Promise.race([
+      new Promise((resolve, reject) => {
+        child.once('error', reject);
+        child.once('close', (code, signal) => resolve({ code, forced: false, signal }));
+      }),
+      forcedCompletion,
+    ]);
   } finally {
     clearTimeout(commandTimeout);
     clearTimeout(forceKillTimer);
+    clearTimeout(finalSettlementTimer);
     clearInterval(sampler);
   }
   sample();
   const wallTimeMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
-  const residual = await waitForObservedProcesses(observed, clockTicksPerSecond);
+  const residual = await waitForObservedProcesses(observed, clockTicksPerSecond, processExitGraceMs);
+  let remaining = residual;
   if (residual.length > 0) {
-    signalProcessGroup(child.pid, 'SIGTERM');
-    const remaining = await waitForObservedProcesses(observed, clockTicksPerSecond);
+    signalGroup('SIGTERM');
+    remaining = await waitForObservedProcesses(observed, clockTicksPerSecond, processExitGraceMs);
     if (remaining.length > 0) {
-      signalProcessGroup(child.pid, 'SIGKILL');
-      await waitForObservedProcesses(observed, clockTicksPerSecond);
+      signalGroup('SIGKILL');
+      remaining = await waitForObservedProcesses(observed, clockTicksPerSecond, processExitGraceMs);
     }
   }
   const timeoutMessage = commandTimedOut
@@ -315,7 +345,17 @@ async function measureCommand({
     : '';
   const log = `${stdout}\n${stderr}${timeoutMessage}`.replace(/\u001B\[[0-?]*[ -/]*[@-~]/g, '');
   fs.mkdirSync(artifactDir, { recursive: true });
-  fs.writeFileSync(path.join(artifactDir, `${label}.log`), log);
+  const logPath = path.join(artifactDir, `${label}.log`);
+  fs.writeFileSync(logPath, log);
+  if (remaining.length > 0 || signalErrors.length > 0) {
+    const details = [
+      remaining.length > 0 ? `${remaining.length} observed process(es) remained after SIGKILL` : undefined,
+      signalErrors.length > 0 ? `${signalErrors.length} process-group signal(s) failed` : undefined,
+    ]
+      .filter(Boolean)
+      .join('; ');
+    throw new Error(`Failed to clean up ${label}: ${details}. Raw log: ${logPath}`);
+  }
   const pngs = listPngs(outputDir);
   const pngSet = new Set(pngs);
   const expectedSet = new Set(expectedPaths);
@@ -330,12 +370,11 @@ async function measureCommand({
       event => event.type === 'capture-phase' && event.phase === 'navigation' && event.state === 'end',
     ).length,
     peakRssBytes,
-    sessionGenerationCount: diagnostics.filter(
-      event => event.type === 'browser-launch' && event.source === 'coordinator',
-    ).length,
+    sessionGenerationCount: captureWorkerSessionGenerationCount(diagnostics),
     wallTimeMs,
     exitCode: exit.code ?? -1,
     exitSignal: exit.signal,
+    forcedSettlement: exit.forced,
     pngCount: pngs.length,
     crashCount: [...log.matchAll(/(?:Target closed|browser process.*crash|Failed to launch the browser)/gi)].length,
     duplicatePngCount: Math.max(0, storedPaths.length - new Set(storedPaths).size),
@@ -635,6 +674,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  captureWorkerSessionGenerationCount,
   comparePngDirectories,
   hashPath,
   measureCommand,

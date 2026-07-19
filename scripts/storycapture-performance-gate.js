@@ -89,6 +89,13 @@ function validateRun(run, label, expectedCaptures, errors) {
   }
 }
 
+function validateStoryfreezeRun(run, label, expectedCaptures, parallel, errors) {
+  validateRun(run, label, expectedCaptures, errors);
+  if (run && (!Number.isSafeInteger(run.sessionGenerationCount) || run.sessionGenerationCount < parallel)) {
+    errors.push(`${label}.sessionGenerationCount must be at least the ${parallel} capture workers.`);
+  }
+}
+
 function validateAlternatingPairs(pairs, labels, errors, collectionName = 'pairs') {
   let previous;
   pairs.forEach((pair, index) => {
@@ -151,7 +158,7 @@ function validateRc0Baseline(rc0, scenario, errors) {
   };
 }
 
-function evaluateRecycleExperiment(record, expectedCaptures, rc0Summary) {
+function evaluateRecycleExperiment(record, expectedCaptures, parallel, rc0Summary) {
   if (!Array.isArray(record?.noRecyclePairs) || record.noRecyclePairs.length === 0) return { measured: false };
   const errors = [];
   if (record.noRecyclePairs.length < 3) errors.push('noRecyclePairs requires at least three measured pairs.');
@@ -160,8 +167,8 @@ function evaluateRecycleExperiment(record, expectedCaptures, rc0Summary) {
   const unlimitedRuns = [];
   record.noRecyclePairs.forEach((pair, index) => {
     const entry = pair && typeof pair === 'object' ? pair : {};
-    validateRun(entry.default128, `noRecyclePairs[${index}].default128`, expectedCaptures, errors);
-    validateRun(entry.unlimited, `noRecyclePairs[${index}].unlimited`, expectedCaptures, errors);
+    validateStoryfreezeRun(entry.default128, `noRecyclePairs[${index}].default128`, expectedCaptures, parallel, errors);
+    validateStoryfreezeRun(entry.unlimited, `noRecyclePairs[${index}].unlimited`, expectedCaptures, parallel, errors);
     if (entry.default128) defaultRuns.push(entry.default128);
     if (entry.unlimited) unlimitedRuns.push(entry.unlimited);
   });
@@ -210,7 +217,13 @@ function evaluateStoryCaptureGate(record) {
   warmups.forEach((pair, index) => {
     const entry = pair && typeof pair === 'object' ? pair : {};
     validateRun(entry.storycapture, `warmups[${index}].storycapture`, expectedCaptures, errors);
-    validateRun(entry.storyfreeze, `warmups[${index}].storyfreeze`, expectedCaptures, errors);
+    validateStoryfreezeRun(
+      entry.storyfreeze,
+      `warmups[${index}].storyfreeze`,
+      expectedCaptures,
+      scenario.parallel,
+      errors,
+    );
   });
 
   const pairs = Array.isArray(record?.pairs) ? record.pairs : [];
@@ -221,7 +234,13 @@ function evaluateStoryCaptureGate(record) {
   pairs.forEach((pair, index) => {
     const entry = pair && typeof pair === 'object' ? pair : {};
     validateRun(entry.storycapture, `pairs[${index}].storycapture`, expectedCaptures, errors);
-    validateRun(entry.storyfreeze, `pairs[${index}].storyfreeze`, expectedCaptures, errors);
+    validateStoryfreezeRun(
+      entry.storyfreeze,
+      `pairs[${index}].storyfreeze`,
+      expectedCaptures,
+      scenario.parallel,
+      errors,
+    );
     if (entry.storycapture) storycaptureRuns.push(entry.storycapture);
     if (entry.storyfreeze) storyfreezeRuns.push(entry.storyfreeze);
   });
@@ -247,7 +266,7 @@ function evaluateStoryCaptureGate(record) {
     errors.push(`StoryFreeze/RC.0 peak RSS ratio must be <= 1.05, got ${ratios.peakRssToRc0}.`);
   }
 
-  const recycleExperiment = evaluateRecycleExperiment(record, expectedCaptures, rc0Summary);
+  const recycleExperiment = evaluateRecycleExperiment(record, expectedCaptures, scenario.parallel, rc0Summary);
   if (errors.length > 0 && recycleExperiment.measured) recycleExperiment.adopt = false;
   return {
     schemaVersion: 1,

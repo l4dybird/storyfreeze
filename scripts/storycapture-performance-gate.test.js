@@ -123,6 +123,15 @@ test('rejects an RC.0 baseline from a different scenario and a failed warmup', (
   assert.match(evaluation.gate.errors.join('\n'), /warmups\[0\]\.storyfreeze\.residualProcessCount/);
 });
 
+test('requires every StoryFreeze run to observe all capture-worker sessions', () => {
+  const input = record();
+  input.pairs[0].storyfreeze.sessionGenerationCount = 0;
+  const evaluation = evaluateStoryCaptureGate(input);
+
+  assert.equal(evaluation.gate.passed, false);
+  assert.match(evaluation.gate.errors.join('\n'), /sessionGenerationCount must be at least the 4 capture workers/);
+});
+
 test('only recommends unlimited session lifetime after the stretch criteria pass', () => {
   const input = record();
   input.noRecyclePairs = Array.from({ length: 3 }, (_, index) => ({

@@ -139,6 +139,13 @@ export class BaseBrowser {
       if (lifecycleGeneration !== this.lifecycleGeneration) {
         throw new Error('Browser boot was superseded by a close request.');
       }
+      emitCaptureDiagnostic({
+        type: 'browser-session-open',
+        backend: this.backend.name,
+        executablePath,
+        source: this.sessionSource ? 'coordinator' : 'direct',
+        ...this.closeDiagnosticContext,
+      });
       return this;
     } catch (error) {
       this.instance = undefined;

@@ -13,6 +13,7 @@ const zeroFields = [
   'residualProcessCount',
   'retryCount',
   'timeoutCount',
+  'unexpectedPngCount',
 ];
 
 function percentile(values, fraction) {
@@ -52,6 +53,7 @@ function summarize(runs) {
     ),
     runs: runs.length,
     sessionGenerationCount: runs.reduce((total, run) => total + run.sessionGenerationCount, 0),
+    storySwitchCount: runs.reduce((total, run) => total + (run.storySwitchCount ?? 0), 0),
     wallP50Ms: percentile(
       runs.map(run => run.wallTimeMs),
       0.5,
@@ -68,16 +70,14 @@ function validateRun(run, label, expectedCaptures, errors) {
     errors.push(`${label} is missing.`);
     return;
   }
-  for (const field of [
-    'captureTimeMs',
-    'cpuTimeMs',
-    'navigationCount',
-    'peakRssBytes',
-    'sessionGenerationCount',
-    'wallTimeMs',
-  ]) {
-    if (typeof run[field] !== 'number' || !Number.isFinite(run[field]) || run[field] < 0) {
-      errors.push(`${label}.${field} must be a non-negative finite number.`);
+  for (const field of ['captureTimeMs', 'cpuTimeMs', 'peakRssBytes', 'wallTimeMs']) {
+    if (typeof run[field] !== 'number' || !Number.isFinite(run[field]) || run[field] <= 0) {
+      errors.push(`${label}.${field} must be a positive finite number.`);
+    }
+  }
+  for (const field of ['navigationCount', 'sessionGenerationCount']) {
+    if (!Number.isSafeInteger(run[field]) || run[field] < 0) {
+      errors.push(`${label}.${field} must be a non-negative safe integer.`);
     }
   }
   if (run.exitCode !== 0) errors.push(`${label}.exitCode must be zero.`);
@@ -93,6 +93,9 @@ function validateStoryfreezeRun(run, label, expectedCaptures, parallel, errors) 
   validateRun(run, label, expectedCaptures, errors);
   if (run && (!Number.isSafeInteger(run.sessionGenerationCount) || run.sessionGenerationCount < parallel)) {
     errors.push(`${label}.sessionGenerationCount must be at least the ${parallel} capture workers.`);
+  }
+  if (run && (!Number.isSafeInteger(run.storySwitchCount) || run.storySwitchCount <= 0)) {
+    errors.push(`${label}.storySwitchCount must prove that persistent cross-story Preview switching was exercised.`);
   }
 }
 

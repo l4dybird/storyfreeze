@@ -455,7 +455,6 @@ function measureCapture({
 
       resolve({
         backend,
-        browserGenerationCount: runtimeBrowserLaunchCount,
         browserCrashCount: diagnostics.browserCrashCount + (signal ? 1 : 0),
         browserCloseErrorCount,
         browserCloseEventCount: browserCloseEvents.length,
@@ -487,6 +486,9 @@ function measureCapture({
         runtimeDisposeEventCount: runtimeDisposeEvents.length,
         sampleCount: samples,
         sequenceIndex,
+        sessionGenerationCount: diagnostics.captureDiagnostics.filter(
+          event => event.type === 'browser-session-open' && event.role === 'capture-worker',
+        ).length,
         signal,
         storyCount: diagnostics.storyCount,
         storyDurationsMs: diagnostics.storyDurationsMs,
@@ -743,7 +745,6 @@ function summarizeRuns(runs) {
   const idleEvents = diagnosticEvents.filter(event => event.type === 'idle-wait');
   const visualCommitEvents = diagnosticEvents.filter(event => event.type === 'visual-commit');
   return {
-    browserGenerationCount: runs.reduce((total, run) => total + (run.browserGenerationCount ?? 0), 0),
     browserCrashEventCount: runs.reduce((total, run) => total + run.browserCrashCount, 0),
     browserCrashRate: runs.filter(run => run.browserCrashCount > 0).length / runs.length,
     captureFailureRate: (expectedCaptures - captured) / expectedCaptures,
@@ -798,6 +799,7 @@ function summarizeRuns(runs) {
     peakBrowserRootCount: Math.max(...runs.map(run => run.peakBrowserRootCount)),
     retryRate: runs.reduce((total, run) => total + run.retryCount, 0) / expectedCaptures,
     sessionOrBrowserCloseErrorCount: runs.reduce((total, run) => total + (run.browserCloseErrorCount ?? 0), 0),
+    sessionGenerationCount: runs.reduce((total, run) => total + (run.sessionGenerationCount ?? 0), 0),
     runSuccessRate: successful.length / runs.length,
     successfulRuns: successful.length,
     timeoutRate: runs.reduce((total, run) => total + run.timeoutCount, 0) / expectedCaptures,
@@ -919,6 +921,30 @@ function hashDirectory(directory) {
   return hash.digest('hex');
 }
 
+function protocolRunGateErrors(run, protocol) {
+  const errors = run.errors.map(error => `${run.label}: ${error}`);
+  if (run.runtimeBrowserLaunchCount !== run.topology.browserProcessCount) {
+    errors.push(
+      `${run.label}: expected ${run.topology.browserProcessCount} runtime browser launches, observed ${run.runtimeBrowserLaunchCount}.`,
+    );
+  }
+  if (run.sessionGenerationCount < run.topology.workerCount) {
+    errors.push(
+      `${run.label}: expected at least ${run.topology.workerCount} capture-worker sessions, observed ${run.sessionGenerationCount}.`,
+    );
+  }
+  const storySwitchCount = run.captureDiagnostics.filter(
+    event => event.type === 'capture-phase' && event.phase === 'story-switch' && event.state === 'end',
+  ).length;
+  if (protocol === 'persistent' && storySwitchCount === 0) {
+    errors.push(`${run.label}: auto did not exercise the persistent cross-story Preview protocol.`);
+  }
+  if (protocol === 'strict' && storySwitchCount !== 0) {
+    errors.push(`${run.label}: strict unexpectedly emitted ${storySwitchCount} story-switch event(s).`);
+  }
+  return errors;
+}
+
 async function runProtocolComparison(browser) {
   const captureProtocols = { persistent: 'auto', strict: 'strict' };
   const warmups = Object.fromEntries(protocols.map(protocol => [protocol, []]));
@@ -1000,12 +1026,7 @@ async function runProtocolComparison(browser) {
   const gateErrors = [];
   for (const protocol of protocols) {
     for (const run of [...warmups[protocol], ...runs[protocol]]) {
-      run.errors.forEach(error => gateErrors.push(`${run.label}: ${error}`));
-      if (run.runtimeBrowserLaunchCount !== run.topology.browserProcessCount) {
-        gateErrors.push(
-          `${run.label}: expected ${run.topology.browserProcessCount} runtime browser launches, observed ${run.runtimeBrowserLaunchCount}.`,
-        );
-      }
+      gateErrors.push(...protocolRunGateErrors(run, protocol));
     }
   }
   for (const comparison of pixelComparisons) {
@@ -1384,5 +1405,6 @@ module.exports = {
   parseCaptureLog,
   parseParallel,
   processIdentity,
+  protocolRunGateErrors,
   summarizeRuns,
 };

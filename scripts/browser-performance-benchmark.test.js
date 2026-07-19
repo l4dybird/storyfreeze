@@ -13,6 +13,7 @@ const {
   parseCaptureLog,
   parseParallel,
   processIdentity,
+  protocolRunGateErrors,
   summarizeRuns,
 } = require('./browser-performance-benchmark.js');
 
@@ -53,6 +54,21 @@ test('parses integer and persistent-session fractional capture timings', () => {
   );
   assert.equal(parsed.storyCount, 2);
   assert.deepEqual(parsed.storyDurationsMs, [123, 216.4918]);
+});
+
+test('rejects a protocol comparison that silently falls back to strict navigation', () => {
+  const run = {
+    captureDiagnostics: [],
+    errors: [],
+    label: 'persistent',
+    runtimeBrowserLaunchCount: 4,
+    sessionGenerationCount: 4,
+    topology: { browserProcessCount: 4, workerCount: 4 },
+  };
+  assert.match(protocolRunGateErrors(run, 'persistent').join('\n'), /did not exercise the persistent/);
+  run.captureDiagnostics.push({ type: 'capture-phase', phase: 'story-switch', state: 'end' });
+  assert.deepEqual(protocolRunGateErrors(run, 'persistent'), []);
+  assert.match(protocolRunGateErrors(run, 'strict').join('\n'), /strict unexpectedly emitted/);
 });
 
 test('classifies independently sampled Chromium process types', () => {
@@ -100,7 +116,6 @@ test('summarizes capture/runtime phases, queue utilization, and topology', () =>
   const summary = summarizeRuns([
     {
       browserCrashCount: 0,
-      browserGenerationCount: 1,
       browserCloseErrorCount: 0,
       browserCloseEventCount: 5,
       captureDiagnostics: [
@@ -145,6 +160,7 @@ test('summarizes capture/runtime phases, queue utilization, and topology', () =>
       residualChromiumProcessCount: 0,
       runtimeBrowserLaunchCount: 1,
       runtimeDisposeEventCount: 1,
+      sessionGenerationCount: 1,
       storyDurationsMs: [800],
       success: true,
       timeoutCount: 0,
@@ -157,7 +173,7 @@ test('summarizes capture/runtime phases, queue utilization, and topology', () =>
   assert.equal(summary.diagnostics.navigationCount, 1);
   assert.equal(summary.diagnostics.storySwitchCount, 1);
   assert.equal(summary.diagnostics.contextRecycleCount, 1);
-  assert.equal(summary.browserGenerationCount, 1);
+  assert.equal(summary.sessionGenerationCount, 1);
   assert.deepEqual(summary.diagnostics.runtimePhaseTimings['capture-worker-boot'], {
     p50Ms: 250,
     p95Ms: 250,

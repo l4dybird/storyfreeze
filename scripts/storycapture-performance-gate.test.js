@@ -10,6 +10,7 @@ function run(overrides = {}) {
     navigationCount: 4,
     peakRssBytes: 1000,
     sessionGenerationCount: 4,
+    storySwitchCount: 1,
     wallTimeMs: 900,
     exitCode: 0,
     pngCount: 452,
@@ -22,6 +23,7 @@ function run(overrides = {}) {
     residualProcessCount: 0,
     retryCount: 0,
     timeoutCount: 0,
+    unexpectedPngCount: 0,
     ...overrides,
   };
 }
@@ -76,6 +78,7 @@ test('passes the release gate from five clean alternating raw pairs', () => {
   assert.equal(evaluation.ratios.wallP95ToStoryCapture, 900 / 1100);
   assert.equal(evaluation.ratios.cpuToRc0, 0.8);
   assert.equal(evaluation.ratios.peakRssToRc0, 1);
+  assert.equal(evaluation.summaries.storyfreeze.storySwitchCount, 5);
   assert.equal(evaluation.stretchGoalPassed, false);
 });
 
@@ -130,6 +133,26 @@ test('requires every StoryFreeze run to observe all capture-worker sessions', ()
 
   assert.equal(evaluation.gate.passed, false);
   assert.match(evaluation.gate.errors.join('\n'), /sessionGenerationCount must be at least the 4 capture workers/);
+});
+
+test('rejects StoryFreeze evidence that silently fell back to strict navigation', () => {
+  const input = record();
+  input.pairs[0].storyfreeze.storySwitchCount = 0;
+  const evaluation = evaluateStoryCaptureGate(input);
+
+  assert.equal(evaluation.gate.passed, false);
+  assert.match(evaluation.gate.errors.join('\n'), /persistent cross-story Preview switching/);
+});
+
+test('rejects zero-valued measurements and unexpected output paths', () => {
+  const input = record();
+  input.pairs[0].storyfreeze.wallTimeMs = 0;
+  input.pairs[1].storyfreeze.unexpectedPngCount = 1;
+  const evaluation = evaluateStoryCaptureGate(input);
+
+  assert.equal(evaluation.gate.passed, false);
+  assert.match(evaluation.gate.errors.join('\n'), /wallTimeMs must be a positive finite number/);
+  assert.match(evaluation.gate.errors.join('\n'), /unexpectedPngCount must be zero/);
 });
 
 test('only recommends unlimited session lifetime after the stretch criteria pass', () => {

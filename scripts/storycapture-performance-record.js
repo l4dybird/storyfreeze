@@ -383,6 +383,9 @@ async function measureCommand({
     ).length,
     peakRssBytes,
     sessionGenerationCount: captureWorkerSessionGenerationCount(diagnostics),
+    storySwitchCount: diagnostics.filter(
+      event => event.type === 'capture-phase' && event.phase === 'story-switch' && event.state === 'end',
+    ).length,
     wallTimeMs,
     exitCode: exit.code ?? -1,
     exitSignal: exit.signal,

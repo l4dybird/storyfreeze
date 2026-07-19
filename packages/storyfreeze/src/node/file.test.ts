@@ -1,11 +1,14 @@
 import fs from 'fs/promises';
+import fsSync from 'node:fs';
 import os from 'os';
 import path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vite-plus/test';
 import { FileSystem } from './file.js';
 import type { MainOptions } from './types.js';
+import { subscribeCaptureDiagnostics, type CaptureDiagnosticEvent } from './capture-diagnostics.js';
 
 describe(FileSystem, () => {
+  const originalDiagnostics = process.env.STORYFREEZE_CAPTURE_DIAGNOSTICS;
   let outDir: string;
 
   beforeEach(async () => {
@@ -14,6 +17,8 @@ describe(FileSystem, () => {
 
   afterEach(async () => {
     vi.restoreAllMocks();
+    if (originalDiagnostics === undefined) delete process.env.STORYFREEZE_CAPTURE_DIAGNOSTICS;
+    else process.env.STORYFREEZE_CAPTURE_DIAGNOSTICS = originalDiagnostics;
     await fs.rm(outDir, { recursive: true, force: true });
   });
 
@@ -120,6 +125,63 @@ describe(FileSystem, () => {
     await Promise.all(operations);
     expect(produced).toBe(8);
     expect(retainedBytes).toBe(0);
+  });
+
+  it('emits correlated screenshot budget diagnostics without changing reservations', async () => {
+    process.env.STORYFREEZE_CAPTURE_DIAGNOSTICS = '1';
+    vi.spyOn(fsSync, 'write').mockImplementation(((_fd, data, _offset, length, _position, callback) => {
+      callback?.(null, length as number, data as Buffer);
+    }) as never);
+    const events: CaptureDiagnosticEvent[] = [];
+    const unsubscribe = subscribeCaptureDiagnostics(event => {
+      if (event.type === 'screenshot-budget') events.push(event);
+    });
+    const fileSystem = new FileSystem({ outDir, flat: false, parallel: 2 } as MainOptions);
+    const buffer = await fileSystem.captureScreenshot(1024, async () => Buffer.from('png'), undefined, {
+      backend: 'playwright',
+      requestId: 'button--primary',
+      storyId: 'button--primary',
+      workerId: 1,
+    });
+
+    fileSystem.releaseScreenshotBuffer(buffer);
+    unsubscribe();
+
+    expect(events.map(event => event.state)).toEqual(['acquired', 'captured', 'released']);
+    expect(events[0]).toMatchObject({
+      activeReservations: 1,
+      backend: 'playwright',
+      durationMs: expect.any(Number),
+      maximumBufferedBytes: 64 * 1024 * 1024,
+      queuedBefore: 0,
+      requestId: 'button--primary',
+      reservationBytes: 1024,
+      retainedBytes: 1024,
+      storyId: 'button--primary',
+      workerId: 1,
+    });
+    expect(events[1]).toMatchObject({
+      actualBytes: 3,
+      peakActiveReservations: 1,
+      peakRetainedBytes: 1024,
+      reservationBytes: 1024,
+      reservationDeltaBytes: -1021,
+      retainedBytes: 3,
+    });
+    expect(events[2]).toMatchObject({ activeReservations: 0, actualBytes: 3, retainedBytes: 0 });
+  });
+
+  it('does not emit screenshot budget diagnostics when diagnostics are disabled', async () => {
+    delete process.env.STORYFREEZE_CAPTURE_DIAGNOSTICS;
+    const listener = vi.fn();
+    const unsubscribe = subscribeCaptureDiagnostics(listener);
+    const fileSystem = new FileSystem({ outDir, flat: false, parallel: 1 } as MainOptions);
+    const buffer = await fileSystem.captureScreenshot(4, async () => Buffer.from('png'));
+
+    fileSystem.releaseScreenshotBuffer(buffer);
+    unsubscribe();
+
+    expect(listener).not.toHaveBeenCalled();
   });
 
   it('removes an aborted producer from the screenshot reservation queue', async () => {

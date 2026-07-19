@@ -3,6 +3,7 @@ import path from 'path';
 import { randomBytes } from 'crypto';
 import type { MainOptions } from './types.js';
 import sanitize from 'sanitize-filename';
+import { captureDiagnosticsEnabled, emitCaptureDiagnostic } from './capture-diagnostics.js';
 
 export const MAXIMUM_RETAINED_SCREENSHOT_BYTES = 64 * 1024 * 1024;
 
@@ -10,6 +11,15 @@ export interface TraceFile {
   write(chunk: Buffer): Promise<void>;
   commit(kind: string, story: string, suffix: string[], logicalId?: string): Promise<string>;
   discard(): Promise<void>;
+}
+
+export interface ScreenshotBudgetDiagnosticContext {
+  backend?: string;
+  requestId?: string;
+  retryCount?: number;
+  storyId?: string;
+  variantKey?: string[];
+  workerId?: number;
 }
 
 export class FileSystem {
@@ -24,12 +34,17 @@ export class FileSystem {
     resolve: () => void;
     reject: (error: unknown) => void;
   }> = [];
-  private readonly screenshotReservations = new WeakMap<Buffer, number>();
+  private readonly screenshotReservations = new WeakMap<
+    Buffer,
+    { bytes: number; context?: ScreenshotBudgetDiagnosticContext }
+  >();
   private readonly pendingWrites = new Set<Promise<unknown>>();
   private activeWrites = 0;
   private activeWriteBytes = 0;
   private activeScreenshotReservations = 0;
   private retainedScreenshotBytes = 0;
+  private peakScreenshotReservations = 0;
+  private peakRetainedScreenshotBytes = 0;
   private writerFailure?: { error: unknown };
 
   constructor(private opt: MainOptions) {
@@ -179,28 +194,81 @@ export class FileSystem {
     for (const waiter of this.screenshotWaiters.splice(0)) waiter.reject(error);
   }
 
+  private emitScreenshotBudgetDiagnostic(
+    state: 'acquired' | 'captured' | 'failed' | 'released',
+    context: ScreenshotBudgetDiagnosticContext | undefined,
+    details: Record<string, unknown>,
+  ) {
+    emitCaptureDiagnostic({
+      type: 'screenshot-budget',
+      ...context,
+      activeReservations: this.activeScreenshotReservations,
+      maximumBufferedBytes: this.maximumBufferedBytes,
+      peakActiveReservations: this.peakScreenshotReservations,
+      peakRetainedBytes: this.peakRetainedScreenshotBytes,
+      retainedBytes: this.retainedScreenshotBytes,
+      state,
+      ...details,
+    });
+  }
+
   /** Reserves retained-buffer capacity before Chromium creates a PNG. */
   async captureScreenshot(
     reservationBytes: number | undefined,
     capture: () => Promise<Buffer | null>,
     signal?: AbortSignal,
+    diagnosticContext?: ScreenshotBudgetDiagnosticContext,
   ) {
+    const diagnosticsEnabled = captureDiagnosticsEnabled();
+    const waitStartedAt = diagnosticsEnabled ? performance.now() : 0;
+    const queuedBefore = diagnosticsEnabled ? this.screenshotWaiters.length : 0;
     let reservedBytes =
       reservationBytes === undefined || !Number.isFinite(reservationBytes)
         ? this.maximumBufferedBytes
         : Math.max(1, Math.ceil(reservationBytes));
-    await this.acquireScreenshotReservation(reservedBytes, signal);
+    let acquired = false;
+    try {
+      await this.acquireScreenshotReservation(reservedBytes, signal);
+      acquired = true;
+    } catch (error) {
+      if (diagnosticsEnabled) {
+        this.emitScreenshotBudgetDiagnostic('failed', diagnosticContext, {
+          durationMs: performance.now() - waitStartedAt,
+          error: error instanceof Error ? { message: error.message, name: error.name } : String(error),
+          queuedBefore,
+          reservationBytes: reservedBytes,
+          stage: 'reservation',
+        });
+      }
+      throw error;
+    }
+    if (diagnosticsEnabled) {
+      this.peakScreenshotReservations = Math.max(this.peakScreenshotReservations, this.activeScreenshotReservations);
+      this.peakRetainedScreenshotBytes = Math.max(this.peakRetainedScreenshotBytes, this.retainedScreenshotBytes);
+      this.emitScreenshotBudgetDiagnostic('acquired', diagnosticContext, {
+        durationMs: performance.now() - waitStartedAt,
+        queuedBefore,
+        reservationBytes: reservedBytes,
+      });
+    }
     try {
       const buffer = await capture();
       if (!buffer) {
         this.releaseScreenshotReservation(reservedBytes);
+        if (diagnosticsEnabled) {
+          this.emitScreenshotBudgetDiagnostic('released', diagnosticContext, {
+            actualBytes: 0,
+            reservationBytes: reservedBytes,
+          });
+        }
         return null;
       }
       if (this.writerFailure !== undefined) throw this.writerFailure.error;
       if (this.screenshotReservations.has(buffer)) {
         throw new Error('A captured screenshot buffer cannot hold more than one output reservation.');
       }
-      const reservationDelta = buffer.byteLength - reservedBytes;
+      const initialReservationBytes = reservedBytes;
+      const reservationDelta = buffer.byteLength - initialReservationBytes;
       if (reservationDelta > 0) {
         if (
           this.activeScreenshotReservations > 1 &&
@@ -213,21 +281,42 @@ export class FileSystem {
       }
       this.retainedScreenshotBytes += reservationDelta;
       reservedBytes = buffer.byteLength;
-      this.screenshotReservations.set(buffer, reservedBytes);
+      this.screenshotReservations.set(buffer, { bytes: reservedBytes, context: diagnosticContext });
+      if (diagnosticsEnabled) {
+        this.peakRetainedScreenshotBytes = Math.max(this.peakRetainedScreenshotBytes, this.retainedScreenshotBytes);
+        this.emitScreenshotBudgetDiagnostic('captured', diagnosticContext, {
+          actualBytes: buffer.byteLength,
+          reservationBytes: initialReservationBytes,
+          reservationDeltaBytes: reservationDelta,
+        });
+      }
       if (reservationDelta < 0) this.startWaitingScreenshotCaptures();
       return buffer;
     } catch (error) {
-      this.releaseScreenshotReservation(reservedBytes);
+      if (acquired) this.releaseScreenshotReservation(reservedBytes);
+      if (diagnosticsEnabled) {
+        this.emitScreenshotBudgetDiagnostic('failed', diagnosticContext, {
+          error: error instanceof Error ? { message: error.message, name: error.name } : String(error),
+          reservationBytes: reservedBytes,
+          stage: 'capture',
+        });
+      }
       throw error;
     }
   }
 
   releaseScreenshotBuffer(buffer: Buffer | null | undefined) {
     if (!buffer) return;
-    const reservedBytes = this.screenshotReservations.get(buffer);
-    if (reservedBytes === undefined) return;
+    const reservation = this.screenshotReservations.get(buffer);
+    if (reservation === undefined) return;
     this.screenshotReservations.delete(buffer);
-    this.releaseScreenshotReservation(reservedBytes);
+    this.releaseScreenshotReservation(reservation.bytes);
+    if (captureDiagnosticsEnabled()) {
+      this.emitScreenshotBudgetDiagnostic('released', reservation.context, {
+        actualBytes: reservation.bytes,
+        reservationBytes: reservation.bytes,
+      });
+    }
   }
 
   private writeAtomic(filePath: string, buffer: Buffer, signal?: AbortSignal) {

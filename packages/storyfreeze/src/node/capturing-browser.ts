@@ -29,7 +29,7 @@ import {
   type InvalidVariantKeysReason,
 } from '../shared/screenshot-options-helper.js';
 import { Logger } from './logger.js';
-import { FileSystem, type TraceFile } from './file.js';
+import { FileSystem, type ScreenshotBudgetDiagnosticContext, type TraceFile } from './file.js';
 import { ResourceWatcher } from './resource-watcher.js';
 import { StoryNavigator } from './story-navigator.js';
 import { captureDiagnosticsEnabled, emitCaptureDiagnostic, measureCaptureDiagnostic } from './capture-diagnostics.js';
@@ -75,9 +75,15 @@ function captureScreenshotWithBudget(
   viewport: Viewport | undefined,
   capture: () => Promise<Buffer | null>,
   signal?: AbortSignal,
+  diagnosticContext?: ScreenshotBudgetDiagnosticContext,
 ) {
   if (typeof fileSystem.captureScreenshot !== 'function') return capture();
-  return fileSystem.captureScreenshot(estimatePngBufferReservation(options, viewport), capture, signal);
+  return fileSystem.captureScreenshot(
+    estimatePngBufferReservation(options, viewport),
+    capture,
+    signal,
+    diagnosticContext,
+  );
 }
 
 function releaseCapturedScreenshot(fileSystem: FileSystem, buffer: Buffer | null | undefined) {
@@ -888,6 +894,7 @@ export class CapturingBrowser extends BaseBrowser {
           this.viewport,
           () => this.page.screenshot(screenshotOptions),
           deadline.signal,
+          this.diagnosticContext(),
         ),
       );
       if (buffer) onCapturedBuffer?.(buffer, releaseBuffer);
@@ -1144,6 +1151,7 @@ export class CapturingBrowser extends BaseBrowser {
           this.viewport,
           () => this.page.screenshot(screenshotOptions),
           deadline.signal,
+          this.diagnosticContext(),
         ),
       );
       releaseAbandonedBuffer();

@@ -68,6 +68,23 @@ test('summarizes capture/runtime phases, queue utilization, and topology', () =>
         { durationMs: 250, phase: 'capture-worker-boot', state: 'end', type: 'runtime-phase' },
         { durationMs: 7, state: 'start', type: 'queue-task' },
         {
+          durationMs: 3,
+          maximumBufferedBytes: 64,
+          peakActiveReservations: 2,
+          peakRetainedBytes: 32,
+          reservationBytes: 16,
+          state: 'acquired',
+          type: 'screenshot-budget',
+        },
+        {
+          actualBytes: 8,
+          maximumBufferedBytes: 64,
+          peakActiveReservations: 2,
+          peakRetainedBytes: 32,
+          state: 'captured',
+          type: 'screenshot-budget',
+        },
+        {
           busyWorkerUtilization: 0.75,
           peakInFlight: 4,
           peakQueued: 9,
@@ -108,6 +125,22 @@ test('summarizes capture/runtime phases, queue utilization, and topology', () =>
     waitMaxMs: 7,
     waitP50Ms: 7,
     waitP95Ms: 7,
+    waitSamples: 1,
+  });
+  assert.deepEqual(summary.diagnostics.screenshotBudget, {
+    actualBytesMax: 8,
+    actualBytesP50: 8,
+    actualBytesP95: 8,
+    capturedSamples: 1,
+    failedSamples: 0,
+    maximumBufferedBytes: 64,
+    peakActiveReservations: 2,
+    peakRetainedBytes: 32,
+    reservationBytesP50: 16,
+    reservationBytesP95: 16,
+    waitMaxMs: 3,
+    waitP50Ms: 3,
+    waitP95Ms: 3,
     waitSamples: 1,
   });
   assert.equal(summary.maxPeakProcessCount, 10);

@@ -6,6 +6,7 @@ const { spawn, execFileSync } = require('child_process');
 const { createRequire } = require('module');
 const { PNG } = require('pngjs');
 const { selectScenarios } = require('./performance-roadmap-scenarios.js');
+const { summarizeScreenshotBudget } = require('./screenshot-budget-summary.js');
 
 const diagnosticPrefix = 'STORYFREEZE_CAPTURE_DIAGNOSTIC=';
 const fixtureDir = path.resolve(process.argv[2] || '.');
@@ -189,6 +190,7 @@ function measureRun({ browser, iteration, modeName, runKind, scenario, scenarioN
       if (diagnostics.browserCrashCount) errors.push(`Observed ${diagnostics.browserCrashCount} browser crashes.`);
       const topology = diagnostics.events.findLast(event => event.type === 'browser-topology');
       const phase1 = diagnostics.events.findLast(event => event.type === 'phase1-summary');
+      const screenshotBudgetEvents = diagnostics.events.filter(event => event.type === 'screenshot-budget');
       resolve({
         browserIsolation: mode.browserIsolation,
         browserCrashCount: diagnostics.browserCrashCount,
@@ -205,6 +207,7 @@ function measureRun({ browser, iteration, modeName, runKind, scenario, scenarioN
         pngCount: pngPaths.length,
         pngPaths,
         retryCount: diagnostics.retryCount,
+        screenshotBudgetEvents,
         screenshotTimesMs: capturePhaseTimes(diagnostics.events, 'screenshot'),
         sessionCaptureCount: diagnostics.events.filter(event => event.type === 'story-session-capture').length,
         storyCount: diagnostics.storyCount,
@@ -283,6 +286,7 @@ function summarizeRuns(runs) {
   const navigationTimes = runs.flatMap(run => run.navigationTimesMs);
   const metricsTimes = runs.flatMap(run => run.metricsTimesMs);
   const screenshotTimes = runs.flatMap(run => run.screenshotTimesMs);
+  const screenshotBudget = summarizeScreenshotBudget(runs.flatMap(run => run.screenshotBudgetEvents ?? []));
   return {
     browserCrashCount: runs.reduce((total, run) => total + run.browserCrashCount, 0),
     captureP50Ms: percentile(captureTimes, 0.5),
@@ -294,6 +298,7 @@ function summarizeRuns(runs) {
     navigationP50Ms: percentile(navigationTimes, 0.5),
     navigationP95Ms: percentile(navigationTimes, 0.95),
     retryCount: runs.reduce((total, run) => total + run.retryCount, 0),
+    screenshotBudget,
     screenshotP50Ms: percentile(screenshotTimes, 0.5),
     screenshotP95Ms: percentile(screenshotTimes, 0.95),
     sessionCaptureCount: runs.reduce((total, run) => total + run.sessionCaptureCount, 0),

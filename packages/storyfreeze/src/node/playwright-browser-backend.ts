@@ -32,6 +32,18 @@ import {
 } from './browser-backend.js';
 import { findChrome, type FindChromeOptions, type FindChromeResult } from './chromium-resolver.js';
 
+const styleFileContents = new Map<string, Promise<string>>();
+
+function readStyleFile(path: string) {
+  let content = styleFileContents.get(path);
+  if (!content) {
+    content = fs.promises.readFile(path, 'utf8');
+    styleFileContents.set(path, content);
+    void content.catch(() => styleFileContents.delete(path));
+  }
+  return content;
+}
+
 const traceCategories = [
   '-*',
   'devtools.timeline',
@@ -92,16 +104,18 @@ export class PlaywrightCapturePage implements CapturePage {
   constructor(
     private readonly rawPage: Page,
     rawCdp: CDPSession,
+    initialViewport?: Viewport,
   ) {
     this.cdp = asCdpClient(rawCdp);
+    this.viewport = initialViewport ? { ...initialViewport } : undefined;
   }
 
   async activate() {
     await this.rawPage.bringToFront();
   }
 
-  addStyleFile(path: string) {
-    return this.rawPage.addStyleTag({ path }).then(() => {});
+  async addStyleFile(path: string) {
+    await this.rawPage.addStyleTag({ content: await readStyleFile(path) });
   }
 
   click(selector: string) {
@@ -204,6 +218,8 @@ export class PlaywrightCapturePage implements CapturePage {
       : undefined;
     let backgroundOverridden = false;
     let viewportOverridden = false;
+    let captureFailure: { error: unknown } | undefined;
+    let buffer: Buffer | undefined;
 
     try {
       if (options.fullPage) {
@@ -219,31 +235,58 @@ export class PlaywrightCapturePage implements CapturePage {
           scale: 1,
         };
         if (!captureBeyondViewport && this.viewport) {
-          await this.applyDeviceMetrics({ ...this.viewport, width: clip.width, height: clip.height });
           viewportOverridden = true;
+          await this.applyDeviceMetrics({
+            ...this.viewport,
+            width: clip.width,
+            height: clip.height,
+            isLandscape: this.viewport.isLandscape ?? this.viewport.width > this.viewport.height,
+          });
         }
       }
       if (options.omitBackground) {
+        backgroundOverridden = true;
         await this.cdp.send('Emulation.setDefaultBackgroundColorOverride', {
           color: { r: 0, g: 0, b: 0, a: 0 },
         });
-        backgroundOverridden = true;
       }
       const result = (await this.cdp.send('Page.captureScreenshot', {
         format: 'png',
         ...(clip ? { clip } : {}),
         captureBeyondViewport,
       })) as { data: string };
-      return Buffer.from(result.data, 'base64');
-    } finally {
+      buffer = Buffer.from(result.data, 'base64');
+    } catch (error) {
+      captureFailure = { error };
+    }
+    let cleanupFailure: { error: unknown } | undefined;
+    const recordCleanupFailure = (error: unknown) => {
+      cleanupFailure =
+        cleanupFailure === undefined ? { error } : { error: new AggregateError([cleanupFailure.error, error]) };
+    };
+    if (backgroundOverridden) {
       try {
-        if (backgroundOverridden) {
-          await this.cdp.send('Emulation.setDefaultBackgroundColorOverride');
-        }
-      } finally {
-        if (viewportOverridden && this.viewport) await this.applyDeviceMetrics(this.viewport);
+        await this.cdp.send('Emulation.setDefaultBackgroundColorOverride');
+      } catch (error) {
+        recordCleanupFailure(error);
       }
     }
+    if (viewportOverridden && this.viewport) {
+      try {
+        await this.applyDeviceMetrics(this.viewport);
+      } catch (error) {
+        recordCleanupFailure(error);
+      }
+    }
+    if (captureFailure !== undefined && cleanupFailure !== undefined) {
+      throw new AggregateError(
+        [captureFailure.error, cleanupFailure.error],
+        'Chromium screenshot capture and emulation cleanup both failed.',
+      );
+    }
+    if (captureFailure !== undefined) throw captureFailure.error;
+    if (cleanupFailure !== undefined) throw cleanupFailure.error;
+    return buffer!;
   }
 
   async setViewport(viewport: Viewport) {
@@ -258,9 +301,8 @@ export class PlaywrightCapturePage implements CapturePage {
   }
 
   private applyDeviceMetrics(viewport: Viewport) {
-    const orientation = viewport.isLandscape
-      ? { type: 'landscapePrimary', angle: 90 }
-      : { type: 'portraitPrimary', angle: 0 };
+    const isLandscape = viewport.isLandscape ?? viewport.width > viewport.height;
+    const orientation = isLandscape ? { type: 'landscapePrimary', angle: 90 } : { type: 'portraitPrimary', angle: 0 };
     return this.cdp.send('Emulation.setDeviceMetricsOverride', {
       width: viewport.width,
       height: viewport.height,
@@ -313,6 +355,7 @@ export class PlaywrightCapturePage implements CapturePage {
       const { stream } = await completed;
       if (!stream) throw new Error('Chromium did not provide a trace stream.');
 
+      let streamFailure: { error: unknown } | undefined;
       try {
         let eof = false;
         while (!eof) {
@@ -324,9 +367,23 @@ export class PlaywrightCapturePage implements CapturePage {
           await this.traceSink!.write(Buffer.from(result.data, result.base64Encoded ? 'base64' : 'utf8'));
           eof = Boolean(result.eof);
         }
-      } finally {
-        await this.cdp.send('IO.close', { handle: stream });
+      } catch (error) {
+        streamFailure = { error };
       }
+      let streamCloseFailure: { error: unknown } | undefined;
+      try {
+        await this.cdp.send('IO.close', { handle: stream });
+      } catch (error) {
+        streamCloseFailure = { error };
+      }
+      if (streamFailure !== undefined && streamCloseFailure !== undefined) {
+        throw new AggregateError(
+          [streamFailure.error, streamCloseFailure.error],
+          'Chromium trace streaming and stream cleanup both failed.',
+        );
+      }
+      if (streamFailure !== undefined) throw streamFailure.error;
+      if (streamCloseFailure !== undefined) throw streamCloseFailure.error;
       this.traceState = 'idle';
       this.traceSink = undefined;
     } catch (error) {
@@ -397,8 +454,9 @@ class PlaywrightBrowserSession implements BrowserSession {
     private readonly rawPage: Page,
     cdp: CDPSession,
     private readonly rawBrowser: Browser,
+    initialViewport: Viewport,
   ) {
-    this.capturePage = new PlaywrightCapturePage(rawPage, cdp);
+    this.capturePage = new PlaywrightCapturePage(rawPage, cdp, initialViewport);
     this.page = this.capturePage;
     const markUnhealthy = () => (this.healthy = false);
     rawPage.on('crash', markUnhealthy);
@@ -446,7 +504,9 @@ class PlaywrightBrowserInstance implements BrowserInstance {
       } catch {
         await cdp.send('Performance.enable').catch(() => {});
       }
-      return new PlaywrightBrowserSession(context, page, cdp, this.rawBrowser);
+      const session = new PlaywrightBrowserSession(context, page, cdp, this.rawBrowser, viewport);
+      await session.page.setViewport(viewport);
+      return session;
     } catch (error) {
       await context.close().catch(() => {});
       throw error;

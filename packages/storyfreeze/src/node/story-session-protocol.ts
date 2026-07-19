@@ -94,6 +94,7 @@ function validateResetVerification(value: unknown, expected: SessionReady): Rese
     baseGlobalsHash: requireString(record, 'baseGlobalsHash'),
     documentFingerprint: requireString(record, 'documentFingerprint'),
     scrollPositionMatchesBaseline: requireBoolean(record, 'scrollPositionMatchesBaseline'),
+    selectionMatchesBaseline: requireBoolean(record, 'selectionMatchesBaseline'),
   };
 }
 

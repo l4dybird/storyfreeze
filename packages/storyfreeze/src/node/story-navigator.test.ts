@@ -70,6 +70,15 @@ describe(detectPreviewMode, () => {
     });
   });
 
+  it('bounds mode detection when preview evaluation never settles', async () => {
+    const page = pageWithState(() => new Promise<never>(() => {}));
+
+    await expect(detectPreviewMode(page, new URL('https://example.test'), 'button--primary', 10)).resolves.toEqual({
+      mode: 'simple',
+      reason: 'the StoryFreeze preview marker was not detected',
+    });
+  });
+
   it('uses an explicitly requested simple mode without waiting for a marker', async () => {
     const page = pageWithState(() => state('booting', 'button--primary', 'mode-detection'));
 
@@ -159,6 +168,14 @@ describe(StoryNavigator, () => {
     );
   });
 
+  it('bounds managed readiness when preview evaluation never settles', async () => {
+    const page = pageWithState(() => new Promise<never>(() => {}));
+    const navigator = new StoryNavigator(page, new URL('https://example.test'), 7);
+    await navigator.navigate('button--primary');
+
+    await expect(navigator.waitForReady(10)).rejects.toThrow(/did not become ready/);
+  });
+
   it('rejects a redirect that changes the story or request query', async () => {
     const page = pageWithState(() => undefined);
     page.currentUrl.mockReturnValue('https://example.test/iframe.html?id=button--other&storyfreezeRequestId=7-1');
@@ -205,5 +222,13 @@ describe(StoryNavigator, () => {
     await expect(navigator.waitForSimpleReady(0)).rejects.toThrow(
       /did not show a rendered preview.*body classes: "sb-show-preparing-story"/,
     );
+  });
+
+  it('bounds simple readiness when preview evaluation never settles', async () => {
+    const page = pageWithState(() => new Promise<never>(() => {}));
+    const navigator = new StoryNavigator(page, new URL('https://example.test'), 7);
+    await navigator.navigate('button--primary');
+
+    await expect(navigator.waitForSimpleReady(10)).rejects.toThrow(/did not show a rendered preview/);
   });
 });

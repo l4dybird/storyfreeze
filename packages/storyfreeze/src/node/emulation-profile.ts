@@ -51,7 +51,14 @@ export function emulationProfileKey(profile: EmulationProfile): string {
 }
 
 export function sameEmulationProfile(left: EmulationProfile, right: EmulationProfile): boolean {
-  return emulationProfileKey(left) === emulationProfileKey(right);
+  return (
+    left.width === right.width &&
+    left.height === right.height &&
+    left.deviceScaleFactor === right.deviceScaleFactor &&
+    left.isMobile === right.isMobile &&
+    left.hasTouch === right.hasTouch &&
+    left.isLandscape === right.isLandscape
+  );
 }
 
 export function sameEmulationClass(left: EmulationProfile, right: EmulationProfile): boolean {

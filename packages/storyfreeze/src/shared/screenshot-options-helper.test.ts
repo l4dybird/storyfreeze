@@ -1,5 +1,18 @@
 import { describe, expect, it } from 'vite-plus/test';
-import { expandViewportsOption, pickupWithVariantKey, extractVariantKeys } from './screenshot-options-helper.js';
+import {
+  expandViewportsOption,
+  pickupWithVariantKey,
+  extractVariantKeys,
+  variantKeyIdentifier,
+} from './screenshot-options-helper.js';
+
+describe(variantKeyIdentifier, () => {
+  it('preserves ordinary keys and separates composite, empty, and reserved paths', () => {
+    expect(variantKeyIdentifier(['hovered'])).toBe('hovered');
+    const paths = [['a', 'b'], ['a/b'], [''], ['__base__'], ['path:["a"]']].map(variantKeyIdentifier);
+    expect(new Set(paths).size).toBe(paths.length);
+  });
+});
 
 describe(expandViewportsOption, () => {
   it('should expand viewport and variants from viewports', () => {

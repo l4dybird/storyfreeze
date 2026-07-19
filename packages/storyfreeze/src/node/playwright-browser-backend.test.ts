@@ -6,6 +6,7 @@ import { PlaywrightBrowserBackend, PlaywrightCapturePage } from './playwright-br
 
 class FakePage extends EventEmitter {
   readonly bringToFront = vi.fn(async () => {});
+  readonly setViewportSize = vi.fn(async () => {});
   readonly element = {
     click: vi.fn(async () => {}),
     dispose: vi.fn(async () => {}),
@@ -120,9 +121,54 @@ describe(PlaywrightCapturePage, () => {
       height: 600,
       deviceScaleFactor: 1,
       mobile: false,
-      screenOrientation: { type: 'portraitPrimary', angle: 0 },
+      screenOrientation: { type: 'landscapePrimary', angle: 90 },
     });
     expect(rawCdp.send).toHaveBeenLastCalledWith('Emulation.setTouchEmulationEnabled', { enabled: false });
+  });
+
+  it('preserves derived viewport orientation during a tall full-page capture', async () => {
+    const rawPage = {
+      bringToFront: vi.fn(async () => {}),
+      setViewportSize: vi.fn(async () => {}),
+    } as unknown as Page;
+    const rawCdp = new FakeCdp();
+    rawCdp.send.mockImplementation(async method => {
+      if (method === 'Page.getLayoutMetrics') return { contentSize: { width: 800, height: 1600 } };
+      if (method === 'Page.captureScreenshot') return { data: Buffer.from('png').toString('base64') };
+      return {};
+    });
+    const page = new PlaywrightCapturePage(rawPage, rawCdp as unknown as CDPSession, { width: 800, height: 600 });
+
+    await page.screenshot({ fullPage: true, captureBeyondViewport: false });
+
+    expect(rawCdp.send).toHaveBeenNthCalledWith(2, 'Emulation.setDeviceMetricsOverride', {
+      width: 800,
+      height: 1600,
+      deviceScaleFactor: 1,
+      mobile: false,
+      screenOrientation: { type: 'landscapePrimary', angle: 90 },
+    });
+  });
+
+  it('preserves both screenshot and emulation cleanup failures', async () => {
+    const rawPage = { setViewportSize: vi.fn(async () => {}) } as unknown as Page;
+    const rawCdp = new FakeCdp();
+    const captureError = new Error('capture failed');
+    const cleanupError = new Error('background cleanup failed');
+    rawCdp.send.mockImplementation(async (method, params) => {
+      if (method === 'Page.captureScreenshot') throw captureError;
+      if (method === 'Emulation.setDefaultBackgroundColorOverride' && params === undefined) throw cleanupError;
+      return {};
+    });
+    const page = new PlaywrightCapturePage(rawPage, rawCdp as unknown as CDPSession);
+
+    try {
+      await page.screenshot({ omitBackground: true });
+      throw new Error('Expected screenshot capture to fail.');
+    } catch (error) {
+      expect(error).toBeInstanceOf(AggregateError);
+      expect((error as AggregateError).errors).toEqual([captureError, cleanupError]);
+    }
   });
 
   it('normalizes Chromium screenshots and records a Chromium trace through CDP', async () => {
@@ -371,6 +417,13 @@ describe(PlaywrightBrowserBackend, () => {
       hasTouch: true,
     });
     expect(vi.mocked(browser.newContext)).toHaveBeenNthCalledWith(2, { viewport: { width: 800, height: 600 } });
+    expect(rawCdp.send).toHaveBeenCalledWith('Emulation.setDeviceMetricsOverride', {
+      width: 390,
+      height: 844,
+      deviceScaleFactor: 3,
+      mobile: true,
+      screenOrientation: { type: 'portraitPrimary', angle: 0 },
+    });
     expect(rawCdp.send).toHaveBeenCalledWith('Performance.enable', { timeDomain: 'threadTicks' });
     expect(rawCdp.send).toHaveBeenCalledWith('Performance.enable');
     expect(closeContext).toHaveBeenCalledTimes(2);

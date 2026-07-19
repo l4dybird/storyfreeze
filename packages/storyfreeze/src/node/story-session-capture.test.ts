@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vite-plus/test';
-import { createBaseScreenshotOptions } from '../shared/screenshot-options-helper.js';
+import { createBaseScreenshotOptions, variantKeyIdentifier } from '../shared/screenshot-options-helper.js';
 import { BaseBrowser } from './browser.js';
 import { CaptureDeadline } from './capture-deadline.js';
 import { CapturingBrowser } from './capturing-browser.js';
 import { Logger } from './logger.js';
 import type { ManagedStorybookConnection } from './managed-storybook-connection.js';
 import type { Story } from './story.js';
+import { SessionOutputConsumedError } from './story-session.js';
 import type { MainOptions } from './types.js';
 
 const story: Story = { id: 'button--primary', kind: 'Button', story: 'Primary', version: 'v5' };
@@ -24,6 +25,7 @@ function resetVerification(session = { storyId: story.id, sessionGeneration: 1, 
     baseGlobalsHash: 'globals',
     documentFingerprint: 'baseline',
     scrollPositionMatchesBaseline: true,
+    selectionMatchesBaseline: true,
   };
 }
 
@@ -134,6 +136,88 @@ describe(CapturingBrowser.prototype.screenshotSessionVariants, () => {
     expect(order).toEqual(['reset', 'tick-1', 'requests', 'tick-2', 'paint-1', 'verify']);
   });
 
+  it('releases a session buffer captured after the attempt has already timed out', async () => {
+    const { browser, logger } = createBrowserFixture(10);
+    const request = { variantKey: { isDefault: false, keys: ['hovered'] } };
+    const buffer = Buffer.from('late session capture');
+    let resolveScreenshot!: (buffer: Buffer) => void;
+    const screenshot = new Promise<Buffer>(resolve => {
+      resolveScreenshot = resolve;
+    });
+    let activeReservations = 0;
+    const retained = new Set<Buffer>();
+    const fileSystem = {
+      captureScreenshot: vi.fn(async (_reservationBytes, capture: () => Promise<Buffer | null>) => {
+        activeReservations += 1;
+        try {
+          const captured = await capture();
+          if (!captured) {
+            activeReservations -= 1;
+            return null;
+          }
+          retained.add(captured);
+          return captured;
+        } catch (error) {
+          activeReservations -= 1;
+          throw error;
+        }
+      }),
+      releaseScreenshotBuffer: vi.fn((captured: Buffer | null | undefined) => {
+        if (captured && retained.delete(captured)) activeReservations -= 1;
+      }),
+    };
+    const page = {
+      screenshot: vi.fn(() => screenshot),
+      subscribeConsole: vi.fn(() => vi.fn()),
+      waitForRenderTick: vi.fn(async () => {}),
+      waitForVisualCommit: vi.fn(async () => ({ didTimeout: false })),
+    };
+    vi.spyOn(BaseBrowser.prototype, 'page', 'get').mockReturnValue(page as never);
+    vi.spyOn(browser as never, 'interruptAttempt').mockResolvedValue(false);
+    const protocol = {
+      applyVariant: vi.fn(async () => {}),
+      resetVariant: vi.fn(async () => {}),
+      verifyReset: vi.fn(async () => resetVerification()),
+    };
+    const baseProfile = {
+      width: 800,
+      height: 600,
+      deviceScaleFactor: 1,
+      isMobile: false,
+      hasTouch: false,
+      isLandscape: true,
+    };
+    Object.assign(browser, {
+      resourceWatcher: {
+        clear: vi.fn(),
+        generation: 0,
+        pendingCount: 0,
+        waitForRequestsComplete: vi.fn(async () => ({ didTimeout: false })),
+      },
+      viewport: { width: 800, height: 600 },
+    });
+    const options = createBaseScreenshotOptions({ delay: 0, disableWaitAssets: false, viewports: ['800x600'] });
+
+    await expect(
+      (browser as any).captureStorySessionVariant(
+        protocol,
+        story,
+        request,
+        options,
+        baseProfile,
+        logger,
+        false,
+        false,
+        fileSystem,
+      ),
+    ).rejects.toThrow('did not stop after its browser session was closed');
+    expect(activeReservations).toBe(1);
+
+    resolveScreenshot(buffer);
+    await vi.waitFor(() => expect(activeReservations).toBe(0));
+    expect(fileSystem.releaseScreenshotBuffer).toHaveBeenCalledWith(buffer);
+  });
+
   it('captures a click variant with custom reset without another Storybook navigation and verifies reset', async () => {
     const logger = new Logger('silent');
     const options = {
@@ -204,6 +288,7 @@ describe(CapturingBrowser.prototype.screenshotSessionVariants, () => {
       rootScreenshotOptions: rootOptions,
       viewport: { width: 800, height: 600 },
     });
+    const onOutput = vi.fn(async () => {});
 
     await expect(
       browser.screenshotSessionVariants(
@@ -215,16 +300,16 @@ describe(CapturingBrowser.prototype.screenshotSessionVariants, () => {
         false,
         {} as never,
         'auto',
+        onOutput,
       ),
     ).resolves.toEqual({
-      outputs: [
-        {
-          variantKey: { isDefault: false, keys: ['hovered'] },
-          buffer: Buffer.from('png'),
-          durationMs: expect.any(Number),
-        },
-      ],
+      outputs: [],
       strictFallbacks: [],
+    });
+    expect(onOutput).toHaveBeenCalledWith({
+      variantKey: { isDefault: false, keys: ['hovered'] },
+      buffer: Buffer.from('png'),
+      durationMs: expect.any(Number),
     });
     expect(page.hover).toHaveBeenCalledWith('#button');
     expect(page.click).toHaveBeenCalledWith('#button');
@@ -302,6 +387,54 @@ describe(CapturingBrowser.prototype.screenshotSessionVariants, () => {
     expect(metrics).not.toHaveBeenCalled();
     expect(page.waitForVisualCommit).toHaveBeenCalledTimes(1);
     expect(waitForRequestsComplete).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['before ownership transfer', (error: Error) => error, true],
+    ['after ownership transfer', (error: Error) => new SessionOutputConsumedError(error), false],
+  ])('propagates a streamed output failure %s without strict fallback', async (_label, wrapError, shouldRelease) => {
+    const { browser, logger } = createBrowserFixture();
+    const request = { variantKey: { isDefault: false, keys: ['hovered'] } };
+    const session = { storyId: story.id, sessionGeneration: 1, profileHash };
+    const evaluate = vi.fn().mockResolvedValueOnce(session).mockResolvedValueOnce(resetVerification(session));
+    vi.spyOn(BaseBrowser.prototype, 'page', 'get').mockReturnValue({ evaluate } as never);
+    const buffer = Buffer.from('streamed capture');
+    vi.spyOn(browser as never, 'captureStorySessionVariant').mockResolvedValue(buffer);
+    const restart = vi.spyOn(browser as never, 'restartCaptureSession').mockResolvedValue(undefined);
+    const rootOptions = createBaseScreenshotOptions({ delay: 0, disableWaitAssets: false, viewports: ['800x600'] });
+    rootOptions.variants = { hovered: { hover: '#button' } };
+    Object.assign(browser, {
+      _currentStory: story,
+      previewRuntimeMetadata: {
+        hasCustomReset: false,
+        hasRuntimeWaitFor: false,
+        runtimeWaitForVariants: [],
+      },
+      resourceWatcher: { generation: 0, pendingCount: 0 },
+      rootScreenshotOptions: rootOptions,
+      viewport: { width: 800, height: 600 },
+    });
+    const outputError = new Error('output failed');
+    const fileSystem = { releaseScreenshotBuffer: vi.fn() };
+
+    await expect(
+      browser.screenshotSessionVariants(
+        'button-desktop',
+        story,
+        [request],
+        logger,
+        false,
+        false,
+        fileSystem as never,
+        'auto',
+        async () => {
+          throw wrapError(outputError);
+        },
+      ),
+    ).rejects.toBe(outputError);
+    expect(restart).not.toHaveBeenCalled();
+    if (shouldRelease) expect(fileSystem.releaseScreenshotBuffer).toHaveBeenCalledWith(buffer);
+    else expect(fileSystem.releaseScreenshotBuffer).not.toHaveBeenCalled();
   });
 
   it('restarts the worker and returns the failed and remaining variants to strict mode after reset mismatch', async () => {
@@ -419,6 +552,20 @@ describe(CapturingBrowser.prototype.screenshotSessionVariants, () => {
     );
   });
 
+  it('rejects a document selection that differs from the session baseline', async () => {
+    const { browser } = createBrowserFixture();
+    Object.assign(browser, {
+      resourceWatcher: { generation: 0, pendingCount: 0 },
+    });
+    const protocol = {
+      verifyReset: vi.fn(async () => ({ ...resetVerification(), selectionMatchesBaseline: false })),
+    };
+
+    await expect((browser as any).verifyStorySessionState(protocol, 'focused')).rejects.toThrow(
+      '"selectionMatchesBaseline":false',
+    );
+  });
+
   it('throws in forced story-session mode when the prepared story state is missing', async () => {
     const { browser, logger } = createBrowserFixture();
     const request = { variantKey: { isDefault: false, keys: ['hovered'] } };
@@ -435,6 +582,52 @@ describe(CapturingBrowser.prototype.screenshotSessionVariants, () => {
         'story-session',
       ),
     ).rejects.toThrow('not ready for forced story-session capture');
+  });
+
+  it('returns an inherited runtime wait variant to strict capture by its exact path', async () => {
+    const { browser, logger } = createBrowserFixture();
+    const request = { variantKey: { isDefault: false, keys: ['base', 'inherited'] } };
+    const rootOptions = createBaseScreenshotOptions({ delay: 0, disableWaitAssets: false, viewports: ['800x600'] });
+    rootOptions.variants = {
+      base: {},
+      inherited: { extends: 'base' },
+    };
+    Object.assign(browser, {
+      _currentStory: story,
+      previewRuntimeMetadata: {
+        hasCustomReset: false,
+        hasRuntimeWaitFor: false,
+        runtimeWaitForVariants: [variantKeyIdentifier(request.variantKey.keys)],
+      },
+      rootScreenshotOptions: rootOptions,
+      viewport: { width: 800, height: 600 },
+    });
+
+    await expect(
+      browser.screenshotSessionVariants('button-desktop', story, [request], logger, false, false, {} as never, 'auto'),
+    ).resolves.toEqual({ outputs: [], strictFallbacks: [request] });
+  });
+
+  it('returns viewport variants to strict mode when viewport changes require reloads', async () => {
+    const { browser, logger } = createBrowserFixture();
+    const request = { variantKey: { isDefault: false, keys: ['wide'] } };
+    const rootOptions = createBaseScreenshotOptions({ delay: 0, disableWaitAssets: false, viewports: ['800x600'] });
+    rootOptions.variants = { wide: { viewport: { width: 1024, height: 600 } } };
+    Object.assign((browser as unknown as { opt: MainOptions }).opt, { reloadAfterChangeViewport: true });
+    Object.assign(browser, {
+      _currentStory: story,
+      previewRuntimeMetadata: {
+        hasCustomReset: false,
+        hasRuntimeWaitFor: false,
+        runtimeWaitForVariants: [],
+      },
+      rootScreenshotOptions: rootOptions,
+      viewport: { width: 800, height: 600 },
+    });
+
+    await expect(
+      browser.screenshotSessionVariants('button-desktop', story, [request], logger, false, false, {} as never, 'auto'),
+    ).resolves.toEqual({ outputs: [], strictFallbacks: [request] });
   });
 
   it('restarts an unsafe base capture before falling back in auto mode', async () => {
@@ -519,6 +712,53 @@ describe(CapturingBrowser.prototype.screenshotSessionVariants, () => {
     expect(restart).toHaveBeenCalledOnce();
   });
 
+  it('does not retry recovery or retain buffered output when boundary recycling fails', async () => {
+    const { browser, logger } = createBrowserFixture();
+    const request = { variantKey: { isDefault: false, keys: ['hovered'] } };
+    const session = { storyId: story.id, sessionGeneration: 1, profileHash };
+    const evaluate = vi
+      .fn()
+      .mockResolvedValueOnce(session)
+      .mockResolvedValueOnce(resetVerification(session))
+      .mockResolvedValueOnce(undefined);
+    vi.spyOn(BaseBrowser.prototype, 'page', 'get').mockReturnValue({ evaluate } as never);
+    const buffer = Buffer.from('buffered output');
+    vi.spyOn(browser as never, 'captureStorySessionVariant').mockResolvedValue(buffer);
+    const recycleError = new Error('boundary recycle failed');
+    vi.spyOn(browser as never, 'recycleContextIfNeeded').mockRejectedValue(recycleError);
+    const restart = vi.spyOn(browser as never, 'restartCaptureSession').mockResolvedValue(undefined);
+    const rootOptions = createBaseScreenshotOptions({ delay: 0, disableWaitAssets: false, viewports: ['800x600'] });
+    rootOptions.variants = { hovered: { hover: '#button' } };
+    Object.assign(browser, {
+      _currentStory: story,
+      previewRuntimeMetadata: {
+        hasCustomReset: false,
+        hasRuntimeWaitFor: false,
+        runtimeWaitForVariants: [],
+      },
+      resourceWatcher: { generation: 0, pendingCount: 0 },
+      rootScreenshotOptions: rootOptions,
+      viewport: { width: 800, height: 600 },
+    });
+    const releaseScreenshotBuffer = vi.fn();
+
+    await expect(
+      browser.screenshotSessionVariants(
+        'button-desktop',
+        story,
+        [request],
+        logger,
+        false,
+        false,
+        { releaseScreenshotBuffer } as never,
+        'story-session',
+      ),
+    ).rejects.toBe(recycleError);
+    expect(restart).not.toHaveBeenCalled();
+    expect(releaseScreenshotBuffer).toHaveBeenCalledOnce();
+    expect(releaseScreenshotBuffer).toHaveBeenCalledWith(buffer);
+  });
+
   it('times out a custom reset evaluate that never settles without an unhandled rejection', async () => {
     const { browser, logger } = createBrowserFixture(25);
     const request = { variantKey: { isDefault: false, keys: ['hovered'] } };
@@ -572,8 +812,8 @@ describe(CapturingBrowser.prototype.screenshotSessionVariants, () => {
 
     await expect(
       browser.screenshotSessionVariants('button-desktop', story, [request], logger, false, false, {} as never, 'auto'),
-    ).resolves.toEqual({ outputs: [], strictFallbacks: [request] });
-    expect(restart).toHaveBeenCalledOnce();
+    ).rejects.toThrow('did not stop after its browser session was closed');
+    expect(restart).not.toHaveBeenCalled();
     expect(evaluate).toHaveBeenCalledTimes(5);
     expect(page.screenshot).toHaveBeenCalledOnce();
     expect(page.resetPointer).toHaveBeenCalledOnce();

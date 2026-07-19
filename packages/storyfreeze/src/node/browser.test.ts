@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vite-plus/test';
+import fs from 'node:fs';
 import type {
   BrowserBackend,
   BrowserInstance,
@@ -71,18 +72,25 @@ describe(findChrome, () => {
 describe(BaseBrowser, () => {
   it('reports direct browser launches when diagnostics are enabled', async () => {
     vi.stubEnv('STORYFREEZE_CAPTURE_DIAGNOSTICS', '1');
-    const write = vi.spyOn(process.stdout, 'write').mockImplementation(((...args: unknown[]) => {
+    const write = vi.spyOn(fs, 'write').mockImplementation(((...args: unknown[]) => {
       const callback = args.find(value => typeof value === 'function') as (() => void) | undefined;
       callback?.();
-      return true;
     }) as never);
     const { browser } = createBrowser();
 
     try {
       await browser.boot();
 
-      expect(write).toHaveBeenCalledWith(expect.stringContaining('"type":"browser-launch"'), expect.any(Function));
-      expect(write).toHaveBeenCalledWith(expect.stringContaining('"source":"direct"'), expect.any(Function));
+      expect(write).toHaveBeenCalledWith(
+        process.stdout.fd,
+        expect.any(Buffer),
+        0,
+        expect.any(Number),
+        null,
+        expect.any(Function),
+      );
+      expect(String(write.mock.calls[0][1])).toContain('"type":"browser-launch"');
+      expect(String(write.mock.calls[0][1])).toContain('"source":"direct"');
     } finally {
       await browser.close();
       write.mockRestore();
@@ -205,7 +213,7 @@ describe(BaseBrowser, () => {
     await browser.close();
   });
 
-  it('does not wait for a shared session that opens after close supersedes its boot', async () => {
+  it('returns from close without initializing a shared session that opens afterward', async () => {
     const session = {
       close: vi.fn(async () => {}),
       isHealthy: vi.fn(() => true),
@@ -222,7 +230,12 @@ describe(BaseBrowser, () => {
           }),
       ),
     } satisfies BrowserSessionSource;
-    const browser = new BaseBrowser({}, new TestBackend(), {}, source);
+    class ClosingBrowser extends BaseBrowser {
+      protected override async onBooted() {
+        throw new Error('A superseded session must not be initialized.');
+      }
+    }
+    const browser = new ClosingBrowser({}, new TestBackend(), {}, source);
 
     const booting = browser.boot();
     await vi.waitFor(() => expect(source.openSession).toHaveBeenCalledOnce());

@@ -16,7 +16,6 @@ export interface StorySessionPlan {
   profile: EmulationProfile;
   baseCapture: PlannedCapture;
   variants: PlannedVariantCapture[];
-  executionMode: 'strict' | 'story-session';
 }
 
 export interface StorySessionPlanningResult {
@@ -40,6 +39,16 @@ export interface SessionVariantExecutionResult {
   strictFallbacks: SessionVariantRequest[];
 }
 
+/** Signals that an output callback transferred buffer ownership before it failed. */
+export class SessionOutputConsumedError extends Error {
+  constructor(readonly outputError: unknown) {
+    super('The story-session output consumer failed after taking ownership of the buffer.', {
+      cause: outputError,
+    });
+    this.name = 'SessionOutputConsumedError';
+  }
+}
+
 export function classifyBatchEligibility(
   capture: Pick<PlannedCapture, 'options'>,
   options: { hasCustomReset?: boolean; allowRuntimeValidation?: boolean } = {},
@@ -53,16 +62,6 @@ export function classifyBatchEligibility(
   return { mode: 'safe' };
 }
 
-function sessionId(storyId: string, profile: EmulationProfile): string {
-  const classKey = [
-    profile.deviceScaleFactor,
-    profile.isMobile ? 1 : 0,
-    profile.hasTouch ? 1 : 0,
-    profile.isLandscape ? 1 : 0,
-  ].join(':');
-  return `${encodeURIComponent(storyId)}::${classKey}`;
-}
-
 function emulationClassKey(profile: EmulationProfile): string {
   return [
     profile.deviceScaleFactor,
@@ -70,6 +69,10 @@ function emulationClassKey(profile: EmulationProfile): string {
     profile.hasTouch ? 1 : 0,
     profile.isLandscape ? 1 : 0,
   ].join(':');
+}
+
+function sessionId(storyId: string, profile: EmulationProfile): string {
+  return `${encodeURIComponent(storyId)}::${emulationClassKey(profile)}`;
 }
 
 /**
@@ -147,7 +150,6 @@ export function createStorySessionPlans(plan: { captures: readonly PlannedCaptur
           profile: baseCapture.profile,
           baseCapture,
           variants: plannedVariants,
-          executionMode: 'story-session',
         });
       } else {
         strictCaptures.push(baseCapture);

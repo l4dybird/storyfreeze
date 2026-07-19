@@ -470,7 +470,7 @@ Fresh navigation remains the default for every capture. Use `--capture-protocol 
 $ npx storyfreeze --capture-protocol auto http://localhost:9009
 ```
 
-`auto` batches safe hover, focus, screenshot-only, and same-emulation-class viewport variants. Mobile, touch, DPR, orientation, runtime `waitFor`, or reset-unsafe boundaries use fresh navigation automatically. A failed session or reset also recreates the worker session and requeues every unfinished variant through the strict path. Session reset flushes paint-triggered work, waits for pending requests, commits response-driven paint, then compares focus, args/globals, scroll positions, and the full preview document, including portals, live form state, and open shadow roots. `--capture-protocol story-session` is the validation mode: it reports missing prerequisites, unsafe variants, and reset failures as errors instead of falling back.
+`auto` batches safe hover, focus, screenshot-only, and same-emulation-class viewport variants. Mobile, touch, DPR, orientation, runtime `waitFor`, or reset-unsafe boundaries use fresh navigation automatically. A recoverable failed session or reset recreates the worker session and requeues every unfinished variant through the strict path. If an interrupted browser-side operation does not settle after its session is closed, the run stops instead of reusing potentially active page state. Session reset flushes paint-triggered work, waits for pending requests, commits response-driven paint, then compares focus, document selection ranges, args/globals, scroll positions, and the full preview document, including portals, live form state, and open shadow roots. `--capture-protocol story-session` is the validation mode: it reports missing prerequisites, unsafe variants, and reset failures as errors instead of falling back.
 
 Context count and age limits are applied at safe capture boundaries. An active story session finishes its same-document variant batch before a reached recycling limit is applied.
 
@@ -491,7 +491,7 @@ export const Toggle = {
 };
 ```
 
-The reset hook must settle within the capture timeout and restore or cancel component-owned timers, listeners, module/window globals, and other state outside the preview document. Args or globals containing class instances or opaque host objects that cannot preserve their internal state are rejected for story sessions; `auto` falls back to `strict`. Closed shadow roots and mutations that occur only after verification cannot be proven reset-safe. Use `strict` for those stories; `auto` falls back when an observable mismatch is found, but it cannot guarantee detection of invisible or arbitrarily late side effects.
+The reset hook must settle within the capture timeout and restore or cancel component-owned timers, listeners, module/window globals, and other state outside the preview document. Args or globals containing class instances or opaque host objects that cannot preserve their internal state are rejected for story sessions; `auto` falls back to `strict`. Closed shadow roots, canvas bitmap state, CSSOM or adopted-stylesheet changes, and mutations that occur only after verification cannot be proven reset-safe. Use `strict` for those stories; `auto` falls back when an observable mismatch is found, but it cannot guarantee detection of invisible or arbitrarily late side effects.
 
 ### Parallelisation across multiple computers
 

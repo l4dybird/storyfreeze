@@ -64,6 +64,9 @@ export async function waitForVisualCommitInPage(
         image.addEventListener('load', finish, { once: true });
         image.addEventListener('error', finish, { once: true });
         controller.signal.addEventListener('abort', onAbort, { once: true });
+        // The resource can finish between the initial complete check and
+        // listener registration; close that event-loss window explicitly.
+        if (image.complete) finish();
       });
     }
     if (typeof image.decode === 'function') {
@@ -142,17 +145,20 @@ export function waitForVisualCommitWithAbort(
   if (!signal) return operation;
   if (signal.aborted) return Promise.reject(signal.reason);
   return new Promise((resolve, reject) => {
-    const onAbort = () => reject(signal.reason);
+    let settled = false;
+    let onAbort = () => {};
+    const finish = (action: () => void) => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener('abort', onAbort);
+      action();
+    };
+    onAbort = () => finish(() => reject(signal.reason));
     signal.addEventListener('abort', onAbort, { once: true });
     operation.then(
-      result => {
-        signal.removeEventListener('abort', onAbort);
-        resolve(result);
-      },
-      error => {
-        signal.removeEventListener('abort', onAbort);
-        reject(error);
-      },
+      result => finish(() => resolve(result)),
+      error => finish(() => reject(error)),
     );
+    if (signal.aborted) onAbort();
   });
 }

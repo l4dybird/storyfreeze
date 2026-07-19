@@ -17,6 +17,17 @@ type ScrollSnapshot = {
   windowY: number;
 };
 
+type SelectionSnapshot =
+  | { state: 'unavailable' }
+  | { state: 'empty' }
+  | {
+      state: 'range';
+      anchorNode: Node;
+      anchorOffset: number;
+      focusNode: Node;
+      focusOffset: number;
+    };
+
 export type StorySessionContextLike = {
   args?: Record<string, unknown>;
   globals?: Record<string, unknown>;
@@ -35,6 +46,7 @@ type RuntimeRegistration = {
   baseDocumentFingerprint?: string;
   baseGlobalsHash?: string;
   baseScrollSnapshot?: ScrollSnapshot;
+  baseSelectionSnapshot?: SelectionSnapshot;
   baselineCaptured?: boolean;
 };
 
@@ -507,7 +519,17 @@ function hashDomNode(node: unknown, write: (value: unknown) => void): void {
     write(name);
     write(value);
   }
-  for (const key of ['value', 'checked', 'selectedIndex', 'selected', 'open'] as const) {
+  for (const key of [
+    'value',
+    'checked',
+    'indeterminate',
+    'selectedIndex',
+    'selected',
+    'selectionStart',
+    'selectionEnd',
+    'selectionDirection',
+    'open',
+  ] as const) {
     if (key in record && typeof record[key] !== 'function') {
       write(key);
       write(record[key]);
@@ -535,7 +557,15 @@ function documentFingerprint(): string | undefined {
 function captureScrollSnapshot(): ScrollSnapshot {
   const elements = new Set<Element>();
   if (document.scrollingElement) elements.add(document.scrollingElement);
-  for (const element of Array.from(document.querySelectorAll?.('*') ?? [])) {
+  const candidates = new Set<Element>();
+  const visitElements = (root: Pick<Document | ShadowRoot, 'querySelectorAll'>) => {
+    for (const element of Array.from(root.querySelectorAll?.('*') ?? [])) {
+      candidates.add(element);
+      if (element.shadowRoot) visitElements(element.shadowRoot);
+    }
+  };
+  visitElements(document);
+  for (const element of candidates) {
     if (
       element.scrollLeft !== 0 ||
       element.scrollTop !== 0 ||
@@ -575,8 +605,93 @@ function scrollSnapshotMatches(snapshot: ScrollSnapshot | undefined) {
   );
 }
 
+function currentDocumentSelection(): Selection | null | undefined {
+  const getSelection = (document as unknown as { getSelection?: () => Selection | null }).getSelection;
+  return typeof getSelection === 'function' ? getSelection.call(document) : undefined;
+}
+
+function captureSelectionSnapshot(): SelectionSnapshot | undefined {
+  const selection = currentDocumentSelection();
+  if (selection === undefined) return undefined;
+  if (selection === null) return { state: 'unavailable' };
+  if (selection.rangeCount === 0) {
+    if (selection.anchorNode !== null || selection.focusNode !== null) {
+      throw new Error('Story session cannot safely snapshot an empty selection with retained endpoints.');
+    }
+    return { state: 'empty' };
+  }
+  if (selection.rangeCount !== 1 || !selection.anchorNode || !selection.focusNode) {
+    throw new Error('Story session can safely restore only a single document selection range.');
+  }
+  if (
+    !Number.isSafeInteger(selection.anchorOffset) ||
+    selection.anchorOffset < 0 ||
+    !Number.isSafeInteger(selection.focusOffset) ||
+    selection.focusOffset < 0
+  ) {
+    throw new Error('Story session cannot safely snapshot invalid selection offsets.');
+  }
+  return {
+    state: 'range',
+    anchorNode: selection.anchorNode,
+    anchorOffset: selection.anchorOffset,
+    focusNode: selection.focusNode,
+    focusOffset: selection.focusOffset,
+  };
+}
+
+function restoreSelectionSnapshot(snapshot: SelectionSnapshot | undefined) {
+  if (snapshot === undefined) return;
+  const selection = currentDocumentSelection();
+  if (snapshot.state === 'unavailable') {
+    if (selection !== null) throw new Error('Story session cannot restore the unavailable document selection.');
+    return;
+  }
+  if (!selection) throw new Error('Story session cannot access the document selection during reset.');
+  selection.removeAllRanges();
+  if (snapshot.state === 'empty') return;
+  if (snapshot.anchorNode.isConnected === false || snapshot.focusNode.isConnected === false) {
+    throw new Error('Story session cannot restore a selection whose baseline nodes were replaced.');
+  }
+  const setBaseAndExtent = (
+    selection as Selection & {
+      setBaseAndExtent?: (anchorNode: Node, anchorOffset: number, focusNode: Node, focusOffset: number) => void;
+    }
+  ).setBaseAndExtent;
+  if (typeof setBaseAndExtent !== 'function') {
+    throw new Error('Story session cannot restore selection direction in this browser.');
+  }
+  setBaseAndExtent.call(
+    selection,
+    snapshot.anchorNode,
+    snapshot.anchorOffset,
+    snapshot.focusNode,
+    snapshot.focusOffset,
+  );
+}
+
+function selectionSnapshotMatches(snapshot: SelectionSnapshot | undefined) {
+  const selection = currentDocumentSelection();
+  if (snapshot === undefined) return selection === undefined;
+  if (snapshot.state === 'unavailable') return selection === null;
+  if (!selection) return false;
+  if (snapshot.state === 'empty') {
+    return selection.rangeCount === 0 && selection.anchorNode === null && selection.focusNode === null;
+  }
+  return (
+    snapshot.anchorNode.isConnected !== false &&
+    snapshot.focusNode.isConnected !== false &&
+    selection.rangeCount === 1 &&
+    selection.anchorNode === snapshot.anchorNode &&
+    selection.anchorOffset === snapshot.anchorOffset &&
+    selection.focusNode === snapshot.focusNode &&
+    selection.focusOffset === snapshot.focusOffset
+  );
+}
+
 function currentActiveElement(): Element | null {
-  const active = document.activeElement;
+  let active = document.activeElement;
+  while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
   if (!active || active === document.body || active === document.documentElement) return null;
   return active as Element;
 }
@@ -598,6 +713,7 @@ function snapshotBaseline(runtime: RuntimeRegistration) {
     const baseActiveElement = currentActiveElement();
     const baseDocumentFingerprint = documentFingerprint();
     const baseScrollSnapshot = captureScrollSnapshot();
+    const baseSelectionSnapshot = captureSelectionSnapshot();
     runtime.baseArgs = baseArgs;
     runtime.baseGlobals = baseGlobals;
     runtime.baseArgsHash = fingerprint(baseArgs);
@@ -605,6 +721,7 @@ function snapshotBaseline(runtime: RuntimeRegistration) {
     runtime.baseActiveElement = baseActiveElement;
     runtime.baseDocumentFingerprint = baseDocumentFingerprint;
     runtime.baseScrollSnapshot = baseScrollSnapshot;
+    runtime.baseSelectionSnapshot = baseSelectionSnapshot;
     runtime.baselineCaptured = true;
     delete runtime.baselineError;
   } catch (error) {
@@ -615,6 +732,7 @@ function snapshotBaseline(runtime: RuntimeRegistration) {
     runtime.baseActiveElement = undefined;
     runtime.baseDocumentFingerprint = undefined;
     runtime.baseScrollSnapshot = undefined;
+    runtime.baseSelectionSnapshot = undefined;
     runtime.baselineCaptured = false;
     const reason = error instanceof Error ? error.message : String(error);
     runtime.baselineError = `Story session baseline is unsafe: ${reason}`;
@@ -640,6 +758,16 @@ export function registerStorySessionRuntime(
     ...(context.args ? { args: context.args } : {}),
     ...(context.globals ? { globals: context.globals } : {}),
   };
+}
+
+/** Replaces the reset hook after all screenshot-option fragments have been merged. */
+export function setStorySessionReset(
+  storyId: string,
+  reset: ResetHook | undefined,
+  target: StorySessionWindow | undefined = typeof window === 'undefined' ? undefined : (window as StorySessionWindow),
+) {
+  const runtime = target?.__STORYFREEZE_STORY_SESSION_RUNTIME__;
+  if (runtime?.storyId === storyId) runtime.reset = reset;
 }
 
 /** Captures the post-render/play state that every same-document reset must restore. */
@@ -722,6 +850,7 @@ export function initializeStorySessionController(
         } else if (currentActiveElement() !== baseActiveElement && baseActiveElement.isConnected !== false) {
           (baseActiveElement as HTMLElement).focus?.({ preventScroll: true });
         }
+        restoreSelectionSnapshot(runtime.baseSelectionSnapshot);
         restoreScrollSnapshot(runtime.baseScrollSnapshot);
         session.activeVariantId = undefined;
         session.state = 'ready';
@@ -757,6 +886,7 @@ export function initializeStorySessionController(
         baseDocumentFingerprint: runtime.baseDocumentFingerprint,
         documentFingerprint: currentDocumentFingerprint,
         scrollPositionMatchesBaseline: scrollSnapshotMatches(runtime.baseScrollSnapshot),
+        selectionMatchesBaseline: selectionSnapshotMatches(runtime.baseSelectionSnapshot),
       };
     },
     async closeSession() {

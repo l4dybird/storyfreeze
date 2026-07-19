@@ -3,6 +3,7 @@ import { STORYFREEZE_STORY_SESSION_GLOBAL } from '../shared/preview-protocol.js'
 import {
   initializeStorySessionController,
   registerStorySessionRuntime,
+  setStorySessionReset,
   snapshotStorySessionRuntime,
 } from './story-session-controller.js';
 
@@ -90,6 +91,28 @@ describe(initializeStorySessionController, () => {
     await expect(protocol.applyVariant('focused')).rejects.toThrow('No StoryFreeze story session is open');
   });
 
+  it('removes a reset hook when a later registration removes it', async () => {
+    const body = { innerHTML: '<button>Ready</button>' };
+    Object.defineProperty(globalThis, 'document', {
+      configurable: true,
+      value: { activeElement: body, body, documentElement: {} },
+    });
+    const target = {} as any;
+    const reset = vi.fn(async () => {});
+    initializeStorySessionController(target);
+    registerStorySessionRuntime({ reset }, { id: 'button--primary' }, target);
+    registerStorySessionRuntime({}, { id: 'button--primary' }, target);
+    setStorySessionReset('button--primary', undefined, target);
+    snapshotStorySessionRuntime('button--primary', target);
+    const protocol = target[STORYFREEZE_STORY_SESSION_GLOBAL]!;
+
+    await protocol.openSession({ sessionId: 'button-desktop', storyId: 'button--primary', profileHash: 'desktop' });
+    await protocol.applyVariant('hovered');
+    await protocol.resetVariant('hovered');
+
+    expect(reset).not.toHaveBeenCalled();
+  });
+
   it('restores scroll and fingerprints portals, live form state, and open shadow DOM after settling', async () => {
     const shadowText = { nodeType: 3, nodeValue: 'ready' };
     const shadowRoot = { nodeType: 11, childNodes: [shadowText] };
@@ -174,6 +197,68 @@ describe(initializeStorySessionController, () => {
     input.value = 'late mutation';
     const lateVerification = await protocol.verifyReset();
     expect(lateVerification.documentFingerprint).not.toBe(lateVerification.baseDocumentFingerprint);
+  });
+
+  it('restores and verifies a directional contenteditable selection range', async () => {
+    const baselineText = { isConnected: true } as unknown as Node;
+    const variantText = { isConnected: true } as unknown as Node;
+    const body = { innerHTML: '<div contenteditable>ready</div>' };
+    const editor: any = { id: 'editor', tagName: 'DIV', isConnected: true };
+    const variantFocus: any = { id: 'other', tagName: 'BUTTON', isConnected: true };
+    const selection: any = {
+      anchorNode: baselineText,
+      anchorOffset: 4,
+      focusNode: baselineText,
+      focusOffset: 1,
+      rangeCount: 1,
+      removeAllRanges: vi.fn(() => {
+        selection.anchorNode = null;
+        selection.anchorOffset = 0;
+        selection.focusNode = null;
+        selection.focusOffset = 0;
+        selection.rangeCount = 0;
+      }),
+      setBaseAndExtent: vi.fn((anchorNode: Node, anchorOffset: number, focusNode: Node, focusOffset: number) => {
+        selection.anchorNode = anchorNode;
+        selection.anchorOffset = anchorOffset;
+        selection.focusNode = focusNode;
+        selection.focusOffset = focusOffset;
+        selection.rangeCount = 1;
+      }),
+    };
+    const documentLike: any = {
+      activeElement: editor,
+      body,
+      documentElement: {},
+      getSelection: vi.fn(() => selection),
+    };
+    editor.focus = vi.fn(() => (documentLike.activeElement = editor));
+    variantFocus.blur = vi.fn(() => (documentLike.activeElement = body));
+    Object.defineProperty(globalThis, 'document', { configurable: true, value: documentLike });
+
+    const target = {} as any;
+    initializeStorySessionController(target);
+    registerStorySessionRuntime({}, { id: 'selection--story' }, target);
+    snapshotStorySessionRuntime('selection--story', target);
+    const protocol = target[STORYFREEZE_STORY_SESSION_GLOBAL]!;
+    await protocol.openSession({ sessionId: 'selection', storyId: 'selection--story', profileHash: 'desktop' });
+    await protocol.applyVariant('focused');
+
+    documentLike.activeElement = variantFocus;
+    selection.anchorNode = variantText;
+    selection.anchorOffset = 0;
+    selection.focusNode = variantText;
+    selection.focusOffset = 2;
+    await protocol.resetVariant('focused');
+
+    expect(selection.setBaseAndExtent).toHaveBeenCalledWith(baselineText, 4, baselineText, 1);
+    await expect(protocol.verifyReset()).resolves.toMatchObject({
+      activeElementMatchesBaseline: true,
+      selectionMatchesBaseline: true,
+    });
+
+    selection.focusOffset = 2;
+    await expect(protocol.verifyReset()).resolves.toMatchObject({ selectionMatchesBaseline: false });
   });
 
   it('canonicalizes equivalent Map and Set args independently of insertion order', async () => {

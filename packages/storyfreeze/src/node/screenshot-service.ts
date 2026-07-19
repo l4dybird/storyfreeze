@@ -13,9 +13,12 @@ import { createCaptureId } from './capture-manifest.js';
 import { CaptureLeaseQueue } from './capture-lease-queue.js';
 import { profileSwitchCost, type PlannedCapture } from './capture-plan.js';
 import { sameEmulationProfile, type EmulationProfile } from './emulation-profile.js';
+import { variantKeyIdentifier } from '../shared/screenshot-options-helper.js';
 import {
+  SessionOutputConsumedError,
   type CaptureProtocolMode,
   type SessionVariantExecutionResult,
+  type SessionVariantOutput,
   type SessionVariantRequest,
 } from './story-session.js';
 import type { PreparedExecutionPlan } from './execution-plan.js';
@@ -55,7 +58,7 @@ function createRequest({
     : variantKey;
   const base = encodeURIComponent(story.id);
   const rid = effectiveVariantKey.keys.length
-    ? `${base}?keys=${encodeURIComponent(effectiveVariantKey.keys.join(','))}`
+    ? `${base}?keys=${encodeURIComponent(variantKeyIdentifier(effectiveVariantKey.keys))}`
     : base;
   return {
     captureId: plannedCapture?.captureId ?? createCaptureId(story.id, effectiveVariantKey.keys),
@@ -77,17 +80,18 @@ function createRequest({
   };
 }
 
-function percentile(values: number[], rank: number) {
-  if (values.length === 0) return null;
+function percentileSummary(values: number[]) {
+  if (values.length === 0) return { p50: null, p95: null };
   const sorted = [...values].sort((left, right) => left - right);
-  return sorted[Math.max(0, Math.ceil(rank * sorted.length) - 1)];
+  const at = (rank: number) => sorted[Math.max(0, Math.ceil(rank * sorted.length) - 1)];
+  return { p50: at(0.5), p95: at(0.95) };
 }
 
 async function withOperationTimeout<T>(
   operation: Promise<T>,
   timeoutMs: number,
   label: string,
-  onTimeout: () => Promise<unknown> = async () => {},
+  onTimeout: () => unknown | Promise<unknown> = async () => {},
 ): Promise<T> {
   const effectiveTimeout = Math.min(2_147_483_647, Math.max(1, Math.floor(timeoutMs)));
   let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
@@ -146,6 +150,8 @@ export interface ScreenshotWorker {
     trace: boolean,
     fileSystem: FileSystem,
     protocolMode: Exclude<CaptureProtocolMode, 'strict'>,
+    /** Takes ownership of a non-null output buffer when it begins consuming it. */
+    onOutput?: (output: SessionVariantOutput) => Promise<void>,
   ): Promise<SessionVariantExecutionResult>;
 }
 
@@ -253,17 +259,22 @@ export function createScreenshotService({
         profileSwitchCount: 0,
       }
     : undefined;
+  const planDiagnostics = capturePlan
+    ? {
+        manifestCaptureCount: capturePlan.captures.length,
+        runtimeDiscoveryCaptureCount: capturePlan.captures.filter(
+          capture => capture.executionMode === 'runtime-discovery',
+        ).length,
+        runtimeValidationCaptureCount: capturePlan.captures.filter(
+          capture => capture.executionMode === 'runtime-validation',
+        ).length,
+      }
+    : undefined;
 
-  if (capturePlan) {
+  if (capturePlan && planDiagnostics) {
     emitCaptureDiagnostic({
       type: 'phase1-plan',
-      manifestCaptureCount: capturePlan.captures.length,
-      runtimeDiscoveryCaptureCount: capturePlan.captures.filter(
-        capture => capture.executionMode === 'runtime-discovery',
-      ).length,
-      runtimeValidationCaptureCount: capturePlan.captures.filter(
-        capture => capture.executionMode === 'runtime-validation',
-      ).length,
+      ...planDiagnostics,
       profileCount: capturePlan.profileCount,
       plannedWorkerCostMs,
       storyCount: capturePlan.storyCount,
@@ -285,7 +296,7 @@ export function createScreenshotService({
       const lastStoryIds: Array<string | undefined> = workers.map(() => undefined);
       const outputCaptureIds = new Set<string>();
       let captured = 0;
-      let firstError: unknown;
+      let firstFailure: { error: unknown } | undefined;
       let inFlightCount = 0;
       let lazyWorkerBootCount = 0;
       const workerStates = workers.map((_, workerId) =>
@@ -335,7 +346,7 @@ export function createScreenshotService({
             },
             error => {
               workerStates[workerId] = 'failed';
-              if (firstError === undefined) firstError = error;
+              if (firstFailure === undefined) firstFailure = { error };
               activationResolvers[workerId](false);
               deactivateDormantWorkers();
               queue.wakeAll();
@@ -371,29 +382,43 @@ export function createScreenshotService({
       ) => {
         if (!buffer) return;
         const captureId = createCaptureId(story.id, variantKey.keys);
-        if (outputCaptureIds.has(captureId)) return;
+        if (outputCaptureIds.has(captureId)) {
+          fileSystem.releaseScreenshotBuffer?.(buffer);
+          return;
+        }
         outputCaptureIds.add(captureId);
-        const suffix = variantKey.isDefault && defaultVariantSuffix ? [defaultVariantSuffix] : variantKey.keys;
-        const logicalId = JSON.stringify({ storyId: story.id, variantKey });
-        const path = await fileSystem.saveScreenshot(story.kind, story.story, suffix, buffer, logicalId);
-        logger.log(`Screenshot stored: ${logger.color.magenta(path)} in ${durationMs} msec.`);
-        emitCaptureDiagnostic({
-          type: 'capture-output',
-          durationMs,
-          path,
-          requestId: variantKey.keys.length
-            ? `${encodeURIComponent(story.id)}?keys=${encodeURIComponent(variantKey.keys.join(','))}`
-            : encodeURIComponent(story.id),
-          retryCount,
-          storyId: story.id,
-          variantKey: variantKey.keys,
-        });
-        captured += 1;
+        try {
+          const suffix = variantKey.isDefault && defaultVariantSuffix ? [defaultVariantSuffix] : variantKey.keys;
+          const logicalId = JSON.stringify({ storyId: story.id, variantKey });
+          const outputController = new AbortController();
+          const path = await withOperationTimeout(
+            fileSystem.saveScreenshot(story.kind, story.story, suffix, buffer, logicalId, outputController.signal),
+            operationTimeoutMs,
+            `Screenshot output ${captureId}`,
+            () => outputController.abort(new Error(`Screenshot output ${captureId} timed out.`)),
+          );
+          logger.log(`Screenshot stored: ${logger.color.magenta(path)} in ${durationMs} msec.`);
+          emitCaptureDiagnostic({
+            type: 'capture-output',
+            durationMs,
+            path,
+            requestId: variantKey.keys.length
+              ? `${encodeURIComponent(story.id)}?keys=${encodeURIComponent(variantKeyIdentifier(variantKey.keys))}`
+              : encodeURIComponent(story.id),
+            retryCount,
+            storyId: story.id,
+            variantKey: variantKey.keys,
+          });
+          captured += 1;
+        } catch (error) {
+          outputCaptureIds.delete(captureId);
+          throw error;
+        }
       };
 
       const runWorker = async (worker: ScreenshotWorker, workerId: number) => {
         if (!(await activations[workerId])) return;
-        while (firstError === undefined) {
+        while (firstFailure === undefined) {
           const lease = queue.lease(workerId, lastProfiles[workerId], lastStoryIds[workerId]);
           if (!lease) {
             if (queue.isDrained()) {
@@ -479,7 +504,6 @@ export function createScreenshotService({
                 queueDiagnostics.totalEnqueued += 1;
                 queueDiagnostics.peakQueued = Math.max(queueDiagnostics.peakQueued, queue.pendingCount);
               }
-              requestAdditionalWorkers();
               await Promise.resolve();
               continue;
             }
@@ -493,19 +517,23 @@ export function createScreenshotService({
               defaultVariantSuffix,
             );
 
-            const sessionCandidates = new Map<string, SessionVariantRequest>();
-            for (const candidate of request.sessionVariants ?? []) {
-              sessionCandidates.set(createCaptureId(request.story.id, candidate.variantKey.keys), candidate);
-            }
-            for (const variantKey of variantKeysToPush) {
-              const captureId = createCaptureId(request.story.id, variantKey.keys);
-              if (!sessionCandidates.has(captureId)) sessionCandidates.set(captureId, { variantKey });
+            let sessionCandidates: Map<string, SessionVariantRequest> | undefined;
+            if ((request.sessionVariants?.length ?? 0) > 0 || variantKeysToPush.length > 0) {
+              sessionCandidates = new Map();
+              for (const candidate of request.sessionVariants ?? []) {
+                sessionCandidates.set(createCaptureId(request.story.id, candidate.variantKey.keys), candidate);
+              }
+              for (const variantKey of variantKeysToPush) {
+                const captureId = createCaptureId(request.story.id, variantKey.keys);
+                if (!sessionCandidates.has(captureId)) sessionCandidates.set(captureId, { variantKey });
+              }
             }
 
             if (
               captureProtocol !== 'strict' &&
               request.sessionId &&
               worker.screenshotSessionVariants &&
+              sessionCandidates &&
               sessionCandidates.size > 0
             ) {
               const sessionResult = await withOperationTimeout(
@@ -518,8 +546,14 @@ export function createScreenshotService({
                   trace,
                   fileSystem,
                   captureProtocol,
+                  output =>
+                    saveCaptureOutput(request.story, output.variantKey, output.buffer, output.durationMs, 0).catch(
+                      error => {
+                        throw new SessionOutputConsumedError(error);
+                      },
+                    ),
                 ),
-                operationTimeoutMs * Math.max(1, sessionCandidates.size),
+                operationTimeoutMs * (sessionCandidates.size + 2),
                 `Story session ${request.sessionId}`,
                 () => worker.close?.() ?? Promise.resolve(),
               );
@@ -536,7 +570,7 @@ export function createScreenshotService({
                 );
               }
             } else {
-              for (const candidate of sessionCandidates.values()) {
+              for (const candidate of sessionCandidates?.values() ?? []) {
                 enqueueCapture(
                   createRequest({
                     story: request.story,
@@ -552,7 +586,7 @@ export function createScreenshotService({
             queue.complete(request.captureId);
           } catch (error) {
             queue.fail(request.captureId);
-            if (firstError === undefined) firstError = error;
+            if (firstFailure === undefined) firstFailure = { error };
             deactivateDormantWorkers();
             queue.wakeAll();
           } finally {
@@ -583,14 +617,47 @@ export function createScreenshotService({
 
       try {
         requestAdditionalWorkers();
-        await Promise.all(workers.map(runWorker));
-        if (firstError !== undefined) throw firstError;
+        const workerResults = await Promise.allSettled(
+          workers.map((worker, workerId) =>
+            runWorker(worker, workerId).catch(error => {
+              if (firstFailure === undefined) firstFailure = { error };
+              deactivateDormantWorkers();
+              queue.wakeAll();
+              throw error;
+            }),
+          ),
+        );
+        for (const result of workerResults) {
+          if (result.status === 'rejected' && firstFailure === undefined) firstFailure = { error: result.reason };
+        }
+        let flushFailure: { error: unknown } | undefined;
+        if (fileSystem.flush) {
+          try {
+            await withOperationTimeout(
+              Promise.resolve().then(() => fileSystem.flush!()),
+              operationTimeoutMs,
+              'Screenshot output flush',
+            );
+          } catch (error) {
+            flushFailure = { error };
+          }
+        }
+        if (firstFailure !== undefined && flushFailure !== undefined) {
+          throw new AggregateError(
+            [firstFailure.error, flushFailure.error],
+            'Capture execution and output flush both failed.',
+          );
+        }
+        if (firstFailure !== undefined) throw firstFailure.error;
+        if (flushFailure !== undefined) throw flushFailure.error;
         return captured;
       } finally {
         unsubscribeDiagnostics();
         if (queueDiagnostics) {
           const durationMs = performance.now() - startedAt;
           const leaseDiagnostics = queue.snapshot;
+          const queueWait = percentileSummary(queueDiagnostics.queueWaits);
+          const estimationError = percentileSummary(queueDiagnostics.estimationErrors);
           emitCaptureDiagnostic({
             type: 'queue-summary',
             busyWorkerMs: queueDiagnostics.busyWorkerMs,
@@ -603,8 +670,8 @@ export function createScreenshotService({
             initialWorkerCount,
             peakInFlight: queueDiagnostics.peakInFlight,
             peakQueued: queueDiagnostics.peakQueued,
-            queueWaitP50Ms: percentile(queueDiagnostics.queueWaits, 0.5),
-            queueWaitP95Ms: percentile(queueDiagnostics.queueWaits, 0.95),
+            queueWaitP50Ms: queueWait.p50,
+            queueWaitP95Ms: queueWait.p95,
             settled: queueDiagnostics.settled,
             totalEnqueued: queueDiagnostics.totalEnqueued,
             workerCount: workers.length,
@@ -615,14 +682,13 @@ export function createScreenshotService({
             affinityHitCount: leaseDiagnostics.affinityHitCount,
             affinityMissCount: leaseDiagnostics.affinityMissCount,
             duplicateEnqueueCount: leaseDiagnostics.duplicateEnqueueCount,
-            estimationErrorP50: percentile(queueDiagnostics.estimationErrors, 0.5),
-            estimationErrorP95: percentile(queueDiagnostics.estimationErrors, 0.95),
+            estimationErrorP50: estimationError.p50,
+            estimationErrorP95: estimationError.p95,
             expensiveProfileSwitchCount: queueDiagnostics.expensiveProfileSwitchCount,
-            manifestCaptureCount: capturePlan?.captures.length ?? initialCaptureCount,
+            manifestCaptureCount: planDiagnostics?.manifestCaptureCount ?? initialCaptureCount,
             plannedWorkerCostMs,
             profileSwitchCount: queueDiagnostics.profileSwitchCount,
-            runtimeDiscoveryCaptureCount:
-              capturePlan?.captures.filter(capture => capture.executionMode === 'runtime-discovery').length ?? 0,
+            runtimeDiscoveryCaptureCount: planDiagnostics?.runtimeDiscoveryCaptureCount ?? 0,
             runtimeValidationMismatchCount,
             stealCount: leaseDiagnostics.stealCount,
             viewportTriggeredNavigationCount,

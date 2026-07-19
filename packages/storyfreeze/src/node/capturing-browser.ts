@@ -1,6 +1,11 @@
 import { fileURLToPath } from 'node:url';
 import { BaseBrowser, MetricsWatcher } from './browser.js';
-import type { BrowserBackend, BrowserConsoleMessage, BrowserSessionOptions } from './browser-backend.js';
+import type {
+  BrowserBackend,
+  BrowserConsoleMessage,
+  BrowserSessionOptions,
+  ScreenshotCaptureOptions,
+} from './browser-backend.js';
 import type { BrowserSessionSource } from './browser-process-coordinator.js';
 import type { Story } from './story.js';
 import type { ManagedStorybookConnection } from './managed-storybook-connection.js';
@@ -12,6 +17,7 @@ import type {
   StrictScreenshotOptions,
   Exposed,
   PreviewCaptureDiagnostic,
+  Viewport,
 } from '../shared/types.js';
 import { InvalidCurrentStoryStateError, PreviewReadyTimeoutError, SimplePreviewReadyTimeoutError } from './errors.js';
 import {
@@ -19,6 +25,7 @@ import {
   mergeScreenshotOptions,
   extractVariantKeys,
   pickupWithVariantKey,
+  variantKeyIdentifier,
   type InvalidVariantKeysReason,
 } from '../shared/screenshot-options-helper.js';
 import { Logger } from './logger.js';
@@ -27,18 +34,76 @@ import { ResourceWatcher } from './resource-watcher.js';
 import { StoryNavigator } from './story-navigator.js';
 import { captureDiagnosticsEnabled, emitCaptureDiagnostic, measureCaptureDiagnostic } from './capture-diagnostics.js';
 import { CaptureDeadline } from './capture-deadline.js';
-import { normalizeEmulationProfile, resolveViewport, sameEmulationProfile, toViewport } from './emulation-profile.js';
+import {
+  normalizeEmulationProfile,
+  resolveViewport,
+  sameEmulationClass,
+  sameEmulationProfile,
+  toViewport,
+} from './emulation-profile.js';
 import type { PlannedCapture } from './capture-plan.js';
 import { createCaptureId, deterministicSerialize, normalizeCaptureOptions } from './capture-manifest.js';
 import type { PreviewRuntimeMetadata } from '../shared/preview-protocol.js';
 import {
   classifyBatchEligibility,
+  SessionOutputConsumedError,
   type CaptureProtocolMode,
   type SessionVariantExecutionResult,
+  type SessionVariantOutput,
   type SessionVariantRequest,
 } from './story-session.js';
 import { StorySessionProtocolClient } from './story-session-protocol.js';
 import { raceAgainstTimeout } from './async-utils.js';
+
+const disableAnimationStylePath = fileURLToPath(new URL('../../assets/disable-animation.css', import.meta.url));
+
+function estimatePngBufferReservation(options: ScreenshotCaptureOptions, viewport: Viewport | undefined) {
+  if (options.fullPage) return undefined;
+  const dimensions = options.clip ?? viewport;
+  if (!dimensions) return undefined;
+  const scale = Math.max(1, viewport?.deviceScaleFactor ?? 1);
+  const width = Math.ceil(dimensions.width * scale);
+  const height = Math.ceil(dimensions.height * scale);
+  const rawBytes = width * height * 4 + height;
+  if (!Number.isSafeInteger(rawBytes) || rawBytes < 1) return undefined;
+  return rawBytes + Math.ceil(rawBytes * 0.02) + 1024 * 1024;
+}
+
+function captureScreenshotWithBudget(
+  fileSystem: FileSystem,
+  options: ScreenshotCaptureOptions,
+  viewport: Viewport | undefined,
+  capture: () => Promise<Buffer | null>,
+  signal?: AbortSignal,
+) {
+  if (typeof fileSystem.captureScreenshot !== 'function') return capture();
+  return fileSystem.captureScreenshot(estimatePngBufferReservation(options, viewport), capture, signal);
+}
+
+function releaseCapturedScreenshot(fileSystem: FileSystem, buffer: Buffer | null | undefined) {
+  fileSystem.releaseScreenshotBuffer?.(buffer);
+}
+
+class StorySessionOutputCallbackError extends Error {
+  constructor(readonly outputError: unknown) {
+    super('A story-session output callback failed.');
+    this.name = 'StorySessionOutputCallbackError';
+  }
+}
+
+class CaptureAttemptDidNotDrainError extends Error {
+  constructor(message: string, cause: unknown) {
+    super(message, { cause });
+    this.name = 'CaptureAttemptDidNotDrainError';
+  }
+}
+
+function containsUndrainedAttemptError(error: unknown): boolean {
+  return (
+    error instanceof CaptureAttemptDidNotDrainError ||
+    (error instanceof AggregateError && error.errors.some(containsUndrainedAttemptError))
+  );
+}
 
 export { resolveViewport } from './emulation-profile.js';
 
@@ -173,7 +238,7 @@ export class CapturingBrowser extends BaseBrowser {
 
   private async addStyles() {
     if (this.opt.disableCssAnimation) {
-      await this.page.addStyleFile(fileURLToPath(new URL('../../assets/disable-animation.css', import.meta.url)));
+      await this.page.addStyleFile(disableAnimationStylePath);
     }
   }
 
@@ -285,8 +350,7 @@ export class CapturingBrowser extends BaseBrowser {
     if (!currentProfile || !sameEmulationProfile(currentProfile, nextProfile)) {
       this.debug('Change viewport', JSON.stringify(nextViewport));
       // Changing mobile or touch emulation requires a fresh Storybook navigation.
-      const willBeReloaded =
-        nextProfile.isMobile !== currentProfile?.isMobile || nextProfile.hasTouch !== currentProfile?.hasTouch;
+      const willBeReloaded = !currentProfile || !sameEmulationClass(currentProfile, nextProfile);
       if (willBeReloaded) {
         // Avoid racing emulation changes against Storybook's preview lifecycle.
         await this.page.goto('about:blank', {
@@ -495,8 +559,9 @@ export class CapturingBrowser extends BaseBrowser {
   }
 
   private async interruptAttempt(attempt: Promise<unknown> | undefined, timeoutMs = 1_000) {
-    const operations = [this.close(), ...(attempt ? [attempt] : [])];
-    const drained = Promise.allSettled(operations).then(() => undefined);
+    const closing = this.close();
+    void closing.catch(() => {});
+    const drained = Promise.allSettled(attempt ? [attempt] : [closing]).then(() => undefined);
     const result = await raceAgainstTimeout(drained, timeoutMs);
     return !result.timedOut;
   }
@@ -556,6 +621,11 @@ export class CapturingBrowser extends BaseBrowser {
     const deadline = new CaptureDeadline(this.opt.captureTimeout, requestId, this.opt.signal);
     this.activeDeadline = deadline;
     let attemptContextGeneration: number | undefined;
+    let releaseRetainedAttemptBuffer: (() => void) | undefined;
+    let attemptAbandoned = false;
+    const releaseAbandonedAttempt = () => {
+      if (attemptAbandoned) releaseRetainedAttemptBuffer?.();
+    };
     const attempt = (async () => {
       await this.recycleContextIfNeeded();
       attemptContextGeneration = this.contextGeneration;
@@ -569,12 +639,29 @@ export class CapturingBrowser extends BaseBrowser {
         fileSystem,
         deadline,
         plannedCapture,
+        (_buffer, releaseBuffer) => {
+          releaseRetainedAttemptBuffer = releaseBuffer;
+          releaseAbandonedAttempt();
+        },
       );
-    })();
+    })().then(result => {
+      if (result.buffer && !releaseRetainedAttemptBuffer) {
+        let released = false;
+        releaseRetainedAttemptBuffer = () => {
+          if (released) return;
+          released = true;
+          releaseCapturedScreenshot(fileSystem, result.buffer);
+        };
+      }
+      releaseAbandonedAttempt();
+      return result;
+    });
 
     try {
       return await Promise.race([attempt, deadline.interruption]);
     } catch (error) {
+      attemptAbandoned = true;
+      releaseAbandonedAttempt();
       const captureError = error instanceof Error ? error : new Error(String(error));
       const previewTimedOut =
         error instanceof PreviewReadyTimeoutError || error instanceof SimplePreviewReadyTimeoutError;
@@ -584,16 +671,16 @@ export class CapturingBrowser extends BaseBrowser {
           ? this.opt.signal!.reason instanceof Error
             ? this.opt.signal!.reason
             : new Error('StoryFreeze was interrupted.')
-          : deadline.didTimeout
+          : deadline.didTimeout || previewTimedOut
             ? deadline.timeoutError
             : captureError;
         const drained = await this.interruptAttempt(attempt);
         this.resetCaptureState();
 
         if (!drained) {
-          throw new AggregateError(
-            [interruptionError],
+          throw new CaptureAttemptDidNotDrainError(
             'The interrupted capture attempt did not stop after its browser session was closed.',
+            interruptionError,
           );
         }
 
@@ -648,6 +735,7 @@ export class CapturingBrowser extends BaseBrowser {
     fileSystem: FileSystem,
     deadline: CaptureDeadline,
     plannedCapture?: PlannedCapture,
+    onCapturedBuffer?: (buffer: Buffer, releaseBuffer: () => void) => void,
   ): Promise<ScreenshotResult> {
     let emittedScreenshotOptions: ScreenshotOptions | undefined;
     this.resourceWatcher!.clear();
@@ -675,10 +763,18 @@ export class CapturingBrowser extends BaseBrowser {
     const unsubscribeConsole = this.page.subscribeConsole(onConsoleLog);
     let traceStarted = false;
     let traceFile: TraceFile | undefined;
+    let buffer: Buffer | null = null;
+    let bufferReleased = false;
+    const releaseBuffer = () => {
+      if (bufferReleased) return;
+      bufferReleased = true;
+      releaseCapturedScreenshot(fileSystem, buffer);
+    };
+    let attemptFailure: { error: unknown } | undefined;
     // Capture this outside so it can be used for the filePath generation for the trace.
     let defaultVariantSuffix: string | undefined;
 
-    try {
+    const attempt = (async (): Promise<ScreenshotResult> => {
       if (trace) {
         traceFile = await fileSystem.createTraceFile();
         await this.page.startTrace(traceFile);
@@ -779,14 +875,22 @@ export class CapturingBrowser extends BaseBrowser {
 
       // Get PNG image buffer
       const captureOptions = emittedScreenshotOptions;
-      const buffer = await this.measurePhase('screenshot', () =>
-        this.page.screenshot({
-          fullPage: captureOptions.fullPage,
-          omitBackground: captureOptions.omitBackground,
-          captureBeyondViewport: captureOptions.captureBeyondViewport,
-          clip: captureOptions.clip ?? undefined,
-        }),
+      const screenshotOptions = {
+        fullPage: captureOptions.fullPage,
+        omitBackground: captureOptions.omitBackground,
+        captureBeyondViewport: captureOptions.captureBeyondViewport,
+        clip: captureOptions.clip ?? undefined,
+      };
+      buffer = await this.measurePhase('screenshot', () =>
+        captureScreenshotWithBudget(
+          fileSystem,
+          screenshotOptions,
+          this.viewport,
+          () => this.page.screenshot(screenshotOptions),
+          deadline.signal,
+        ),
       );
+      if (buffer) onCapturedBuffer?.(buffer, releaseBuffer);
 
       // We should reset elements state(e.g. focusing, hovering, clicking) for future screenshot for this story.
       await this.measurePhase('reset', () => this.resetIfTouched());
@@ -801,29 +905,60 @@ export class CapturingBrowser extends BaseBrowser {
         variantKeysToPush,
         defaultVariantSuffix,
       };
-    } finally {
+    })();
+    let result: ScreenshotResult | undefined;
+    try {
+      result = await attempt;
+    } catch (error) {
+      attemptFailure = { error };
+    }
+    let cleanupFailure: { error: unknown } | undefined;
+    const recordCleanupFailure = (error: unknown) => {
+      cleanupFailure =
+        cleanupFailure === undefined ? { error } : { error: new AggregateError([cleanupFailure.error, error]) };
+    };
+    try {
+      unsubscribeConsole();
+    } catch (error) {
+      recordCleanupFailure(error);
+    }
+    if (traceStarted) {
       try {
-        try {
-          unsubscribeConsole();
-        } finally {
-          if (traceStarted) {
-            await this.measurePhase('trace-flush', async () => {
-              await this.page.stopTrace();
-              const suffix = variantKey.isDefault && defaultVariantSuffix ? [defaultVariantSuffix] : variantKey.keys;
-              const logicalId = JSON.stringify({ storyId: story.id, variantKey });
-              await traceFile!.commit(story.kind, story.story, suffix, logicalId);
-            });
-          }
-        }
-      } finally {
-        await traceFile?.discard();
+        await this.measurePhase('trace-flush', async () => {
+          await this.page.stopTrace();
+          const suffix = variantKey.isDefault && defaultVariantSuffix ? [defaultVariantSuffix] : variantKey.keys;
+          const logicalId = JSON.stringify({ storyId: story.id, variantKey });
+          await traceFile!.commit(story.kind, story.story, suffix, logicalId);
+        });
+      } catch (error) {
+        recordCleanupFailure(error);
       }
     }
+    try {
+      await traceFile?.discard();
+    } catch (error) {
+      recordCleanupFailure(error);
+    }
+    if (cleanupFailure !== undefined) {
+      releaseBuffer();
+      if (attemptFailure !== undefined) {
+        throw new AggregateError(
+          [attemptFailure.error, cleanupFailure.error],
+          'Capture attempt and cleanup both failed.',
+        );
+      }
+      throw cleanupFailure.error;
+    }
+    if (attemptFailure !== undefined) {
+      releaseBuffer();
+      throw attemptFailure.error;
+    }
+    return result!;
   }
 
   private sessionRequestId(story: Story, variantKey: VariantKey) {
     const base = encodeURIComponent(story.id);
-    return variantKey.keys.length ? `${base}?keys=${encodeURIComponent(variantKey.keys.join(','))}` : base;
+    return variantKey.keys.length ? `${base}?keys=${encodeURIComponent(variantKeyIdentifier(variantKey.keys))}` : base;
   }
 
   private async waitForRenderTick(deadline: CaptureDeadline) {
@@ -841,6 +976,7 @@ export class CapturingBrowser extends BaseBrowser {
       pendingRequestCount !== 0 ||
       requestActivityChanged ||
       !verification.scrollPositionMatchesBaseline ||
+      !verification.selectionMatchesBaseline ||
       verification.argsHash !== verification.baseArgsHash ||
       verification.globalsHash !== verification.baseGlobalsHash ||
       verification.documentFingerprint !== verification.baseDocumentFingerprint
@@ -911,7 +1047,7 @@ export class CapturingBrowser extends BaseBrowser {
     trace: boolean,
     fileSystem: FileSystem,
   ): Promise<Buffer | null> {
-    const variantId = request.variantKey.keys.join('/') || 'default';
+    const variantId = variantKeyIdentifier(request.variantKey.keys);
     const requestId = this.sessionRequestId(story, request.variantKey);
     this.currentRequestId = requestId;
     this.currentVariantKey = request.variantKey;
@@ -930,6 +1066,17 @@ export class CapturingBrowser extends BaseBrowser {
       else if (message.type === 'error') logger.error(niceMessage);
       else logger.log(niceMessage);
     });
+    let retainedBuffer: Buffer | null = null;
+    let attemptAbandoned = false;
+    let retainedBufferReleased = false;
+    const releaseRetainedBuffer = () => {
+      if (!retainedBuffer || retainedBufferReleased) return;
+      retainedBufferReleased = true;
+      releaseCapturedScreenshot(fileSystem, retainedBuffer);
+    };
+    const releaseAbandonedBuffer = () => {
+      if (attemptAbandoned) releaseRetainedBuffer();
+    };
 
     const attempt = (async () => {
       if (trace) {
@@ -979,18 +1126,27 @@ export class CapturingBrowser extends BaseBrowser {
       if (captureMayMutate) {
         await this.measurePhase('resource', () => this.waitForResources(options, deadline));
         await this.measurePhase('metrics', () => this.waitBrowserMetricsStable('postEmit', deadline));
-        await this.measurePhase('visual-commit', () =>
+        const visualCommit = await this.measurePhase('visual-commit', () =>
           this.page.waitForVisualCommit({ paintFallbackMs: 250, timeoutMs: deadline.remaining(3000) }, deadline.signal),
         );
+        if (visualCommit.didTimeout) throw new Error(`Story session visual commit timed out for ${variantId}.`);
       }
-      const buffer = await this.measurePhase('screenshot', () =>
-        this.page.screenshot({
-          fullPage: options.fullPage,
-          omitBackground: options.omitBackground,
-          captureBeyondViewport: options.captureBeyondViewport,
-          clip: options.clip ?? undefined,
-        }),
+      const screenshotOptions = {
+        fullPage: options.fullPage,
+        omitBackground: options.omitBackground,
+        captureBeyondViewport: options.captureBeyondViewport,
+        clip: options.clip ?? undefined,
+      };
+      retainedBuffer = await this.measurePhase('screenshot', () =>
+        captureScreenshotWithBudget(
+          fileSystem,
+          screenshotOptions,
+          this.viewport,
+          () => this.page.screenshot(screenshotOptions),
+          deadline.signal,
+        ),
       );
+      releaseAbandonedBuffer();
       await this.measurePhase('reset', () =>
         this.resetStorySessionVariant(
           protocol,
@@ -1001,7 +1157,7 @@ export class CapturingBrowser extends BaseBrowser {
         ),
       );
       completed = true;
-      return buffer;
+      return retainedBuffer;
     })();
 
     let result: Buffer | null = null;
@@ -1010,20 +1166,22 @@ export class CapturingBrowser extends BaseBrowser {
     try {
       result = await Promise.race([attempt, deadline.interruption]);
     } catch (error) {
+      attemptAbandoned = true;
+      releaseAbandonedBuffer();
       captureFailed = true;
       captureError = error;
       if (deadline.signal.aborted) {
         const drained = await this.interruptAttempt(attempt);
         if (!drained) {
-          captureError = new AggregateError(
-            [error],
+          captureError = new CaptureAttemptDidNotDrainError(
             'The interrupted story-session attempt did not stop after its browser session was closed.',
+            error,
           );
         }
       }
     }
 
-    let cleanupError: unknown;
+    let cleanupFailure: { error: unknown } | undefined;
     try {
       try {
         unsubscribeConsole();
@@ -1033,7 +1191,10 @@ export class CapturingBrowser extends BaseBrowser {
             await Promise.race([stopTrace, deadline.interruption]);
           } catch (error) {
             if (deadline.signal.aborted && !(await this.interruptAttempt(stopTrace))) {
-              throw new AggregateError([error], 'The interrupted trace flush did not stop after session close.');
+              throw new CaptureAttemptDidNotDrainError(
+                'The interrupted trace flush did not stop after session close.',
+                error,
+              );
             }
             throw error;
           }
@@ -1043,12 +1204,13 @@ export class CapturingBrowser extends BaseBrowser {
           }
         }
       } catch (error) {
-        cleanupError = error;
+        cleanupFailure = { error };
       }
       try {
         await traceFile?.discard();
       } catch (error) {
-        cleanupError = cleanupError === undefined ? error : new AggregateError([cleanupError, error]);
+        cleanupFailure =
+          cleanupFailure === undefined ? { error } : { error: new AggregateError([cleanupFailure.error, error]) };
       }
     } finally {
       deadline.dispose();
@@ -1057,10 +1219,14 @@ export class CapturingBrowser extends BaseBrowser {
     }
 
     if (captureFailed) {
-      if (cleanupError !== undefined) throw new AggregateError([captureError, cleanupError]);
+      releaseRetainedBuffer();
+      if (cleanupFailure !== undefined) throw new AggregateError([captureError, cleanupFailure.error]);
       throw captureError;
     }
-    if (cleanupError !== undefined) throw cleanupError;
+    if (cleanupFailure !== undefined) {
+      releaseRetainedBuffer();
+      throw cleanupFailure.error;
+    }
     return result;
   }
 
@@ -1072,7 +1238,10 @@ export class CapturingBrowser extends BaseBrowser {
       await Promise.race([attempt, deadline.interruption]);
     } catch (error) {
       if (deadline.signal.aborted && !(await this.interruptAttempt(attempt))) {
-        throw new AggregateError([error], 'The interrupted story-session close did not stop after session close.');
+        throw new CaptureAttemptDidNotDrainError(
+          'The interrupted story-session close did not stop after session close.',
+          error,
+        );
       }
       throw error;
     } finally {
@@ -1091,6 +1260,7 @@ export class CapturingBrowser extends BaseBrowser {
     trace: boolean,
     fileSystem: FileSystem,
     protocolMode: Exclude<CaptureProtocolMode, 'strict'>,
+    onOutput?: (output: SessionVariantOutput) => Promise<void>,
   ): Promise<SessionVariantExecutionResult> {
     if (requests.length === 0) return { outputs: [], strictFallbacks: [] };
     if (this.currentStory?.id !== story.id || !this.rootScreenshotOptions || !this.viewport) {
@@ -1103,13 +1273,20 @@ export class CapturingBrowser extends BaseBrowser {
       this.baseScreenshotOptions,
       this.rootScreenshotOptions,
     ) as StrictScreenshotOptions;
-    const normalizedRootOptions = normalizeCaptureOptions(rootOptions, this.getDeviceDescriptors());
-    const baseResetMayMutate = Boolean(
-      this.previewRuntimeMetadata?.hasCustomReset || rootOptions.hover || rootOptions.focus || rootOptions.click,
+    const sessionSeedOptions = mergeScreenshotOptions(
+      this.baseScreenshotOptions,
+      pickupWithVariantKey(rootOptions, this.currentVariantKey),
     );
-    const baseEligibility = normalizedRootOptions
+    const normalizedSeedOptions = normalizeCaptureOptions(sessionSeedOptions, this.getDeviceDescriptors());
+    const baseResetMayMutate = Boolean(
+      this.previewRuntimeMetadata?.hasCustomReset ||
+      sessionSeedOptions.hover ||
+      sessionSeedOptions.focus ||
+      sessionSeedOptions.click,
+    );
+    const baseEligibility = normalizedSeedOptions
       ? classifyBatchEligibility(
-          { options: normalizedRootOptions },
+          { options: normalizedSeedOptions },
           { hasCustomReset: this.previewRuntimeMetadata?.hasCustomReset },
         )
       : { mode: 'strict' as const, reason: 'base viewport could not be normalized' };
@@ -1138,8 +1315,12 @@ export class CapturingBrowser extends BaseBrowser {
           pickupWithVariantKey(rootOptions, request.variantKey),
         );
         const normalized = normalizeCaptureOptions(selected, this.getDeviceDescriptors());
-        const hasRuntimeWait = request.variantKey.keys.some(key => runtimeWaitForVariants.has(key));
+        const hasRuntimeWait = runtimeWaitForVariants.has(variantKeyIdentifier(request.variantKey.keys));
         const targetProfile = normalized?.viewport;
+        const requiresViewportReload =
+          this.opt.reloadAfterChangeViewport === true &&
+          targetProfile !== undefined &&
+          !sameEmulationProfile(baseProfile, targetProfile);
         const eligibility = normalized
           ? classifyBatchEligibility(
               {
@@ -1154,14 +1335,16 @@ export class CapturingBrowser extends BaseBrowser {
           targetProfile.isMobile !== baseProfile.isMobile ||
           targetProfile.hasTouch !== baseProfile.hasTouch ||
           targetProfile.isLandscape !== baseProfile.isLandscape;
-        if (hasRuntimeWait || unsafeProfile || eligibility.mode === 'strict') {
+        if (hasRuntimeWait || requiresViewportReload || unsafeProfile || eligibility.mode === 'strict') {
           const reason = hasRuntimeWait
             ? 'runtime waitFor cannot be replayed safely'
-            : unsafeProfile
-              ? 'emulation class differs from the story session'
-              : eligibility.mode === 'strict'
-                ? eligibility.reason
-                : 'unknown';
+            : requiresViewportReload
+              ? 'the configured viewport change requires a fresh navigation'
+              : unsafeProfile
+                ? 'emulation class differs from the story session'
+                : eligibility.mode === 'strict'
+                  ? eligibility.reason
+                  : 'unknown';
           if (protocolMode === 'story-session') {
             throw new Error(
               `Variant ${request.variantKey.keys.join('/')} is unsafe for story-session mode: ${reason}.`,
@@ -1180,6 +1363,10 @@ export class CapturingBrowser extends BaseBrowser {
     if (eligible.length === 0) return { outputs: [], strictFallbacks };
     const protocol = new StorySessionProtocolClient(this.page);
     const outputs: SessionVariantExecutionResult['outputs'] = [];
+    const releaseBufferedOutputs = () => {
+      for (const output of outputs.splice(0)) releaseCapturedScreenshot(fileSystem, output.buffer);
+    };
+    const completedIds = new Set<string>();
     try {
       const baselineDeadline = new CaptureDeadline(this.opt.captureTimeout, `${sessionId}:baseline`, this.opt.signal);
       this.activeDeadline = baselineDeadline;
@@ -1195,59 +1382,77 @@ export class CapturingBrowser extends BaseBrowser {
         await Promise.race([baselineAttempt, baselineDeadline.interruption]);
       } catch (error) {
         if (baselineDeadline.signal.aborted && !(await this.interruptAttempt(baselineAttempt))) {
-          throw new AggregateError([error], 'The interrupted story-session baseline did not stop after session close.');
+          throw new CaptureAttemptDidNotDrainError(
+            'The interrupted story-session baseline did not stop after session close.',
+            error,
+          );
         }
         throw error;
       } finally {
         baselineDeadline.dispose();
         if (this.activeDeadline === baselineDeadline) this.activeDeadline = undefined;
       }
-      for (let index = 0; index < eligible.length; index += 1) {
-        const item = eligible[index];
-        try {
-          const startedAt = performance.now();
-          const buffer = await this.captureStorySessionVariant(
-            protocol,
-            story,
-            item.request,
-            item.options,
-            baseProfile,
-            logger,
-            forwardConsoleLogs,
-            trace,
-            fileSystem,
-          );
-          const durationMs = performance.now() - startedAt;
-          outputs.push({ variantKey: item.request.variantKey, buffer, durationMs });
-          emitCaptureDiagnostic({
-            type: 'story-session-capture',
-            durationMs,
-            sessionId,
-            storyId: story.id,
-            variantKey: item.request.variantKey.keys,
-          });
-        } catch (error) {
-          const remaining = eligible.slice(index).map(entry => entry.request);
-          if (protocolMode === 'story-session') throw error;
-          await this.restartCaptureSession(error);
-          return { outputs, strictFallbacks: [...strictFallbacks, ...remaining] };
-        }
+      for (const item of eligible) {
+        const startedAt = performance.now();
+        const buffer = await this.captureStorySessionVariant(
+          protocol,
+          story,
+          item.request,
+          item.options,
+          baseProfile,
+          logger,
+          forwardConsoleLogs,
+          trace,
+          fileSystem,
+        );
+        const durationMs = performance.now() - startedAt;
+        const output = { variantKey: item.request.variantKey, buffer, durationMs };
+        if (onOutput) {
+          try {
+            await onOutput(output);
+          } catch (error) {
+            const consumed = error instanceof SessionOutputConsumedError;
+            if (!consumed) releaseCapturedScreenshot(fileSystem, buffer);
+            throw new StorySessionOutputCallbackError(consumed ? error.outputError : error);
+          }
+        } else outputs.push(output);
+        completedIds.add(createCaptureId(story.id, item.request.variantKey.keys));
+        emitCaptureDiagnostic({
+          type: 'story-session-capture',
+          durationMs,
+          sessionId,
+          storyId: story.id,
+          variantKey: item.request.variantKey.keys,
+        });
       }
       await this.closeStorySession(protocol, sessionId);
-      // A story session must keep one document/context for all variants. Honor
-      // the recycling policy at the first safe boundary after the session.
-      await this.recycleContextIfNeeded();
-      return { outputs, strictFallbacks };
     } catch (error) {
+      if (error instanceof StorySessionOutputCallbackError) {
+        releaseBufferedOutputs();
+        throw error.outputError;
+      }
       if (this.opt.signal?.aborted) {
+        releaseBufferedOutputs();
         await this.close();
         throw this.opt.signal.reason instanceof Error
           ? this.opt.signal.reason
           : new Error('StoryFreeze was interrupted.');
       }
-      await this.restartCaptureSession(error);
-      if (protocolMode === 'story-session') throw error;
-      const completedIds = new Set(outputs.map(output => createCaptureId(story.id, output.variantKey.keys)));
+      if (containsUndrainedAttemptError(error)) {
+        releaseBufferedOutputs();
+        await this.close();
+        throw error;
+      }
+      try {
+        await this.restartCaptureSession(error);
+      } catch (recoveryError) {
+        releaseBufferedOutputs();
+        throw recoveryError;
+      }
+      if (protocolMode === 'story-session') {
+        releaseBufferedOutputs();
+        throw error;
+      }
       return {
         outputs,
         strictFallbacks: [
@@ -1258,5 +1463,15 @@ export class CapturingBrowser extends BaseBrowser {
         ],
       };
     }
+    // A story session must keep one document/context for all variants. Honor
+    // the recycling policy at the first safe boundary after the session. This
+    // operation already owns its recovery, so keep it outside session fallback.
+    try {
+      await this.recycleContextIfNeeded();
+    } catch (error) {
+      releaseBufferedOutputs();
+      throw error;
+    }
+    return { outputs, strictFallbacks };
   }
 }

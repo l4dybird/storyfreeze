@@ -24,6 +24,26 @@ import { createExecutionWorkload, prepareExecutionPlan } from './execution-plan.
 
 const workerCloseTimeoutMs = 5_000;
 
+async function boundedRuntimeOperation<T>(
+  operation: Promise<T>,
+  timeoutMs: number,
+  label: string,
+  signal?: AbortSignal,
+  onTimeout: (error: Error) => unknown = () => {},
+) {
+  const result = await raceAgainstTimeout(operation, timeoutMs, signal);
+  if (result.timedOut) {
+    const error = new Error(`${label} did not settle within ${timeoutMs} msec.`);
+    try {
+      void Promise.resolve(onTimeout(error)).catch(() => {});
+    } catch {
+      // The timeout remains the primary runtime failure.
+    }
+    throw error;
+  }
+  return result.value;
+}
+
 async function abortable<T>(operation: Promise<T>, signal?: AbortSignal): Promise<T> {
   if (!signal) return operation;
   if (signal.aborted) {
@@ -31,10 +51,22 @@ async function abortable<T>(operation: Promise<T>, signal?: AbortSignal): Promis
   }
 
   return new Promise<T>((resolve, reject) => {
-    const onAbort = () =>
-      reject(signal.reason instanceof Error ? signal.reason : new Error('StoryFreeze was interrupted.'));
+    let settled = false;
+    let onAbort = () => {};
+    const finish = (action: () => void) => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener('abort', onAbort);
+      action();
+    };
+    onAbort = () =>
+      finish(() => reject(signal.reason instanceof Error ? signal.reason : new Error('StoryFreeze was interrupted.')));
     signal.addEventListener('abort', onAbort, { once: true });
-    operation.then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort));
+    operation.then(
+      value => finish(() => resolve(value)),
+      error => finish(() => reject(error)),
+    );
+    if (signal.aborted) onAbort();
   });
 }
 
@@ -70,6 +102,7 @@ export async function bootCaptureWorkers<T extends BootableCaptureWorker<T>>(
   workers: T[],
   signal?: AbortSignal,
   sessionOptions: Array<BrowserSessionOptions | undefined> = [],
+  operationTimeoutMs = Number.POSITIVE_INFINITY,
 ): Promise<T[]> {
   throwIfAborted(signal);
   const boots = workers.map((worker, workerId) =>
@@ -78,7 +111,7 @@ export async function bootCaptureWorkers<T extends BootableCaptureWorker<T>>(
     ),
   );
   try {
-    return await abortable(Promise.all(boots), signal);
+    return await boundedRuntimeOperation(Promise.all(boots), operationTimeoutMs, 'Capture worker boot', signal);
   } catch (error) {
     await Promise.allSettled(
       workers.map(worker =>
@@ -104,6 +137,7 @@ async function bootCapturingBrowserAsWorkers(
   initialSessionOptions: Array<BrowserSessionOptions | undefined> = [],
   workerCount = Math.max(opt.parallel, 1),
   initialWorkerCount = workerCount,
+  operationTimeoutMs = Number.POSITIVE_INFINITY,
 ) {
   const browsers = [...new Array(workerCount).keys()].map(
     i => new CapturingBrowser(connection, opt, mode, i, backend, sessionSourceForWorker?.(i)),
@@ -112,6 +146,7 @@ async function bootCapturingBrowserAsWorkers(
     browsers.slice(0, initialWorkerCount),
     opt.signal,
     initialSessionOptions.slice(0, initialWorkerCount),
+    operationTimeoutMs,
   );
   opt.logger.debug(`Started ${initialWorkerCount} of ${browsers.length} capture browsers`);
   return browsers;
@@ -147,7 +182,8 @@ type RuntimeResources = {
 export async function disposeRuntimeResources(resources: RuntimeResources, logger: MainOptions['logger']) {
   const closeSafely = async (label: string, action: () => Promise<unknown>) => {
     try {
-      await action();
+      const result = await raceAgainstTimeout(Promise.resolve().then(action), workerCloseTimeoutMs);
+      if (result.timedOut) logger.debug(`Timed out while disposing ${label}.`);
     } catch (error) {
       logger.debug(`Failed to dispose ${label}.`, error);
     }
@@ -191,6 +227,7 @@ export async function main(mainOptions: MainOptions, overrides: Partial<MainDepe
   const browserIsolation = mainOptions.trace ? 'process' : mainOptions.browserIsolation;
   const browserOptions =
     browserIsolation === mainOptions.browserIsolation ? mainOptions : { ...mainOptions, browserIsolation };
+  const operationTimeoutMs = Math.max(60_000, mainOptions.captureTimeout * 2, mainOptions.captureTimeout + 30_000);
   const fileSystem = new FileSystem(mainOptions);
   let connection: ManagedStorybookConnection | undefined;
   let storiesBrowser: BaseBrowser | undefined;
@@ -210,14 +247,23 @@ export async function main(mainOptions: MainOptions, overrides: Partial<MainDepe
       : startupController.signal;
     const connectionPromise = measureRuntimePhase('storybook-connect', () => connection!.connect(startupSignal));
     const browserBootPromise = measureRuntimePhase('story-index-browser-boot', () =>
-      abortable(storiesBrowser!.boot(), startupSignal),
+      boundedRuntimeOperation(
+        storiesBrowser!.boot(),
+        operationTimeoutMs,
+        'Story index browser boot',
+        startupSignal,
+        error => startupController.abort(error),
+      ),
     );
     const storyIndexPromise = connectionPromise.then(() => {
       throwIfAborted(startupSignal);
       return measureRuntimePhase('story-index-load', () =>
-        abortable(
+        boundedRuntimeOperation(
           storyIndexProvider.load(new URL(mainOptions.serverOptions.storybookUrl), startupSignal),
+          operationTimeoutMs,
+          'Story index load',
           startupSignal,
+          error => startupController.abort(error),
         ),
       );
     });
@@ -287,6 +333,7 @@ export async function main(mainOptions: MainOptions, overrides: Partial<MainDepe
       mode,
       freshContext: false,
     });
+    for (const warning of manifest.warnings) logger.warn(warning);
     const capturePlan = createCapturePlan(manifest);
     const executionWorkload = createExecutionWorkload(capturePlan, mainOptions.captureProtocol ?? 'strict');
     const topologySelection = selectTopology(
@@ -331,6 +378,7 @@ export async function main(mainOptions: MainOptions, overrides: Partial<MainDepe
         initialSessionOptions,
         topologySelection.topology.workerCount,
         topologySelection.initialWorkerCount,
+        operationTimeoutMs,
       ),
     );
     if (startupStartedAt !== undefined) {
@@ -356,7 +404,7 @@ export async function main(mainOptions: MainOptions, overrides: Partial<MainDepe
         initialWorkerCount: topologySelection.initialWorkerCount,
         // This deadlock watchdog also covers cold browser boot and recovery, so
         // keep it deliberately looser than the per-attempt capture deadline.
-        operationTimeoutMs: Math.max(60_000, mainOptions.captureTimeout * 2, mainOptions.captureTimeout + 30_000),
+        operationTimeoutMs,
         bootWorker: async workerId => {
           await workers[workerId].boot(initialSessionOptions[workerId]);
         },

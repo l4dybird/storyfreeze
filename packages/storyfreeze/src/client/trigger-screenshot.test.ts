@@ -89,6 +89,64 @@ describe(finalizeScreenshot, () => {
     expect(state.rootOptions).toBeUndefined();
   });
 
+  it('keeps a reset hook across option fragments and clears it on the next merged render', async () => {
+    const win = installWindow();
+    const reset = vi.fn(async () => {});
+
+    triggerScreenshot({ reset }, { id: 'button--primary' });
+    triggerScreenshot({ fullPage: true }, { id: 'button--primary' });
+    await finalizeScreenshot({ id: 'button--primary', abortSignal: new AbortController().signal });
+
+    expect((win as Record<string, any>).__STORYFREEZE_STORY_SESSION_RUNTIME__.reset).toBe(reset);
+    expect((win as Record<string, any>)[STORYFREEZE_PREVIEW_STATE_GLOBAL]).toMatchObject({
+      runtime: { hasCustomReset: true },
+    });
+
+    triggerScreenshot({ fullPage: false }, { id: 'button--primary' });
+    await finalizeScreenshot({ id: 'button--primary', abortSignal: new AbortController().signal });
+
+    expect((win as Record<string, any>).__STORYFREEZE_STORY_SESSION_RUNTIME__.reset).toBeUndefined();
+    expect((win as Record<string, any>)[STORYFREEZE_PREVIEW_STATE_GLOBAL]).toMatchObject({
+      runtime: { hasCustomReset: false },
+    });
+  });
+
+  it('stops a long preview delay promptly when Storybook aborts the render', async () => {
+    const win = installWindow();
+    const controller = new AbortController();
+    triggerScreenshot({ delay: 60_000 }, { id: 'button--primary' });
+
+    const finalizing = finalizeScreenshot({ id: 'button--primary', abortSignal: controller.signal });
+    await vi.waitFor(() => expect(win.getCurrentVariantKey).toHaveBeenCalledOnce());
+    controller.abort();
+
+    await finalizing;
+    expect((win as Record<string, unknown>)[STORYFREEZE_PREVIEW_STATE_GLOBAL]).toMatchObject({ status: 'booting' });
+  });
+
+  it('marks inherited effective wait hooks by their exact variant path', async () => {
+    const win = installWindow();
+
+    triggerScreenshot(
+      {
+        variants: {
+          base: { waitFor: async () => {} },
+          inherited: { extends: 'base' },
+          cleared: { extends: 'base', waitFor: '' },
+        },
+      },
+      { id: 'button--primary' },
+    );
+    await finalizeScreenshot({ id: 'button--primary', abortSignal: new AbortController().signal });
+
+    expect((win as Record<string, any>)[STORYFREEZE_PREVIEW_STATE_GLOBAL]).toMatchObject({
+      status: 'ready',
+      runtime: {
+        runtimeWaitForVariants: ['base', 'path:["base","inherited"]'],
+      },
+    });
+  });
+
   it('marks named runtime wait hooks as unsafe for same-document capture', async () => {
     const win = installWindow();
 

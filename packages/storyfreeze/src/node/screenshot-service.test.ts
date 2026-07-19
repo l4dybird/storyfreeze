@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vite-plus/test';
+import fs from 'node:fs';
 import type { FileSystem } from './file.js';
 import type { Logger } from './logger.js';
 import { createScreenshotService } from './screenshot-service.js';
@@ -31,7 +32,7 @@ describe(createScreenshotService, () => {
 
   it('queues a retry before adding all variants from the successful default capture', async () => {
     vi.stubEnv('STORYFREEZE_CAPTURE_DIAGNOSTICS', '1');
-    const write = vi.spyOn(process.stdout, 'write').mockImplementation(completeStdoutWrite as never);
+    const write = vi.spyOn(fs, 'write').mockImplementation(completeStdoutWrite as never);
     const hovered: VariantKey = { isDefault: false, keys: ['hovered'] };
     const small: VariantKey = { isDefault: false, keys: ['SMALL'] };
     const screenshot = vi.fn(async (_rid: string, _story: Story, variantKey: VariantKey, count: number) => {
@@ -72,7 +73,7 @@ describe(createScreenshotService, () => {
     ]);
     expect(saveScreenshot.mock.calls.map(([, , suffix]) => suffix)).toEqual([['LARGE'], ['hovered'], ['SMALL']]);
     const events = write.mock.calls
-      .map(([chunk]) => String(chunk))
+      .map(([, chunk]) => String(chunk))
       .filter(line => line.startsWith(CAPTURE_DIAGNOSTIC_PREFIX))
       .map(line => JSON.parse(line.slice(CAPTURE_DIAGNOSTIC_PREFIX.length)));
     expect(events.filter(event => event.type === 'queue-task' && event.state === 'start')).toHaveLength(4);
@@ -167,10 +168,11 @@ describe(createScreenshotService, () => {
     expect(bootWorker).toHaveBeenCalledOnce();
   });
 
-  it('leaves dormant workers unbooted when the initial queue drains', async () => {
+  it('leaves dormant workers unbooted when one active worker can perform its retry', async () => {
+    let attempt = 0;
     const screenshot = vi.fn(async () => ({
       buffer: Buffer.from('png'),
-      succeeded: true,
+      succeeded: ++attempt > 1,
       variantKeysToPush: [],
       defaultVariantSuffix: '',
     }));
@@ -190,12 +192,13 @@ describe(createScreenshotService, () => {
     });
 
     await expect(service.execute()).resolves.toBe(1);
+    expect(screenshot).toHaveBeenCalledTimes(2);
     expect(bootWorker).not.toHaveBeenCalled();
   });
 
   it('maps the stored path to the request when capture diagnostics are enabled', async () => {
     vi.stubEnv('STORYFREEZE_CAPTURE_DIAGNOSTICS', '1');
-    const write = vi.spyOn(process.stdout, 'write').mockImplementation(completeStdoutWrite as never);
+    const write = vi.spyOn(fs, 'write').mockImplementation(completeStdoutWrite as never);
     const screenshot = vi.fn(async () => ({
       buffer: Buffer.from('png'),
       succeeded: true,
@@ -219,7 +222,7 @@ describe(createScreenshotService, () => {
     });
 
     await expect(service.execute()).resolves.toBe(1);
-    const lines = write.mock.calls.map(call => String(call[0]));
+    const lines = write.mock.calls.map(call => String(call[1]));
     const queueLine = lines.find(value => value.includes('"type":"queue-task"') && value.includes('"state":"start"'));
     expect(queueLine).toBeDefined();
     expect(JSON.parse(queueLine!.slice(CAPTURE_DIAGNOSTIC_PREFIX.length))).toMatchObject({
@@ -250,14 +253,24 @@ describe(createScreenshotService, () => {
       variantKeysToPush: [hovered],
       defaultVariantSuffix: '',
     }));
-    const screenshotSessionVariants = vi.fn(async (_sessionId, _story, requests) => ({
-      outputs: requests.map((request: { variantKey: VariantKey }) => ({
-        variantKey: request.variantKey,
-        buffer: Buffer.from('variant'),
-        durationMs: 25,
-      })),
-      strictFallbacks: [],
-    }));
+    const screenshotSessionVariants = vi.fn(
+      async (
+        _sessionId,
+        _story,
+        requests,
+        _logger,
+        _forwardConsoleLogs,
+        _trace,
+        _fileSystem,
+        _protocolMode,
+        onOutput: (output: { variantKey: VariantKey; buffer: Buffer; durationMs: number }) => Promise<void>,
+      ) => {
+        for (const request of requests as Array<{ variantKey: VariantKey }>) {
+          await onOutput({ variantKey: request.variantKey, buffer: Buffer.from('variant'), durationMs: 25 });
+        }
+        return { outputs: [], strictFallbacks: [] };
+      },
+    );
     const saveScreenshot = vi.fn(async () => 'screenshot.png');
     const logger = {
       log: vi.fn(),
@@ -296,6 +309,7 @@ describe(createScreenshotService, () => {
     expect(screenshot).toHaveBeenCalledTimes(1);
     expect(screenshotSessionVariants).toHaveBeenCalledTimes(1);
     expect(screenshotSessionVariants.mock.calls[0][2]).toEqual([expect.objectContaining({ variantKey: hovered })]);
+    expect(screenshotSessionVariants.mock.calls[0][8]).toEqual(expect.any(Function));
     expect(saveScreenshot).toHaveBeenCalledTimes(2);
   });
 
@@ -363,6 +377,30 @@ describe(createScreenshotService, () => {
     await expect(service.execute()).rejects.toThrow('worker screenshot failed');
   });
 
+  it('preserves an undefined worker rejection as a failed run', async () => {
+    const service = createScreenshotService({
+      workers: [{ screenshot: vi.fn(() => Promise.reject(undefined)) }],
+      stories: [story],
+      fileSystem: { saveScreenshot: vi.fn() } as unknown as FileSystem,
+      logger: {
+        log: vi.fn(),
+        color: { magenta: (value: string) => value },
+      } as unknown as Logger,
+      forwardConsoleLogs: false,
+      trace: false,
+    });
+    let rejected = false;
+
+    try {
+      await service.execute();
+    } catch (error) {
+      rejected = true;
+      expect(error).toBeUndefined();
+    }
+
+    expect(rejected).toBe(true);
+  });
+
   it('times out a screenshot operation that never settles', async () => {
     const close = vi.fn(async () => {});
     const service = createScreenshotService({
@@ -380,6 +418,104 @@ describe(createScreenshotService, () => {
 
     await expect(service.execute()).rejects.toThrow('did not settle within 25 msec');
     expect(close).toHaveBeenCalledOnce();
+  });
+
+  it('aborts a stalled screenshot write and releases its buffer after the writer settles', async () => {
+    const buffer = Buffer.from('retained output');
+    const releaseScreenshotBuffer = vi.fn();
+    const saveScreenshot = vi.fn((...args: unknown[]) => {
+      const captured = args[3] as Buffer;
+      const signal = args[5] as AbortSignal;
+      return new Promise<never>((_resolve, reject) => {
+        const onAbort = () => reject(signal.reason);
+        if (signal.aborted) onAbort();
+        else signal.addEventListener('abort', onAbort, { once: true });
+      }).finally(() => releaseScreenshotBuffer(captured));
+    });
+    const service = createScreenshotService({
+      workers: [
+        {
+          screenshot: vi.fn(async () => ({
+            buffer,
+            succeeded: true,
+            variantKeysToPush: [],
+            defaultVariantSuffix: '',
+          })),
+        },
+      ],
+      stories: [story],
+      fileSystem: {
+        releaseScreenshotBuffer,
+        saveScreenshot,
+      } as unknown as FileSystem,
+      logger: {
+        log: vi.fn(),
+        color: { magenta: (value: string) => value },
+      } as unknown as Logger,
+      forwardConsoleLogs: false,
+      trace: false,
+      operationTimeoutMs: 25,
+    });
+
+    await expect(service.execute()).rejects.toThrow('Screenshot output button--primary::root: did not settle');
+    expect(saveScreenshot).toHaveBeenCalledOnce();
+    expect(releaseScreenshotBuffer).toHaveBeenCalledWith(buffer);
+  });
+
+  it('times out a stalled output flush', async () => {
+    const service = createScreenshotService({
+      workers: [
+        {
+          screenshot: vi.fn(async () => ({
+            buffer: Buffer.from('png'),
+            succeeded: true,
+            variantKeysToPush: [],
+            defaultVariantSuffix: '',
+          })),
+        },
+      ],
+      stories: [story],
+      fileSystem: {
+        flush: vi.fn(() => new Promise(() => {})),
+        saveScreenshot: vi.fn(async () => 'screenshot.png'),
+      } as unknown as FileSystem,
+      logger: {
+        log: vi.fn(),
+        color: { magenta: (value: string) => value },
+      } as unknown as Logger,
+      forwardConsoleLogs: false,
+      trace: false,
+      operationTimeoutMs: 25,
+    });
+
+    await expect(service.execute()).rejects.toThrow('Screenshot output flush did not settle');
+  });
+
+  it('preserves both capture and output flush failures', async () => {
+    const captureError = new Error('capture failed first');
+    const flushError = new Error('flush failed second');
+    const service = createScreenshotService({
+      workers: [{ screenshot: vi.fn(async () => Promise.reject(captureError)) }],
+      stories: [story],
+      fileSystem: {
+        flush: vi.fn(async () => Promise.reject(flushError)),
+        saveScreenshot: vi.fn(),
+      } as unknown as FileSystem,
+      logger: {
+        log: vi.fn(),
+        color: { magenta: (value: string) => value },
+      } as unknown as Logger,
+      forwardConsoleLogs: false,
+      trace: false,
+    });
+
+    try {
+      await service.execute();
+      throw new Error('Expected screenshot execution to fail.');
+    } catch (error) {
+      expect(error).toBeInstanceOf(AggregateError);
+      expect((error as AggregateError).errors).toEqual([captureError, flushError]);
+    }
   });
 
   it.each([

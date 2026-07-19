@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+
 export const CAPTURE_DIAGNOSTIC_PREFIX = 'STORYFREEZE_CAPTURE_DIAGNOSTIC=';
 
 export type CaptureDiagnosticEvent = {
@@ -13,27 +15,73 @@ export type CaptureDiagnosticEvent = {
 };
 
 const captureDiagnosticListeners = new Set<(event: CaptureDiagnosticEvent) => void>();
-let pendingDiagnosticWrites = 0;
+const maximumQueuedDiagnosticBytes = 1024 * 1024;
 
-function ignoreDiagnosticWriteError() {
-  // A closed diagnostics consumer (for example EPIPE) must not fail capture work.
+class DiagnosticSink {
+  private readonly lines: Array<Buffer | undefined> = [];
+  private head = 0;
+  private queuedBytes = 0;
+  private writing = false;
+
+  write(line: string) {
+    if (Buffer.byteLength(line) > maximumQueuedDiagnosticBytes) return;
+    const encoded = Buffer.from(line);
+    if (this.queuedBytes + encoded.byteLength > maximumQueuedDiagnosticBytes) return;
+    this.lines.push(encoded);
+    this.queuedBytes += encoded.byteLength;
+    this.flushNext();
+  }
+
+  private flushNext() {
+    if (this.writing || this.head >= this.lines.length) return;
+    this.writing = true;
+    const line = this.lines[this.head];
+    this.lines[this.head] = undefined;
+    this.head += 1;
+    if (!line) {
+      this.writing = false;
+      queueMicrotask(() => this.flushNext());
+      return;
+    }
+    this.queuedBytes -= line.byteLength;
+    let offset = 0;
+    const complete = () => {
+      this.writing = false;
+      if (this.head === this.lines.length) {
+        this.lines.length = 0;
+        this.head = 0;
+      } else if (this.head >= 64 && this.head * 2 >= this.lines.length) {
+        this.lines.splice(0, this.head);
+        this.head = 0;
+      }
+      queueMicrotask(() => this.flushNext());
+    };
+    const writeRemaining = () => {
+      const remaining = line.byteLength - offset;
+      try {
+        fs.write(process.stdout.fd, line, offset, remaining, null, (error, bytesWritten) => {
+          if (error) {
+            complete();
+            return;
+          }
+          const written = typeof bytesWritten === 'number' ? bytesWritten : remaining;
+          if (!Number.isSafeInteger(written) || written <= 0) {
+            complete();
+            return;
+          }
+          offset += Math.min(written, remaining);
+          if (offset >= line.byteLength) complete();
+          else queueMicrotask(writeRemaining);
+        });
+      } catch {
+        complete();
+      }
+    };
+    writeRemaining();
+  }
 }
 
-function beginDiagnosticWrite() {
-  if (pendingDiagnosticWrites === 0) process.stdout.on('error', ignoreDiagnosticWriteError);
-  pendingDiagnosticWrites += 1;
-}
-
-function finishDiagnosticWrite(error?: Error | null) {
-  const release = () => {
-    pendingDiagnosticWrites = Math.max(0, pendingDiagnosticWrites - 1);
-    if (pendingDiagnosticWrites === 0) process.stdout.off('error', ignoreDiagnosticWriteError);
-  };
-  // Node invokes a failed write callback before emitting the stream's error.
-  // Keep the scoped listener through that emission, then remove it immediately.
-  if (error) setImmediate(release);
-  else release();
-}
+let diagnosticSink: DiagnosticSink | undefined;
 
 export function captureDiagnosticsEnabled() {
   return process.env.STORYFREEZE_CAPTURE_DIAGNOSTICS === '1';
@@ -51,18 +99,8 @@ export function emitCaptureDiagnostic(event: CaptureDiagnosticEvent) {
   try {
     const line = `${CAPTURE_DIAGNOSTIC_PREFIX}${JSON.stringify(event)}\n`;
     if (process.stdout.destroyed || process.stdout.writableEnded) return;
-    beginDiagnosticWrite();
-    let finished = false;
-    const finish = (error?: Error | null) => {
-      if (finished) return;
-      finished = true;
-      finishDiagnosticWrite(error);
-    };
-    try {
-      process.stdout.write(line, finish);
-    } catch {
-      finish();
-    }
+    diagnosticSink ??= new DiagnosticSink();
+    diagnosticSink.write(line);
   } catch {
     // Serialization and output are best effort for the same reason as diagnostic listeners.
   }

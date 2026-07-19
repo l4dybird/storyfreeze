@@ -12,6 +12,8 @@ export async function sleep(msec = 0): Promise<void> {
 
 export type TimeoutRaceResult<T> = { timedOut: false; value: T } | { timedOut: true };
 
+const maximumTimerDelayMs = 2_147_483_647;
+
 export function raceAgainstTimeout<T>(
   operation: Promise<T>,
   timeoutMs: number,
@@ -31,7 +33,8 @@ export function raceAgainstTimeout<T>(
     };
     onAbort = () => finish(() => reject(signal?.reason));
     if (Number.isFinite(timeoutMs)) {
-      timeout = setTimeout(() => finish(() => resolve({ timedOut: true })), Math.max(0, timeoutMs));
+      const timerDelay = Math.min(maximumTimerDelayMs, Math.max(0, timeoutMs));
+      timeout = setTimeout(() => finish(() => resolve({ timedOut: true })), timerDelay);
     }
     signal?.addEventListener('abort', onAbort, { once: true });
     operation.then(
@@ -45,143 +48,4 @@ export async function time<T>(target: Promise<T>): Promise<[T, number]> {
   const start = Date.now();
   const result = await target;
   return [result, Date.now() - start];
-}
-
-export type Task<T, Worker> = (worker: Worker) => Promise<T>;
-
-export interface QueueController<Request> {
-  push(request: Request): void;
-  close(): void;
-}
-
-export type QueueOptions<Request, Result, Worker> = {
-  initialRequests?: Iterable<Request>;
-  createTask(request: Request, controller: QueueController<Request>): Task<Result, Worker>;
-  allowEmpty?: boolean;
-};
-
-const cancellationToken = Symbol('cancel');
-
-export class Queue<Request, Result, Worker> {
-  private requestIdCounter = 0;
-  private shouldContinue = true;
-  private readonly futureRequests: Array<Promise<Request>> = [];
-  private readonly resolvers: Array<{ resolve(request: Request): void; cancel(): void }> = [];
-  private readonly requestingIds = new Set<string>();
-  private readonly allowEmpty: boolean;
-  private readonly createDelegationTask: QueueOptions<Request, Result, Worker>['createTask'];
-
-  constructor({ initialRequests, createTask, allowEmpty }: QueueOptions<Request, Result, Worker>) {
-    this.createDelegationTask = createTask;
-    this.allowEmpty = !!allowEmpty;
-    if (initialRequests) {
-      for (const request of initialRequests) this.push(request);
-    }
-  }
-
-  push(request: Request): void {
-    if (!this.shouldContinue) return;
-    const resolver = this.resolvers.shift();
-    if (resolver) resolver.resolve(request);
-    else this.futureRequests.push(Promise.resolve(request));
-  }
-
-  close(): void {
-    if (!this.shouldContinue) return;
-    this.shouldContinue = false;
-    this.resolvers.splice(0).forEach(({ cancel }) => cancel());
-  }
-
-  async *tasks(): AsyncGenerator<Task<Result, Worker>, void> {
-    const controller = this.publishController();
-    while (this.shouldContinue && (this.allowEmpty || this.futureRequests.length || this.requestingIds.size)) {
-      if (this.futureRequests.length === 0) {
-        this.futureRequests.push(
-          new Promise<Request>((resolve, reject) => {
-            this.resolvers.push({ resolve, cancel: () => reject(cancellationToken) });
-          }),
-        );
-      }
-
-      const futureRequest = this.futureRequests.shift()!;
-      try {
-        const request = await futureRequest;
-        yield this.createTask(request, controller);
-      } catch (reason) {
-        if (reason !== cancellationToken) throw reason;
-      }
-    }
-  }
-
-  publishController(): QueueController<Request> {
-    return {
-      push: this.push.bind(this),
-      close: this.close.bind(this),
-    };
-  }
-
-  private createTask(request: Request, controller: QueueController<Request>): Task<Result, Worker> {
-    const delegate = this.createDelegationTask(request, controller);
-    const requestId = `request_${++this.requestIdCounter}`;
-    this.requestingIds.add(requestId);
-    return async worker => {
-      try {
-        return await delegate(worker);
-      } finally {
-        this.requestingIds.delete(requestId);
-        if (!this.allowEmpty && this.requestingIds.size === 0 && this.futureRequests.length === 0) this.close();
-      }
-    };
-  }
-}
-
-async function runParallel<Result, Worker>(
-  tasks: () => AsyncGenerator<Task<Result, Worker>, void>,
-  workers: Worker[],
-  stop: () => void,
-): Promise<Result[]> {
-  if (workers.length === 0) throw new Error('No workers');
-  const results: Result[] = [];
-  const generator = tasks();
-
-  let firstError: unknown;
-  let hasError = false;
-  const runners = workers.map(async worker => {
-    while (!hasError) {
-      try {
-        const { done, value: task } = await generator.next();
-        if (done || !task || hasError) return;
-        results.push(await task(worker));
-      } catch (error) {
-        if (!hasError) {
-          hasError = true;
-          firstError = error;
-          stop();
-        }
-        return;
-      }
-    }
-  });
-  await Promise.allSettled(runners);
-  if (hasError) throw firstError;
-  return results;
-}
-
-export type CreateExecutionServiceOptions = { allowEmpty?: boolean };
-
-export interface ExecutionService<Request, Result> extends QueueController<Request> {
-  execute(): Promise<Result[]>;
-}
-
-export function createExecutionService<Request, Result, Worker>(
-  workers: Worker[],
-  initialRequests: Iterable<Request>,
-  createTask: (request: Request, controller: QueueController<Request>) => Task<Result, Worker>,
-  options: CreateExecutionServiceOptions = {},
-): ExecutionService<Request, Result> {
-  const queue = new Queue({ initialRequests, createTask, allowEmpty: !!options.allowEmpty });
-  return {
-    execute: () => runParallel(queue.tasks.bind(queue), workers, queue.close.bind(queue)),
-    ...queue.publishController(),
-  };
 }

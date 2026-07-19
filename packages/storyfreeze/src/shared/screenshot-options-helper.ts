@@ -135,6 +135,16 @@ export type VariantKeyNotFound = {
 
 export type InvalidVariantKeysReason = CircularVariantRef | VariantKeyNotFound;
 
+const variantPathPrefix = 'path:';
+
+/** Creates a collision-free protocol identifier while preserving ordinary single-key ids. */
+export function variantKeyIdentifier(keys: readonly string[]): string {
+  if (keys.length === 1 && keys[0] && keys[0] !== '__base__' && !keys[0].startsWith(variantPathPrefix)) {
+    return keys[0];
+  }
+  return `${variantPathPrefix}${JSON.stringify(keys)}`;
+}
+
 /**
  *
  * Returns keys of all variants in given screenshot options expanding `extends` field in each variant.

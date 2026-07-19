@@ -32,6 +32,25 @@ export class WorkerSessionProtocolClient {
     return this.active;
   }
 
+  isAvailable(): Promise<boolean> {
+    return this.page.evaluate(
+      ({ globalName, protocolVersion }) => {
+        const protocol = (window as unknown as Record<string, unknown>)[globalName];
+        if (typeof protocol !== 'object' || protocol === null) return false;
+        const record = protocol as Record<string, unknown>;
+        return (
+          record.protocolVersion === protocolVersion &&
+          typeof record.selectStory === 'function' &&
+          typeof record.completeCapture === 'function'
+        );
+      },
+      {
+        globalName: STORYFREEZE_WORKER_SESSION_GLOBAL,
+        protocolVersion: STORYFREEZE_WORKER_SESSION_PROTOCOL_VERSION,
+      },
+    );
+  }
+
   async selectStory(request: SelectWorkerStoryRequest): Promise<WorkerStorySelection> {
     if (this.active) throw new Error(`Worker-session request ${this.active.requestId} is still active.`);
     try {
@@ -90,5 +109,7 @@ export function isWorkerSessionProtocolUnavailable(error: unknown): boolean {
 
 export function isWorkerSessionProtocolFault(error: unknown): boolean {
   if (!(error instanceof Error) || isWorkerSessionProtocolUnavailable(error)) return false;
-  return /(?:Worker-session selection mismatch|selection generation|request .* is still active)/i.test(error.message);
+  return /(?:Worker-session selection mismatch|selection generation|request .* is still active|worker capture is already active|worker request .* (?:has already been used|has not selected)|cannot complete worker request|worker session (?:has been|was) disposed|requested story .* but Storybook selected)/i.test(
+    error.message,
+  );
 }

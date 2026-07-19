@@ -113,6 +113,7 @@ export class CapturingBrowser extends BaseBrowser {
   private rootScreenshotOptions?: ScreenshotOptions;
   private previewRuntimeMetadata?: PreviewRuntimeMetadata;
   private previewSettledResourceGeneration?: number;
+  private workerSessionFallbackWarned = false;
 
   /**
    *
@@ -157,6 +158,7 @@ export class CapturingBrowser extends BaseBrowser {
     this.capturesInContext = 0;
     this.contextGeneration += 1;
     this.previewSettledResourceGeneration = undefined;
+    this.workerSessionFallbackWarned = false;
     await this.expose();
     this.resourceWatcher = new ResourceWatcher(this.page).init();
     this.metricsWatcher = new MetricsWatcher(this.page, this.opt.metricsWatchRetryCount);
@@ -251,7 +253,7 @@ export class CapturingBrowser extends BaseBrowser {
         await this.measurePhase('story-switch', () => this.navigator!.selectStory(story.id));
       } catch (error) {
         if (this.opt.captureProtocol === 'story-session' || !isWorkerSessionProtocolUnavailable(error)) throw error;
-        this.opt.logger.warn('Persistent Preview protocol is unavailable. Falling back to fresh navigation.');
+        this.warnWorkerSessionFallback();
         this.navigator!.markWorkerSessionUnavailable();
         this.navigator!.invalidateDocument?.();
         await this.measurePhase('navigation', async () => {
@@ -269,6 +271,11 @@ export class CapturingBrowser extends BaseBrowser {
       const options = await this.measurePhase('preview-ready', () =>
         this.navigator!.waitForReady(deadline.remaining(), deadline.signal),
       );
+      if (this.opt.captureProtocol !== 'strict' && !(await this.navigator!.detectWorkerSessionSupport())) {
+        const error = new Error('StoryFreeze worker-session preview protocol is unavailable or incompatible.');
+        if (this.opt.captureProtocol === 'story-session') throw error;
+        this.warnWorkerSessionFallback();
+      }
       this.rootScreenshotOptions = this.navigator!.rootOptions ?? options;
       this.previewRuntimeMetadata = this.navigator!.runtimeMetadata;
       return options;
@@ -279,6 +286,12 @@ export class CapturingBrowser extends BaseBrowser {
     this.rootScreenshotOptions = this.baseScreenshotOptions;
     this.previewRuntimeMetadata = undefined;
     return undefined;
+  }
+
+  private warnWorkerSessionFallback() {
+    if (this.workerSessionFallbackWarned) return;
+    this.workerSessionFallbackWarned = true;
+    this.opt.logger.warn('Persistent Preview protocol is unavailable. Falling back to fresh navigation.');
   }
 
   private async setViewport(opt: StrictScreenshotOptions, deadline: CaptureDeadline) {

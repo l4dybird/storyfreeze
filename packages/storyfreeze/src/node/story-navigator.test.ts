@@ -28,7 +28,9 @@ function pageWithState(getState: () => unknown) {
     goto: vi.fn(async (url: string) => {
       currentUrl = url;
     }),
-    evaluate: vi.fn(async () => getState()),
+    evaluate: vi.fn(async (_fn: unknown, argument?: { globalName?: string }) =>
+      argument?.globalName === '__STORYFREEZE_WORKER_SESSION__' ? false : getState(),
+    ),
     currentUrl: vi.fn(() => currentUrl),
   };
 }
@@ -182,6 +184,7 @@ describe(StoryNavigator, () => {
       const navigator = new StoryNavigator(fixture.page, new URL('https://example.test/storybook'), 7);
       await navigator.navigate('button--primary');
       await navigator.waitForReady(100);
+      await expect(navigator.detectWorkerSessionSupport()).resolves.toBe(true);
       await navigator.selectStory('button--secondary');
       await expect(navigator.waitForReady(100)).resolves.toEqual({ fullPage: true });
       await navigator.completeCapture();
@@ -203,10 +206,12 @@ describe(StoryNavigator, () => {
 
     await navigator.navigate('button--primary');
     expect(navigator.canSelectStory).toBe(true);
-    navigator.markWorkerSessionUnavailable();
+    await expect(navigator.detectWorkerSessionSupport()).resolves.toBe(false);
     expect(navigator.canSelectStory).toBe(false);
     await navigator.navigate('button--secondary');
+    await expect(navigator.detectWorkerSessionSupport()).resolves.toBe(false);
     expect(navigator.canSelectStory).toBe(false);
+    expect(page.evaluate).toHaveBeenCalledOnce();
   });
 
   it.each([

@@ -43,6 +43,15 @@ describe(WorkerSessionProtocolClient, () => {
     expect(isWorkerSessionProtocolFault(new Error('Worker-session selection mismatch: stale response.'))).toBe(true);
     expect(
       isWorkerSessionProtocolFault(
+        new Error('StoryFreeze requested story button--primary, but Storybook selected button--secondary.'),
+      ),
+    ).toBe(true);
+    expect(
+      isWorkerSessionProtocolFault(new Error('StoryFreeze cannot complete worker request 0-2; active request is 0-1.')),
+    ).toBe(true);
+    expect(isWorkerSessionProtocolFault(new Error('A StoryFreeze worker capture is already active.'))).toBe(true);
+    expect(
+      isWorkerSessionProtocolFault(
         new Error('StoryFreeze worker-session preview protocol is unavailable or incompatible.'),
       ),
     ).toBe(false);

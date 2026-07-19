@@ -218,6 +218,13 @@ export class StoryNavigator {
     return this.reusableDocument && this.workerSessionSupport !== 'unsupported';
   }
 
+  async detectWorkerSessionSupport(): Promise<boolean> {
+    if (this.workerSessionSupport !== 'unknown') return this.workerSessionSupport === 'supported';
+    const supported = await this.workerSession.isAvailable();
+    this.workerSessionSupport = supported ? 'supported' : 'unsupported';
+    return supported;
+  }
+
   async navigate(storyId: string, timeout = 60_000, retryCount = 0): Promise<void> {
     this.invalidateDocument();
     const requestId = `${this.workerId}-${++this.sequence}`;

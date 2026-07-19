@@ -419,6 +419,7 @@ describe(CapturingBrowser, () => {
     const resourceWatcher = { clear: vi.fn(), generation: 2 };
     const navigator = {
       navigate: vi.fn(async () => {}),
+      detectWorkerSessionSupport: vi.fn(async () => true),
       waitForReady: vi.fn(async () => {
         Object.assign(browser, { previewSettledResourceGeneration: 1 });
         return screenshotOptions;
@@ -450,6 +451,47 @@ describe(CapturingBrowser, () => {
     expect(waitForResources).toHaveBeenCalledOnce();
     expect(waitBrowserMetricsStable).toHaveBeenCalledWith('postEmit', expect.any(CaptureDeadline));
     expect(waitForVisualCommit).not.toHaveBeenCalled();
+  });
+
+  it('requires the persistent Preview protocol on the first story-session capture', async () => {
+    const options = {
+      captureProtocol: 'story-session',
+      delay: 0,
+      disableCssAnimation: false,
+      logger: new Logger('silent'),
+      viewports: ['800x600'],
+    } as MainOptions;
+    const browser = new CapturingBrowser(
+      { url: 'https://example.test' } as ManagedStorybookConnection,
+      options,
+      'managed',
+      0,
+      { name: 'playwright' } as never,
+    );
+    const navigate = vi.fn(async () => {});
+    Object.assign(browser, {
+      navigator: {
+        canSelectStory: false,
+        detectWorkerSessionSupport: vi.fn(async () => false),
+        navigate,
+        waitForReady: vi.fn(async () => ({})),
+      },
+    });
+    const setCurrentStory = (
+      browser as unknown as {
+        setCurrentStory(
+          story: { id: string; kind: string; story: string; version: 'v5' },
+          deadline: CaptureDeadline,
+        ): Promise<unknown>;
+      }
+    ).setCurrentStory.bind(browser);
+    const deadline = new CaptureDeadline(5000, 'fixture--default');
+
+    await expect(
+      setCurrentStory({ id: 'fixture--default', kind: 'Fixture', story: 'Default', version: 'v5' }, deadline),
+    ).rejects.toThrow('worker-session preview protocol is unavailable or incompatible');
+    deadline.dispose();
+    expect(navigate).toHaveBeenCalledOnce();
   });
 
   it.each([
@@ -513,6 +555,7 @@ describe(CapturingBrowser, () => {
         _currentStory: { id: 'fixture--default' },
         navigator: {
           navigate,
+          detectWorkerSessionSupport: vi.fn(async () => true),
           waitForReady,
         },
         viewport: { height: 600, width: 800 },

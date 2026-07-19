@@ -7,6 +7,7 @@ const path = require('path');
 const { execFileSync, spawn } = require('child_process');
 const { createRequire } = require('module');
 const { PNG } = require('pngjs');
+const { summarizeScreenshotBudget } = require('./screenshot-budget-summary.js');
 
 const fixtureDir = path.resolve(process.argv[2] || '.');
 const outputFile = process.argv[3] ? path.resolve(process.argv[3]) : undefined;
@@ -740,6 +741,7 @@ function summarizeRuns(runs) {
       idleTimeoutEventCount: idleEvents.filter(event => event.didTimeout).length,
       idleTimeoutRate: idleEvents.length ? idleEvents.filter(event => event.didTimeout).length / idleEvents.length : 0,
       phaseTimings,
+      screenshotBudget: summarizeScreenshotBudget(diagnosticEvents),
       queue: {
         busyWorkerUtilizationP50: percentile(queueUtilization, 0.5),
         busyWorkerUtilizationP95: percentile(queueUtilization, 0.95),

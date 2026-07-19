@@ -121,6 +121,14 @@ Any other prerelease suffix is rejected before publishing. Moving from alpha
 to RC, or from prerelease to stable, requires a dedicated pull request that
 updates the Changesets prerelease state and reviews the generated version.
 
+Changesets carries the numeric prerelease counter across tag changes. For an
+alpha-to-RC transition, change the `pre.json` tag to `rc`, temporarily
+normalize the package version from `x.y.z-alpha.n` to `x.y.z-rc` without a
+numeric suffix, add the transition changeset, and run `pnpm changeset:version`.
+Review that the committed result is `x.y.z-rc.0`; never commit the temporary
+version. Do not run `changeset pre exit` for this transition because that
+command prepares a stable release instead.
+
 The publish workflow packs once, passes that tarball to the existing package
 smoke, and publishes the same file through npm Trusted Publishing. It verifies
 integrity, provenance, the channel's dist-tag for a new publication, the Git

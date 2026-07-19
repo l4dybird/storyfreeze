@@ -1,5 +1,11 @@
 # storyfreeze
 
+## 0.2.0-rc.0
+
+### Patch Changes
+
+- Promote the validated alpha release to the first release candidate.
+
 ## 0.2.0-alpha.4
 
 ### Minor Changes

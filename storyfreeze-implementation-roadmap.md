@@ -2,13 +2,13 @@
 
 - 文書版: 0.2-draft
 - 作成日: 2026-07-11
-- 更新日: 2026-07-17
+- 更新日: 2026-07-19
 - ベースリポジトリ: `huuyafwww/storycapture`
 - 新プロジェクト名: **StoryFreeze**
 - npm パッケージ候補: `storyfreeze`
 - CLI: `storyfreeze`
 - 対象: Storybook 10 / Chromium / Playwright
-- ステータス: Phase 5G完了・Phase 6実装中
+- ステータス: Phase 6完了・`0.2.0-rc.0`移行中
 
 ## 1. 結論
 
@@ -1116,6 +1116,8 @@ PR-602のdependency更新は`minimumReleaseAge: 1440`を迂回しない。最新
 
 PR-603まではChangesetsのprerelease modeを維持する。release candidateまたはstableへ移る操作は独立PRとする。alphaとRCは`next`かつGitHub Prerelease、stableは`latest`かつfinal releaseとして、検査済みtarball、Trusted Publishing、provenance、dist-tag、Git tag、GitHub Releaseの一致を確認する。公開済みversionの再実行では新しいdist-tagを過去へ戻さず正常終了させる。
 
+PR-600からPR-603までのgateを通過し、`0.2.0-alpha.4`は`next`、SLSA provenance付きtarball、GitHub Prereleaseとして公開した。PR-604は独立したrelease transitionとしてChangesetsのtagを`rc`へ切り替え、alphaの連番を持ち越さず`0.2.0-rc.0`を生成する。公開API、runtime、fixture、smoke coverageは変更しない。
+
 ## 12. Render stability契約
 
 Playwright移行の成否はscreenshot APIより、撮影可能状態の判定に依存する。
@@ -1278,6 +1280,7 @@ nightly:
 | 601 | browser lifecycle soak              | stability/CI       |
 | 602 | current Storybook 10 fixture        | fixture/lockfile   |
 | 603 | stable release gate                 | release/publish    |
+| 604 | first release candidate             | release/version    |
 
 ## 16. 同じPRへ入れてはいけない変更
 

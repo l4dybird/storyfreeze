@@ -1,6 +1,6 @@
 {
   "mode": "pre",
-  "tag": "alpha",
+  "tag": "rc",
   "initialVersions": {
     "storyfreeze": "0.1.0",
     "storyfreeze-react-vite-fixture": "0.0.0"
@@ -17,6 +17,7 @@
     "isolate-browser-runtimes",
     "manifest-topology-story-sessions",
     "playwright-default",
+    "promote-release-candidate",
     "protect-capture-paths",
     "reject-redirected-previews",
     "resolve-viewport-globals",

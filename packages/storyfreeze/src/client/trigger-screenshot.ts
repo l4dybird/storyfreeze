@@ -22,6 +22,7 @@ import {
   setStorySessionReset,
   snapshotStorySessionRuntime,
 } from './story-session-controller.js';
+import { getWorkerSessionIdentity, initializeWorkerSessionController } from './worker-session-controller.js';
 
 type Args<T> = T extends (...args: infer A) => unknown ? A : never;
 type Return<T> = T extends (...args: infer _A) => infer R ? R : never;
@@ -42,6 +43,8 @@ function getWindow(): StoryFreezeWindow | undefined {
 }
 
 function getCaptureIdentity() {
+  const workerIdentity = getWorkerSessionIdentity();
+  if (workerIdentity) return { storyId: workerIdentity.storyId, requestId: workerIdentity.requestId };
   if (typeof location === 'undefined') return undefined;
   const { searchParams } = new URL(location.href);
   const storyId = searchParams.get('id');
@@ -58,6 +61,7 @@ export function initializePreviewState() {
   const identity = getCaptureIdentity();
   if (!win || !identity) return;
   initializeStorySessionController(win);
+  initializeWorkerSessionController(win);
   setState(win, { ...createPreviewStateBase(identity.storyId, identity.requestId), status: 'booting' });
 }
 

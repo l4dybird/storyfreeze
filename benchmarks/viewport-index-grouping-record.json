@@ -47,12 +47,13 @@
   },
   "validation": {
     "exitFailures": 0,
-    "pngMismatches": 0,
+    "pngComparison": "not-run",
     "retries": 0,
     "timeouts": 0
   },
   "notes": [
     "Runs were paired in alternating baseline/candidate order after warm-up against the same static Storybook build and Chromium executable.",
+    "The paired performance runs did not compare PNG bytes; the existing Storybook 10 static E2E remained the visual-output regression check.",
     "The record isolates index-driven grouping; live viewport resize was not enabled."
   ]
 }

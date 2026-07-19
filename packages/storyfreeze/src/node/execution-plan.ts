@@ -193,8 +193,7 @@ export function prepareExecutionPlan(workload: ExecutionWorkload, workerCount: n
     }
   } else {
     for (const group of groups) {
-      const selected = selectWorker(workers, group.workItems[0]);
-      for (const item of group.workItems) assignWorkItem(selected, item);
+      for (const item of group.workItems) assignWorkItem(selectWorker(workers, item), item);
     }
   }
 

@@ -84,4 +84,32 @@ describe(createExecutionWorkload, () => {
       1, 1, 1, 1,
     ]);
   });
+
+  it('balances a dominant viewport group when profiles outnumber workers', () => {
+    const profileHints = [...Array.from({ length: 20 }, () => 'desktop'), 'mobile', 'tablet', 'wide', 'compact'];
+    const capturePlan = createCapturePlan(
+      generateCaptureManifest({
+        stories: profileHints.map((viewportProfileHint, index) => ({
+          id: `story-${index}`,
+          title: 'Story',
+          name: String(index),
+          viewportProfileHint,
+        })),
+        baseOptions: createBaseScreenshotOptions({ delay: 0, disableWaitAssets: false, viewports: ['800x600'] }),
+        deviceDescriptors: [],
+        generatedAt: '2026-07-19T00:00:00.000Z',
+        mode: 'managed',
+      }),
+    );
+    const workload = createExecutionWorkload(capturePlan, 'strict');
+    const prepared = prepareExecutionPlan(workload, 4);
+
+    expect(workload.profileCount).toBe(5);
+    expect(
+      prepared.workers.filter(worker => worker.workItems.some(item => item.profileHint === 'desktop')),
+    ).toHaveLength(4);
+    expect(prepared.workers.map(worker => worker.workItems.length).sort((left, right) => left - right)).toEqual([
+      6, 6, 6, 6,
+    ]);
+  });
 });

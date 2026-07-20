@@ -151,4 +151,17 @@ describe(PlaywrightRuntime, () => {
     });
     await runtime.close();
   });
+
+  it('caps an explicit launch timeout at the lifecycle safety limit', async () => {
+    runtimeFixture();
+    const runtime = new PlaywrightRuntime({ launchOptions: { timeout: 1_000_000_000 } });
+    await runtime.boot();
+    expect(playwright.launch).toHaveBeenCalledWith({
+      chromiumSandbox: true,
+      executablePath: process.execPath,
+      headless: true,
+      timeout: 30_000,
+    });
+    await runtime.close();
+  });
 });

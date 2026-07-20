@@ -31,25 +31,21 @@ type BootableCaptureWorker<T> = {
 export async function bootCaptureWorkers<T extends BootableCaptureWorker<T>>(
   workers: T[],
   signal?: AbortSignal,
-  operationTimeoutMs = Number.POSITIVE_INFINITY,
 ): Promise<T[]> {
   throwIfAborted(signal);
-  const boots = workers.map(worker => worker.boot());
+  const boots = workers.map(worker => Promise.resolve().then(() => worker.boot()));
   try {
-    const settled = await boundedOperation(Promise.allSettled(boots), operationTimeoutMs, 'Capture worker boot');
+    // A browser launch cannot be safely abandoned. In particular, close() may
+    // be invoked before a delayed launch has produced the process it owns. Wait
+    // for every fixed worker to settle, then close all workers before returning
+    // the first startup/abort error.
+    const settled = await Promise.allSettled(boots);
     throwIfAborted(signal);
     const failure = settled.find(result => result.status === 'rejected');
     if (failure?.status === 'rejected') throw failure.reason;
     return settled.map(result => (result as PromiseFulfilledResult<T>).value);
   } catch (error) {
-    await Promise.allSettled(
-      workers.map(worker =>
-        raceAgainstTimeout(
-          Promise.resolve().then(() => worker.close()),
-          workerCloseTimeoutMs,
-        ),
-      ),
-    );
+    await Promise.allSettled(workers.map(worker => Promise.resolve().then(() => worker.close())));
     if (signal?.aborted) throwIfAborted(signal);
     throw error;
   }
@@ -164,7 +160,7 @@ export async function main(mainOptions: MainOptions, overrides: Partial<MainDepe
     workers = Array.from({ length: workerCount }, (_, workerId) =>
       dependencies.createCaptureWorker(connection!, mainOptions, workerId),
     );
-    await bootCaptureWorkers(workers, mainOptions.signal, operationTimeoutMs);
+    await bootCaptureWorkers(workers, mainOptions.signal);
     logger.log('Executable Chromium path:', logger.color.magenta(workers[0].executablePath));
     logger.debug(`Started ${workers.length} persistent capture workers.`);
 

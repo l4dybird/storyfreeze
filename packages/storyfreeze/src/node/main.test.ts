@@ -15,6 +15,7 @@ describe(filterStories, () => {
 
 describe(bootCaptureWorkers, () => {
   it('collects every boot result and closes delayed successes after the first failure', async () => {
+    const events: string[] = [];
     let release = () => {};
     const delayed = new Promise<void>(resolve => (release = resolve));
     const failingWorker = {
@@ -24,9 +25,10 @@ describe(bootCaptureWorkers, () => {
     const delayedWorker = {
       boot: vi.fn(async () => {
         await delayed;
+        events.push('boot completed');
         return delayedWorker;
       }),
-      close: vi.fn(async () => {}),
+      close: vi.fn(async () => events.push('closed')),
     };
     const workers = [failingWorker, delayedWorker];
     const booting = bootCaptureWorkers(workers);
@@ -35,17 +37,20 @@ describe(bootCaptureWorkers, () => {
     release();
     await expect(booting).rejects.toThrow('first failed');
     expect(workers.every(worker => worker.close.mock.calls.length === 1)).toBe(true);
+    expect(events).toEqual(['boot completed', 'closed']);
   });
 
   it('closes every worker when startup is aborted', async () => {
     const controller = new AbortController();
-    const workers = [0, 1].map(() => {
+    const events: string[] = [];
+    const workers = [0, 1].map(index => {
       const worker = {
         boot: vi.fn(async () => {
           await new Promise(resolve => setImmediate(resolve));
+          events.push(`boot ${index}`);
           return worker;
         }),
-        close: vi.fn(async () => {}),
+        close: vi.fn(async () => events.push(`close ${index}`)),
       };
       return worker;
     });
@@ -53,5 +58,6 @@ describe(bootCaptureWorkers, () => {
     controller.abort(new Error('cancelled'));
     await expect(booting).rejects.toThrow('cancelled');
     expect(workers.every(worker => worker.close.mock.calls.length === 1)).toBe(true);
+    expect(events).toEqual(['boot 0', 'boot 1', 'close 0', 'close 1']);
   });
 });

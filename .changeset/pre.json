@@ -27,6 +27,7 @@
     "reject-redirected-previews",
     "resize-runtime-viewport",
     "resolve-viewport-globals",
+    "restore-ci-sandbox-default",
     "reuse-persistent-previews",
     "safe-browser-sandbox",
     "single-playwright-runtime",

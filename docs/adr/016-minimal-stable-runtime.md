@@ -118,16 +118,21 @@ The JSON config has `schemaVersion: 1`, `parallel: 4`,
 `expectedCaptures: 452`, the served `storybookUrl`, `staticBuildDir`,
 `repositoryDir`, one `chromiumPath`, Azure image identity, command timeout,
 known invalid Preview PNG hashes, and `candidate`, `rc`, and `storycapture`
-package specifications. The runner extracts each npm tarball, verifies its
-declared version, installs it in an isolated consumer with scripts disabled and
-the same 24-hour npm cutoff, and executes only the CLI declared by that
-package's `bin` metadata. Every argument list explicitly uses `--parallel 4` and the
-`{storybookUrl}`, `{chromiumPath}`, and `{outDir}` placeholders. Candidate and
-RC specifications also carry full commit and tree SHAs; the candidate values
-must match the repository HEAD. An implementation with multiple bins selects
-one with `binName`. It may also supply `captureTimePattern` with one numeric
-capture group when its CLI does not emit StoryFreeze-compatible timing lines.
-A known invalid hash can be generated with:
+package specifications. The runner requires a clean repository, rebuilds and
+packs the candidate directly from `repositoryDir` HEAD, and rejects an external
+candidate archive or version. RC.2 and StoryCapture remain explicit npm
+tarballs. It extracts every measured package, verifies archived versions where
+specified, and creates each isolated consumer's dependency lock using one shared
+24-hour npm cutoff. It then installs that exact lock with scripts disabled and
+executes only the CLI declared by the package's `bin` metadata. The cutoff,
+lockfile hashes, copied lockfiles, and package hashes are part of the artifact.
+Every argument list explicitly uses `--parallel 4` and the `{storybookUrl}`,
+`{chromiumPath}`, and `{outDir}` placeholders. Candidate and RC specifications
+also carry full commit and tree SHAs; the candidate values must match the
+repository HEAD. An implementation with multiple bins selects one with
+`binName`. It may also supply `captureTimePattern` with one numeric capture group
+when its CLI does not emit StoryFreeze-compatible timing lines. A known invalid
+hash can be generated with:
 
 ```sh
 node scripts/release-performance.js --hash-png ./no-preview.png
@@ -155,8 +160,6 @@ the Azure job):
   "implementations": {
     "candidate": {
       "args": ["--parallel", "4", "--chromium-path", "{chromiumPath}", "--out-dir", "{outDir}", "{storybookUrl}"],
-      "packagePath": "../candidate.tgz",
-      "version": "0.2.0-rc.3",
       "commit": "<40-character candidate commit>",
       "tree": "<40-character candidate tree>"
     },
@@ -181,6 +184,10 @@ candidate versus `0.2.0-rc.2`, then candidate versus StoryCapture. Pair start
 order alternates. It records raw wall and capture time, sampled process-tree CPU
 and peak RSS, exit state, output paths/count/dimensions/decoded RGBA, and residual
 processes. The RC.2 warm-up is the visual reference for the same static build.
+The candidate version in the result is the version actually packed from HEAD;
+the later Changesets release changes version metadata only. Dependency lockfiles
+are stored under the adjacent `.artifacts/dependencies` directory so the exact
+resolved graphs can be audited with the record.
 
 The release gate requires:
 

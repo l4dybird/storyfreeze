@@ -14,6 +14,7 @@ const {
   evaluateRecord,
   inspectPngDirectory,
   measuredOrder,
+  packCandidatePackage,
   percentile,
   prepareImplementationPackage,
   replacePlaceholders,
@@ -71,13 +72,15 @@ function record() {
   return {
     schemaVersion: 1,
     kind: 'storyfreeze-release-performance',
+    recordedAt: '2026-07-20T01:00:00.000Z',
     scenario: {
       azureImage: 'ubuntu-24.04',
       chromium: 'Chromium 149',
       expectedCaptures: 452,
       invalidPngHashes: [hash],
       node: 'v22.18.0',
-      options: { parallel: 4 },
+      npmBefore: '2026-07-19T00:00:00.000Z',
+      options: { npmBefore: '2026-07-19T00:00:00.000Z', parallel: 4 },
       optionsHash: hash,
       parallel: 4,
       staticBuildHash: hash,
@@ -87,6 +90,8 @@ function record() {
         binName: 'storyfreeze',
         binPath: 'dist/node/cli.js',
         commit: sha,
+        dependencyLockArtifact: 'dependencies/candidate-package-lock.json',
+        dependencyLockHash: hash,
         packageHash: hash,
         packageName: 'storyfreeze',
         tree: sha,
@@ -96,6 +101,8 @@ function record() {
         binName: 'storyfreeze',
         binPath: 'dist/node/cli.js',
         commit: sha,
+        dependencyLockArtifact: 'dependencies/rc-package-lock.json',
+        dependencyLockHash: hash,
         packageHash: hash,
         packageName: 'storyfreeze',
         tree: sha,
@@ -104,6 +111,8 @@ function record() {
       storycapture: {
         binName: 'storycapture',
         binPath: 'cli.js',
+        dependencyLockArtifact: 'dependencies/storycapture-package-lock.json',
+        dependencyLockHash: hash,
         packageHash: hash,
         packageName: 'storycapture',
         version: '9.0.0',
@@ -219,6 +228,40 @@ test('resolves only an executable declared inside the packed package', () => {
   }
 });
 
+test('packs the candidate only from a clean repository HEAD', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'storyfreeze-release-candidate-'));
+  try {
+    const packageDirectory = path.join(directory, 'packages', 'storyfreeze');
+    fs.mkdirSync(packageDirectory, { recursive: true });
+    fs.writeFileSync(
+      path.join(packageDirectory, 'package.json'),
+      `${JSON.stringify({ name: 'storyfreeze-candidate-fixture', version: '1.0.0', bin: { fixture: 'cli.js' } })}\n`,
+    );
+    fs.writeFileSync(path.join(packageDirectory, 'cli.js'), '#!/usr/bin/env node\n');
+    execFileSync('git', ['init'], { cwd: directory, stdio: 'pipe' });
+    execFileSync('git', ['add', '.'], { cwd: directory, stdio: 'pipe' });
+    execFileSync('git', ['-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-m', 'fixture'], {
+      cwd: directory,
+      stdio: 'pipe',
+    });
+
+    let buildCount = 0;
+    const archive = packCandidatePackage(directory, path.join(directory, 'packed'), () => (buildCount += 1));
+    assert.equal(buildCount, 1);
+    assert.equal(path.extname(archive), '.tgz');
+    assert.equal(fs.statSync(archive).isFile(), true);
+
+    fs.appendFileSync(path.join(packageDirectory, 'cli.js'), '// dirty\n');
+    assert.throws(
+      () => packCandidatePackage(directory, path.join(directory, 'dirty'), () => (buildCount += 1)),
+      /must be clean/,
+    );
+    assert.equal(buildCount, 1);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test('installs and resolves the CLI from the hashed npm archive', { skip: process.platform === 'win32' }, () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'storyfreeze-release-archive-'));
   try {
@@ -240,12 +283,24 @@ test('installs and resolves the CLI from the hashed npm archive', { skip: proces
       { args: [], packagePath: packed.filename, version: '1.0.0' },
       directory,
       path.join(directory, 'prepared'),
+      {
+        dependencyLockArtifactPath: path.join(directory, 'fixture-package-lock.json'),
+        npmBefore: '2026-01-01T00:00:00.000Z',
+      },
     );
     assert.equal(prepared.command, process.execPath);
     assert.equal(prepared.packageName, 'storyfreeze-release-fixture');
     assert.equal(prepared.packageBinName, 'fixture');
     assert.equal(prepared.packageBinPath, 'cli.js');
+    assert.match(prepared.dependencyLockHash, /^[0-9a-f]{64}$/);
     assert.match(prepared.packageHash, /^[0-9a-f]{64}$/);
+    assert.equal(
+      prepared.dependencyLockHash,
+      crypto
+        .createHash('sha256')
+        .update(fs.readFileSync(path.join(directory, 'fixture-package-lock.json')))
+        .digest('hex'),
+    );
     assert.equal(fs.readFileSync(prepared.commandPrefixArgs[0], 'utf8'), '#!/usr/bin/env node\n');
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
@@ -296,14 +351,26 @@ test('passes only when both RC.2 and StoryCapture ratios pass', () => {
   const failedEvaluation = evaluateRecord(failed);
   assert.equal(failedEvaluation.gate.passed, false);
   assert.match(failedEvaluation.gate.errors.join('\n'), /rgbaMismatchCount/);
+
+  const unsafeCutoff = record();
+  unsafeCutoff.scenario.npmBefore = unsafeCutoff.recordedAt;
+  const cutoffEvaluation = evaluateRecord(unsafeCutoff);
+  assert.equal(cutoffEvaluation.gate.passed, false);
+  assert.match(cutoffEvaluation.gate.errors.join('\n'), /at least 24 hours/);
 });
 
 test('requires the fixed release scenario and complete package argument templates', () => {
   const sha = 'a'.repeat(40);
-  const implementation = {
-    args: ['--parallel', '4', '--chromium-path', '{chromiumPath}', '--out-dir', '{outDir}', '{storybookUrl}'],
+  const args = ['--parallel', '4', '--chromium-path', '{chromiumPath}', '--out-dir', '{outDir}', '{storybookUrl}'];
+  const candidate = {
+    args,
+    commit: sha,
+    tree: sha,
+  };
+  const archived = {
+    args,
     packagePath: 'package.tgz',
-    version: '0.2.0-rc.3',
+    version: '0.2.0-rc.2',
     commit: sha,
     tree: sha,
   };
@@ -318,15 +385,19 @@ test('requires the fixed release scenario and complete package argument template
     commandTimeoutMs: 600_000,
     invalidPngHashes: ['a'.repeat(64)],
     implementations: {
-      candidate: implementation,
-      rc: { ...implementation, version: '0.2.0-rc.2' },
-      storycapture: { ...implementation, version: '9.0.0', commit: undefined, tree: undefined },
+      candidate,
+      rc: archived,
+      storycapture: { ...archived, version: '9.0.0', commit: undefined, tree: undefined },
     },
   };
   assert.doesNotThrow(() => validateConfig(config));
   assert.throws(() => validateConfig({ ...config, parallel: 8 }), /parallel must be 4/);
   assert.throws(
-    () => validateConfig({ ...config, implementations: { ...config.implementations, rc: implementation } }),
+    () =>
+      validateConfig({
+        ...config,
+        implementations: { ...config.implementations, rc: { ...archived, version: '0.2.0-rc.3' } },
+      }),
     /rc.version must be 0.2.0-rc.2/,
   );
   assert.throws(
@@ -335,9 +406,17 @@ test('requires the fixed release scenario and complete package argument template
         ...config,
         implementations: {
           ...config.implementations,
-          candidate: { ...implementation, command: 'node' },
+          candidate: { ...candidate, command: 'node' },
         },
       }),
     /command is not supported/,
+  );
+  assert.throws(
+    () =>
+      validateConfig({
+        ...config,
+        implementations: { ...config.implementations, candidate: { ...candidate, packagePath: 'stale.tgz' } },
+      }),
+    /derived from repositoryDir HEAD/,
   );
 });

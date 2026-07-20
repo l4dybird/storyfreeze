@@ -167,7 +167,7 @@ function commandParallel(args) {
 function validateImplementation(name, implementation, parallel) {
   if (implementation?.command !== undefined) {
     throw new Error(
-      `implementations.${name}.command is not supported; the release runner executes the CLI declared by packagePath.`,
+      `implementations.${name}.command is not supported; the release runner executes the CLI declared by the measured package.`,
     );
   }
   if (!Array.isArray(implementation?.args) || !implementation.args.every(value => typeof value === 'string')) {
@@ -182,9 +182,15 @@ function validateImplementation(name, implementation, parallel) {
       throw new Error(`implementations.${name} must include ${placeholder}.`);
     }
   }
-  for (const field of ['packagePath', 'version']) {
-    if (typeof implementation[field] !== 'string' || implementation[field].length === 0) {
-      throw new Error(`implementations.${name}.${field} is required.`);
+  if (name === 'candidate') {
+    if (implementation.packagePath !== undefined || implementation.version !== undefined) {
+      throw new Error('implementations.candidate packagePath and version are derived from repositoryDir HEAD.');
+    }
+  } else {
+    for (const field of ['packagePath', 'version']) {
+      if (typeof implementation[field] !== 'string' || implementation[field].length === 0) {
+        throw new Error(`implementations.${name}.${field} is required.`);
+      }
     }
   }
   if (
@@ -203,6 +209,52 @@ function validateImplementation(name, implementation, parallel) {
       throw new Error(`implementations.${name}.captureTimePattern is invalid: ${error.message}`);
     }
   }
+}
+
+function candidateWorkspaceStatus(repositoryDir) {
+  const tracked = execFileSync('git', ['status', '--porcelain', '--untracked-files=no'], {
+    cwd: repositoryDir,
+    encoding: 'utf8',
+  });
+  const packageUntracked = execFileSync(
+    'git',
+    ['status', '--porcelain', '--untracked-files=all', '--', 'packages/storyfreeze'],
+    { cwd: repositoryDir, encoding: 'utf8' },
+  );
+  return `${tracked}${packageUntracked}`.trim();
+}
+
+function packCandidatePackage(
+  repositoryDir,
+  packageWorkspace,
+  buildCandidate = directory =>
+    execFileSync('pnpm', ['--filter', 'storyfreeze', 'build'], {
+      cwd: directory,
+      maxBuffer: 20 * 1024 * 1024,
+      stdio: 'pipe',
+    }),
+) {
+  const before = candidateWorkspaceStatus(repositoryDir);
+  if (before) throw new Error(`repositoryDir must be clean before packing the candidate:\n${before}`);
+  buildCandidate(repositoryDir);
+  const afterBuild = candidateWorkspaceStatus(repositoryDir);
+  if (afterBuild) throw new Error(`Candidate build changed tracked package inputs:\n${afterBuild}`);
+  fs.mkdirSync(packageWorkspace, { recursive: true });
+  const packed = JSON.parse(
+    execFileSync('npm', ['pack', '--ignore-scripts', '--json', '--pack-destination', packageWorkspace], {
+      cwd: path.join(repositoryDir, 'packages', 'storyfreeze'),
+      encoding: 'utf8',
+      maxBuffer: 20 * 1024 * 1024,
+    }),
+  );
+  if (!Array.isArray(packed) || packed.length !== 1 || typeof packed[0]?.filename !== 'string') {
+    throw new Error('npm pack did not produce exactly one candidate archive.');
+  }
+  const packageArchivePath = path.resolve(packageWorkspace, packed[0].filename);
+  if (!fs.statSync(packageArchivePath, { throwIfNoEntry: false })?.isFile()) {
+    throw new Error(`npm pack did not create the reported candidate archive: ${packageArchivePath}`);
+  }
+  return packageArchivePath;
 }
 
 function resolvePackageExecutable(packageRoot, metadata, requestedBinName) {
@@ -254,8 +306,17 @@ function resolvePackageExecutable(packageRoot, metadata, requestedBinName) {
   };
 }
 
-function prepareImplementationPackage(name, implementation, configDir, packageWorkspace) {
-  const packageArchivePath = path.resolve(configDir, implementation.packagePath);
+function prepareImplementationPackage(
+  name,
+  implementation,
+  configDir,
+  packageWorkspace,
+  { dependencyLockArtifactPath, npmBefore, packageArchivePath: explicitPackageArchivePath } = {},
+) {
+  if (typeof npmBefore !== 'string' || !Number.isFinite(Date.parse(npmBefore))) {
+    throw new Error('prepareImplementationPackage requires a shared npmBefore timestamp.');
+  }
+  const packageArchivePath = explicitPackageArchivePath ?? path.resolve(configDir, implementation.packagePath);
   if (
     !packageArchivePath.toLowerCase().endsWith('.tgz') ||
     !fs.statSync(packageArchivePath, { throwIfNoEntry: false })?.isFile()
@@ -278,7 +339,7 @@ function prepareImplementationPackage(name, implementation, configDir, packageWo
   if (typeof metadata.name !== 'string' || metadata.name.length === 0) {
     throw new Error(`implementations.${name}.packagePath does not declare a package name.`);
   }
-  if (metadata.version !== implementation.version) {
+  if (implementation.version !== undefined && metadata.version !== implementation.version) {
     throw new Error(
       `implementations.${name}.version ${JSON.stringify(implementation.version)} does not match package metadata ${JSON.stringify(metadata.version)}.`,
     );
@@ -286,23 +347,38 @@ function prepareImplementationPackage(name, implementation, configDir, packageWo
   fs.mkdirSync(consumerRoot, { recursive: true });
   fs.writeFileSync(
     path.join(consumerRoot, 'package.json'),
-    `${JSON.stringify({ name: `storyfreeze-release-${name}`, private: true })}\n`,
+    `${JSON.stringify({
+      name: `storyfreeze-release-${name}`,
+      private: true,
+      dependencies: { [metadata.name]: `file:${packageArchivePath}` },
+    })}\n`,
   );
-  const npmBefore = new Date(Date.now() - 24 * 60 * 60 * 1_000).toISOString();
   execFileSync(
     'npm',
     [
       'install',
+      '--package-lock-only',
       '--ignore-scripts',
       '--legacy-peer-deps',
       '--no-audit',
       '--no-fund',
-      '--package-lock=false',
       `--before=${npmBefore}`,
-      packageArchivePath,
     ],
     { cwd: consumerRoot, maxBuffer: 20 * 1024 * 1024, stdio: 'pipe' },
   );
+  const dependencyLockPath = path.join(consumerRoot, 'package-lock.json');
+  if (!fs.statSync(dependencyLockPath, { throwIfNoEntry: false })?.isFile()) {
+    throw new Error(`Unable to create the dependency lock for implementations.${name}.`);
+  }
+  execFileSync('npm', ['ci', '--ignore-scripts', '--legacy-peer-deps', '--no-audit', '--no-fund'], {
+    cwd: consumerRoot,
+    maxBuffer: 20 * 1024 * 1024,
+    stdio: 'pipe',
+  });
+  if (dependencyLockArtifactPath) {
+    fs.mkdirSync(path.dirname(dependencyLockArtifactPath), { recursive: true });
+    fs.copyFileSync(dependencyLockPath, dependencyLockArtifactPath);
+  }
   const nodeModulesRoot = path.resolve(consumerRoot, 'node_modules');
   const installedPackageRoot = path.resolve(nodeModulesRoot, ...metadata.name.split('/'));
   const installedRelative = path.relative(nodeModulesRoot, installedPackageRoot);
@@ -323,6 +399,7 @@ function prepareImplementationPackage(name, implementation, configDir, packageWo
     packageName: metadata.name,
     packageBinName: executable.binName,
     packageBinPath: executable.binPath,
+    dependencyLockHash: hashPath(dependencyLockPath),
     version: metadata.version,
   };
 }
@@ -720,6 +797,13 @@ function evaluateRecord(record) {
       errors.push(`scenario.${field} is required.`);
     }
   }
+  const npmBefore = Date.parse(record?.scenario?.npmBefore ?? '');
+  const recordedAt = Date.parse(record?.recordedAt ?? '');
+  if (!Number.isFinite(npmBefore)) {
+    errors.push('scenario.npmBefore must be an ISO timestamp.');
+  } else if (!Number.isFinite(recordedAt) || npmBefore > recordedAt - 24 * 60 * 60 * 1_000) {
+    errors.push('scenario.npmBefore must be at least 24 hours before recordedAt.');
+  }
   for (const field of ['optionsHash', 'staticBuildHash']) {
     if (!/^[0-9a-f]{64}$/i.test(record?.scenario?.[field] ?? '')) {
       errors.push(`scenario.${field} must be a SHA-256 hash.`);
@@ -742,6 +826,15 @@ function evaluateRecord(record) {
     }
     if (!/^[0-9a-f]{64}$/i.test(implementation?.packageHash ?? '')) {
       errors.push(`implementations.${name}.packageHash must be a SHA-256 hash.`);
+    }
+    if (!/^[0-9a-f]{64}$/i.test(implementation?.dependencyLockHash ?? '')) {
+      errors.push(`implementations.${name}.dependencyLockHash must be a SHA-256 hash.`);
+    }
+    if (
+      typeof implementation?.dependencyLockArtifact !== 'string' ||
+      !/^dependencies\/[a-z0-9-]+-package-lock\.json$/i.test(implementation.dependencyLockArtifact)
+    ) {
+      errors.push(`implementations.${name}.dependencyLockArtifact must identify its recorded lockfile.`);
     }
     if (name !== 'storycapture') {
       for (const field of ['commit', 'tree']) {
@@ -950,16 +1043,22 @@ async function recordReleasePerformance(config, { configDir, outputFile }) {
   const clockTicksPerSecond = Number(execFileSync('getconf', ['CLK_TCK'], { encoding: 'utf8' }).trim());
   const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'storyfreeze-release-performance-'));
   const artifactDir = `${outputFile}.artifacts`;
+  const npmBefore = new Date(Date.now() - 24 * 60 * 60 * 1_000).toISOString();
   const schedule = buildSchedule(config.starting);
   const invalidPngHashes = new Set(config.invalidPngHashes);
   const measuredRuns = new Map();
   let referenceManifest;
   try {
+    const candidatePackagePath = packCandidatePackage(repositoryDir, path.join(temporaryRoot, 'candidate-package'));
     const implementations = Object.fromEntries(
       Object.entries(config.implementations).map(([name, implementation]) => [
         name,
         {
-          ...prepareImplementationPackage(name, implementation, configDir, path.join(temporaryRoot, 'packages', name)),
+          ...prepareImplementationPackage(name, implementation, configDir, path.join(temporaryRoot, 'packages', name), {
+            dependencyLockArtifactPath: path.join(artifactDir, 'dependencies', `${name}-package-lock.json`),
+            npmBefore,
+            ...(name === 'candidate' ? { packageArchivePath: candidatePackagePath } : {}),
+          }),
           cwd: path.resolve(configDir, implementation.cwd ?? '.'),
         },
       ]),
@@ -982,6 +1081,7 @@ async function recordReleasePerformance(config, { configDir, outputFile }) {
     }
     const scenarioOptions = {
       commandTimeoutMs: config.commandTimeoutMs,
+      npmBefore,
       parallel: config.parallel,
       storybookUrl: config.storybookUrl,
       commands: Object.fromEntries(
@@ -1001,6 +1101,7 @@ async function recordReleasePerformance(config, { configDir, outputFile }) {
         expectedCaptures: config.expectedCaptures,
         invalidPngHashes: [...invalidPngHashes].sort(),
         node: process.version,
+        npmBefore,
         options: scenarioOptions,
         optionsHash: hashBuffer(Buffer.from(JSON.stringify(scenarioOptions))),
         parallel: config.parallel,
@@ -1013,6 +1114,8 @@ async function recordReleasePerformance(config, { configDir, outputFile }) {
             binName: implementation.packageBinName,
             binPath: implementation.packageBinPath,
             commit: implementation.commit,
+            dependencyLockArtifact: `dependencies/${name}-package-lock.json`,
+            dependencyLockHash: implementation.dependencyLockHash,
             packageName: implementation.packageName,
             packageHash: implementation.packageHash,
             tree: implementation.tree,
@@ -1093,6 +1196,7 @@ module.exports = {
   evaluateRecord,
   inspectPngDirectory,
   measuredOrder,
+  packCandidatePackage,
   percentile,
   prepareImplementationPackage,
   replacePlaceholders,

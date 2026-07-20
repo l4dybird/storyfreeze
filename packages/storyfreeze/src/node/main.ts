@@ -33,21 +33,42 @@ export async function bootCaptureWorkers<T extends BootableCaptureWorker<T>>(
   signal?: AbortSignal,
 ): Promise<T[]> {
   throwIfAborted(signal);
-  const boots = workers.map(worker => Promise.resolve().then(() => worker.boot()));
+  let firstFailure: { reason: unknown } | undefined;
+  let closing: Promise<void> | undefined;
+  const closeWorkers = () => {
+    closing ??= Promise.allSettled(workers.map(worker => Promise.resolve().then(() => worker.close()))).then(
+      () => undefined,
+    );
+    return closing;
+  };
+  const onAbort = () => {
+    void closeWorkers();
+  };
+  signal?.addEventListener('abort', onAbort, { once: true });
+  const boots = workers.map(worker =>
+    Promise.resolve()
+      .then(() => worker.boot())
+      .catch(error => {
+        firstFailure ??= { reason: error };
+        void closeWorkers();
+        throw error;
+      }),
+  );
   try {
-    // A browser launch cannot be safely abandoned. In particular, close() may
-    // be invoked before a delayed launch has produced the process it owns. Wait
-    // for every fixed worker to settle, then close all workers before returning
-    // the first startup/abort error.
+    // close() invalidates an in-flight runtime generation and waits for any
+    // late browser process before doing a second cleanup pass. Start that work
+    // as soon as one boot fails or the caller aborts, but do not return until
+    // every fixed worker and its cleanup have settled.
     const settled = await Promise.allSettled(boots);
     throwIfAborted(signal);
-    const failure = settled.find(result => result.status === 'rejected');
-    if (failure?.status === 'rejected') throw failure.reason;
+    if (firstFailure) throw firstFailure.reason;
     return settled.map(result => (result as PromiseFulfilledResult<T>).value);
   } catch (error) {
-    await Promise.allSettled(workers.map(worker => Promise.resolve().then(() => worker.close())));
+    await closeWorkers();
     if (signal?.aborted) throwIfAborted(signal);
     throw error;
+  } finally {
+    signal?.removeEventListener('abort', onAbort);
   }
 }
 

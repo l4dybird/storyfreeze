@@ -351,7 +351,6 @@ Returns whether current process runs in StoryFreeze browser. It's useful to chan
 ## Command Line Options
 
 <!-- inject:clihelp -->
-
 ```txt
 storyfreeze (storyfreeze v0.2.0-rc.2)
 USAGE:
@@ -389,7 +388,6 @@ EXAMPLES:
   storyfreeze http://localhost:9009 -i "some-kind/a-story"
   storyfreeze http://example.com/your-storybook -e "**/default" -V iPad
 ```
-
 <!-- endinject -->
 
 ## Multiple PNGs from 1 story

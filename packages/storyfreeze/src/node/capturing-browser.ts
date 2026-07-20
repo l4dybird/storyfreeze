@@ -453,7 +453,7 @@ export class CapturingBrowser extends BaseBrowser {
 
   private async waitBrowserMetricsStable(phase: 'preEmit' | 'postEmit', deadline = this.activeDeadline) {
     const result = await this.metricsWatcher!.waitForStable({
-      quietMs: 50,
+      quietMs: 0,
       timeoutMs: deadline?.remaining(2000) ?? 2000,
       signal: deadline?.signal ?? this.opt.signal,
     });
@@ -470,7 +470,7 @@ export class CapturingBrowser extends BaseBrowser {
       phase,
       elapsedMs: result.elapsedMs,
       incompleteSampleCount: result.incompleteSampleCount,
-      quietMs: 50,
+      quietMs: 0,
       reason: result.reason,
       sampleCount: result.sampleCount,
       samples: result.samples,

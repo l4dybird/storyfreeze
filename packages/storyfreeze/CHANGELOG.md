@@ -1,5 +1,12 @@
 # storyfreeze
 
+## 0.2.0-rc.3
+
+### Minor Changes
+
+- 144b4dc: Require the StoryFreeze addon on externally served Storybook 10 builds and reduce the CLI to the supported managed, persistent, process-isolated runtime contract.
+- 0756a15: Use one Playwright capture path with persistent managed Preview workers, deterministic viewport-aware queues, variant remounts, and bounded atomic screenshot output.
+
 ## 0.2.0-rc.2
 
 ### Patch Changes

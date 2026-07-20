@@ -288,9 +288,15 @@ function candidateBuildToolchain(repositoryDir) {
       maxBuffer: 20 * 1024 * 1024,
       stdio: ['ignore', 'pipe', 'pipe'],
     }).trim();
+  const packageManager = JSON.parse(fs.readFileSync(path.join(repositoryDir, 'package.json'), 'utf8')).packageManager;
+  const pnpm = version('pnpm');
+  if (packageManager !== `pnpm@${pnpm}`) {
+    throw new Error(`Candidate build requires ${packageManager}, but pnpm ${pnpm} is active.`);
+  }
   return {
     npm: version('npm'),
-    pnpm: version('pnpm'),
+    packageManager,
+    pnpm,
     pnpmLockSha256: hashPath(pnpmLockPath),
   };
 }
@@ -910,7 +916,7 @@ function evaluateRecord(record) {
   if (!record?.scenario?.options || typeof record.scenario.options !== 'object') {
     errors.push('scenario.options is required.');
   }
-  for (const field of ['npm', 'pnpm']) {
+  for (const field of ['npm', 'packageManager', 'pnpm']) {
     if (
       typeof record?.scenario?.candidateBuildToolchain?.[field] !== 'string' ||
       record.scenario.candidateBuildToolchain[field].length === 0
@@ -920,6 +926,12 @@ function evaluateRecord(record) {
   }
   if (!/^[0-9a-f]{64}$/i.test(record?.scenario?.candidateBuildToolchain?.pnpmLockSha256 ?? '')) {
     errors.push('scenario.candidateBuildToolchain.pnpmLockSha256 must be a SHA-256 hash.');
+  }
+  if (
+    record?.scenario?.candidateBuildToolchain?.packageManager !==
+    `pnpm@${record?.scenario?.candidateBuildToolchain?.pnpm}`
+  ) {
+    errors.push('scenario.candidateBuildToolchain.packageManager must pin the active pnpm version.');
   }
   if (!Array.isArray(record?.scenario?.invalidPngHashes) || record.scenario.invalidPngHashes.length === 0) {
     errors.push('scenario.invalidPngHashes is required.');
@@ -1179,6 +1191,7 @@ async function recordReleasePerformance(config, { configDir, outputFile }) {
   const measuredRuns = new Map();
   let referenceManifest;
   try {
+    const buildToolchain = candidateBuildToolchain(repositoryDir);
     const candidatePackagePath = packCandidatePackage(repositoryDir, path.join(temporaryRoot, 'candidate-package'));
     const packedCandidateCommit = execFileSync('git', ['rev-parse', 'HEAD'], {
       cwd: repositoryDir,
@@ -1191,7 +1204,6 @@ async function recordReleasePerformance(config, { configDir, outputFile }) {
     if (packedCandidateCommit !== candidateCommit || packedCandidateTree !== candidateTree) {
       throw new Error('repositoryDir HEAD changed while packing the candidate.');
     }
-    const buildToolchain = candidateBuildToolchain(repositoryDir);
     const registryIntegrities = {
       rc: publishedPackageIntegrity('storyfreeze', config.implementations.rc.version, npmBefore),
       storycapture: publishedPackageIntegrity('storycapture', config.implementations.storycapture.version, npmBefore),

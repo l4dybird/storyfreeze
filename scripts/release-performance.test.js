@@ -80,6 +80,7 @@ function record() {
       azureImage: 'ubuntu-24.04',
       candidateBuildToolchain: {
         npm: '11.5.1',
+        packageManager: 'pnpm@11.11.0',
         pnpm: '11.11.0',
         pnpmLockSha256: hash,
       },
@@ -407,6 +408,12 @@ test('passes only when both RC.2 and StoryCapture ratios pass', () => {
   const buildInputEvaluation = evaluateRecord(unknownBuildInputs);
   assert.equal(buildInputEvaluation.gate.passed, false);
   assert.match(buildInputEvaluation.gate.errors.join('\n'), /pnpmLockSha256/);
+
+  const mismatchedPackageManager = record();
+  mismatchedPackageManager.scenario.candidateBuildToolchain.packageManager = 'pnpm@12.0.0';
+  const packageManagerEvaluation = evaluateRecord(mismatchedPackageManager);
+  assert.equal(packageManagerEvaluation.gate.passed, false);
+  assert.match(packageManagerEvaluation.gate.errors.join('\n'), /must pin the active pnpm version/);
 });
 
 test('requires the fixed release scenario and complete package argument templates', () => {

@@ -105,12 +105,12 @@ TypeScript files; it is reported for scale and is not a release gate.
 | --------------------------- | --------: | -------: | -----: |
 | TypeScript files            |        87 |       59 | -32.2% |
 | Production TypeScript files |        55 |       37 | -32.7% |
-| Production physical lines   |    10,629 |    4,613 | -56.6% |
+| Production physical lines   |    10,629 |    4,737 | -55.4% |
 | Script files                |        26 |       13 | -50.0% |
 | Workflow files              |         5 |        4 | -20.0% |
 | Packed package files        |       223 |      151 | -32.3% |
-| Tarball bytes               |   188,030 |   98,703 | -47.5% |
-| Unpacked bytes              |   882,090 |  409,518 | -53.6% |
+| Tarball bytes               |   188,030 |  100,580 | -46.5% |
+| Unpacked bytes              |   882,090 |  419,514 | -52.4% |
 | Pull-request runner seconds | about 519 |      287 | -44.7% |
 
 Performance is a release decision, not a pull-request benchmark. Raw measurements
@@ -129,7 +129,9 @@ package specifications. The runner requires a clean repository, rebuilds and
 packs the candidate directly from `repositoryDir` HEAD after a frozen pnpm
 install, and rejects an external candidate archive or version. The recorded
 scenario includes the SHA-256 of `pnpm-lock.yaml` and the pnpm and npm versions
-that built the candidate. RC.2 and StoryCapture 9.0.0 remain explicit npm
+that built the candidate. The active pnpm version must exactly match the root
+`packageManager` declaration before the build starts. RC.2 and StoryCapture
+9.0.0 remain explicit npm
 tarballs, but their package names and SHA-512 integrity must match npm registry
 metadata resolved from `https://registry.npmjs.org/` at the shared 24-hour
 cutoff. It extracts every measured

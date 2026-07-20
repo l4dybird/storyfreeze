@@ -3,7 +3,6 @@
 const fs = require('fs');
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
-const { PNG } = require('pngjs');
 const { resolvePnpmCommand } = require('./pnpm-command.js');
 
 const fixtureDir = path.resolve(process.cwd(), process.argv[2] || '.');
@@ -24,11 +23,6 @@ const managedScreenshotPaths = [
   ...interactionScreenshotPaths,
   'Compatibility/Fixture/Retry_LARGE.png',
   'Compatibility/Fixture/Retry_SMALL.png',
-].sort();
-const simpleScreenshotPaths = [
-  'Compatibility/Fixture/Console Error.png',
-  'Compatibility/Fixture/Interactions.png',
-  'Compatibility/Fixture/Retry.png',
 ].sort();
 const retryScreenshotPaths = ['Compatibility/Fixture/Retry_LARGE.png', 'Compatibility/Fixture/Retry_SMALL.png'].sort();
 
@@ -195,35 +189,15 @@ function assertScreenshots(directoryName, expectedPaths) {
   }
 }
 
-function assertPixelEquivalent(actualDirectoryName, expectedDirectoryName, expectedPaths) {
-  for (const relativePath of expectedPaths) {
-    const actualPath = path.join(fixtureDir, actualDirectoryName, relativePath);
-    const expectedPath = path.join(fixtureDir, expectedDirectoryName, relativePath);
-    const actual = PNG.sync.read(fs.readFileSync(actualPath));
-    const expected = PNG.sync.read(fs.readFileSync(expectedPath));
-    if (actual.width !== expected.width || actual.height !== expected.height) {
-      throw new Error(`${relativePath} dimensions differ between ${actualDirectoryName} and ${expectedDirectoryName}.`);
-    }
-    if (!actual.data.equals(expected.data)) {
-      throw new Error(
-        `${relativePath} decoded RGBA pixels differ between ${actualDirectoryName} and ${expectedDirectoryName}.`,
-      );
-    }
-  }
-}
-
-function validateCapture(
-  { script, mode, directoryName, expectedPaths, extraFragments = [], expectServerShutdown = false },
-  capture,
-) {
+function validateCapture({ script, directoryName, expectedPaths, extraFragments = [] }, capture) {
   if (capture.status !== 0) {
     throw new Error(`${script} must complete successfully.`);
   }
 
   const expectedFragments = [
-    `StoryFreeze runs with ${mode} mode`,
+    'StoryFreeze runs with managed mode',
     `capturing ${expectedPaths.length} PNGs`,
-    expectServerShutdown ? 'Shutdown storybook server' : 'Found Storybook server',
+    'Found Storybook server',
     ...extraFragments,
   ];
   const missingFragments = expectedFragments.filter(fragment => !capture.output.includes(fragment));
@@ -231,10 +205,6 @@ function validateCapture(
     throw new Error(`${script} is missing diagnostics: ${missingFragments.join(', ')}.`);
   }
 
-  const oppositeMode = mode === 'managed' ? 'simple' : 'managed';
-  if (capture.output.includes(`StoryFreeze runs with ${oppositeMode} mode`)) {
-    throw new Error(`${script} unexpectedly ran in ${oppositeMode} mode.`);
-  }
   if (capture.output.includes('Error rendering story')) {
     throw new Error(`${script} rendered a Storybook error page.`);
   }
@@ -365,20 +335,8 @@ async function stopServer(server) {
 
 async function main() {
   requireSuccess('clear', 'Failed to clear the Storybook 10 fixture.');
-  requireSuccess('build-storybook:simple', 'The simple Storybook 10 static build must succeed.');
-  assertStaticBuild('storybook-static/simple');
-
   requireSuccess('build-storybook:managed', 'The managed Storybook 10 static build must succeed.');
   assertStaticBuild('storybook-static/managed');
-
-  assertCapture({
-    script: 'storyfreeze:simple-static',
-    mode: 'simple',
-    directoryName: '__screenshots__/simple-static',
-    expectedPaths: simpleScreenshotPaths,
-    extraFragments: ['Browser backend: playwright', 'Browser isolation: process', 'Found 3 stories.'],
-    expectServerShutdown: true,
-  });
 
   const managedPreview = startVitePreview('storybook-static/managed', 9013);
   try {
@@ -386,48 +344,40 @@ async function main() {
 
     assertCapture({
       script: 'storyfreeze:managed-static',
-      mode: 'managed',
       directoryName: '__screenshots__/managed-static',
       expectedPaths: managedScreenshotPaths,
-      extraFragments: ['Browser backend: playwright', 'Browser isolation: context', 'Found 3 stories.'],
+      extraFragments: [
+        'Browser backend: playwright',
+        'Runtime: managed persistent Preview with process-isolated workers',
+        'Found 3 stories.',
+      ],
     });
     await assertCapturesConcurrently([
       {
         script: 'storyfreeze:filter-static',
-        mode: 'managed',
         directoryName: '__screenshots__/filter-static',
         expectedPaths: interactionScreenshotPaths,
         extraFragments: ['Found 1 stories.'],
       },
       {
         script: 'storyfreeze:shard-static',
-        mode: 'managed',
         directoryName: '__screenshots__/shard-static',
         expectedPaths: interactionScreenshotPaths,
         extraFragments: ['Found 3 stories. 1 are being processed by this shard (number 2 of 2).'],
       },
       {
         script: 'storyfreeze:retry-static',
-        mode: 'managed',
         directoryName: '__screenshots__/retry-static',
         expectedPaths: retryScreenshotPaths,
         extraFragments: ['Found 1 stories.', 'Retry to screenshot this story after this sequence.'],
       },
     ]);
-    assertCapture({
-      script: 'storyfreeze:auto-static',
-      mode: 'managed',
-      directoryName: '__screenshots__/auto-static',
-      expectedPaths: interactionScreenshotPaths,
-      extraFragments: ['Found 1 stories.', 'Browser isolation: hybrid', 'Capture protocol: auto'],
-    });
-    assertPixelEquivalent('__screenshots__/auto-static', '__screenshots__/filter-static', interactionScreenshotPaths);
   } finally {
     await stopServer(managedPreview);
   }
 
   console.log(
-    'Verified Storybook 10 static build reuse, strict/auto pixel parity, simple/managed, topology presets, filtering, sharding, retry, and packaged CLI execution.',
+    'Verified Storybook 10 managed static build reuse, filtering, sharding, retry, and packaged CLI execution.',
   );
 }
 

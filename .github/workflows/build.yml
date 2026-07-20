@@ -39,14 +39,11 @@ jobs:
           key: vite-task-${{ runner.os }}-${{ runner.arch }}-node-${{ matrix.node-version }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
             vite-task-${{ runner.os }}-${{ runner.arch }}-node-${{ matrix.node-version }}-
-      - run: pnpm baseline:verify
       - run: pnpm format:check
         if: matrix.node-version == '22.18.0'
       - run: pnpm lint
         if: matrix.node-version == '22.18.0'
       - run: pnpm build
-      - run: pnpm build:pages
-        if: matrix.node-version == '22.18.0'
       - run: pnpm test
         env:
           CI: true

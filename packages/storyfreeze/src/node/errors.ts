@@ -91,7 +91,7 @@ export class PreviewModeRequiredError extends Error {
 
   constructor(timeout: number, url: string) {
     super(
-      `Managed preview mode was required by --mode managed, but the StoryFreeze preview marker was not found within ${timeout} msec at ${url}. Add storyfreeze to the Storybook addons and ensure the addon version matches the CLI.`,
+      `The managed StoryFreeze Preview is required, but its marker was not found within ${timeout} msec at ${url}. Add storyfreeze to the Storybook addons and ensure the addon version matches the CLI.`,
     );
   }
 }

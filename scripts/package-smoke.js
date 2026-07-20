@@ -270,22 +270,21 @@ void options;
   const help = run(process.execPath, [cliPath, '--help'], { cwd: consumerDir });
   if (
     !help.includes('USAGE:') ||
-    !help.includes('--server-cmd') ||
     !help.includes('--browser-launch-options') ||
-    help.includes('--puppeteer-launch-config') ||
-    help.includes('--browser-backend') ||
-    !help.includes('--browser-isolation') ||
-    !help.includes('(default: process, choices: process | context | hybrid | auto)') ||
-    !help.includes('--capture-protocol') ||
-    !help.includes('--max-captures-per-context') ||
-    !help.includes('--max-context-age')
+    !help.includes('--capture-timeout') ||
+    !help.includes('--shard') ||
+    help.includes('--mode') ||
+    help.includes('--server-cmd') ||
+    help.includes('--browser-isolation') ||
+    help.includes('--capture-protocol') ||
+    help.includes('--trace')
   ) {
-    throw new Error('CLI help did not contain the expected Gunshi usage and kebab-case options.');
+    throw new Error('CLI help did not contain only the supported lean CLI options.');
   }
 
-  const invalid = runFailure(process.execPath, [cliPath, '--serverCmd', 'echo nope'], { cwd: consumerDir });
-  if (!invalid.includes('Unknown option: --serverCmd')) {
-    throw new Error('CLI did not reject a legacy camelCase option in strict mode.');
+  const invalid = runFailure(process.execPath, [cliPath, '--mode', 'simple'], { cwd: consumerDir });
+  if (!invalid.includes('Unknown option: --mode')) {
+    throw new Error('CLI did not reject a removed execution mode in strict mode.');
   }
 
   console.log(`Package smoke passed for ${packResult.id} with ${actualFiles.length} files.`);

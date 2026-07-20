@@ -66,30 +66,6 @@ on:
         required: true
         type: string
         default: all
-  pull_request:
-    paths:
-      - '.github/workflows/browser_isolation_benchmark.yml'
-      - 'benchmarks/**'
-      - 'examples/react-vite/.storybook/**'
-      - 'examples/react-vite/.storybook-performance/**'
-      - 'examples/react-vite/performance/**'
-      - 'examples/react-vite/public/**'
-      - 'examples/react-vite/src/**'
-      - 'examples/react-vite/package.json'
-      - 'pnpm-lock.yaml'
-      - 'packages/storyfreeze/package.json'
-      - 'packages/storyfreeze/src/client/**'
-      - 'packages/storyfreeze/src/node/**'
-      - 'packages/storyfreeze/src/shared/**'
-      - 'scripts/aggregate-browser-isolation-benchmarks*.js'
-      - 'scripts/browser-performance-benchmark.js'
-      - 'scripts/browser-performance-benchmark.test.js'
-      - 'scripts/e2e-prestorybook.js'
-      - 'scripts/performance-roadmap-benchmark*.js'
-      - 'scripts/performance-roadmap-scenarios*.js'
-      - 'scripts/storycapture-performance-gate*.js'
-      - 'scripts/storycapture-performance-record*.js'
-
 permissions:
   contents: read
 

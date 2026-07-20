@@ -297,10 +297,10 @@ export async function main(mainOptions: MainOptions, overrides: Partial<MainDepe
           )
         : browserOptions.mode;
     if (mode === 'simple' && browserOptions.captureProtocol === 'story-session') {
-      throw new Error('--capture-protocol story-session requires managed Preview mode and the StoryFreeze addon.');
+      throw new Error('The persistent capture protocol requires the managed Preview and the StoryFreeze addon.');
     }
     if (browserOptions.mode !== 'auto') {
-      logger.log(`StoryFreeze runs with ${mode} mode (forced by --mode ${mode}; validated on first capture).`);
+      logger.log('StoryFreeze runs with managed mode (StoryFreeze addon required; validated on first capture).');
     }
     await measureRuntimePhase('story-index-browser-close', () => storiesBrowser!.close());
     storiesBrowser = undefined;

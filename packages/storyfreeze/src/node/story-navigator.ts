@@ -178,7 +178,7 @@ export async function detectPreviewMode(
   await page.goto(url.href, { timeout: 60000, waitUntil: 'domcontentloaded' });
   assertPreviewUrl(page, url, { storyId, requestId });
   if (requestedMode === 'simple') {
-    return { mode: 'simple', reason: 'forced by --mode simple' };
+    return { mode: 'simple', reason: 'simple Preview mode was explicitly selected' };
   }
   if (await waitForMarker(page, { storyId, requestId }, timeout, signal)) {
     return { mode: 'managed', reason: 'the StoryFreeze preview marker was detected' };

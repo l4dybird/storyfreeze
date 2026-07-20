@@ -28,10 +28,9 @@ It is primarily responsible for image generation necessary for Visual Testing su
 - [Features](#features)
 - [Install](#install)
 - [Getting Started](#getting-started)
-  - [Managed mode](#managed-mode)
-    - [Setup Storybook](#setup-storybook)
-    - [Setup your stories(optional)](#setup-your-storiesoptional)
-    - [Run `storyfreeze` Command](#run-storyfreeze-command)
+  - [Setup Storybook](#setup-storybook)
+  - [Setup your stories(optional)](#setup-your-storiesoptional)
+  - [Run `storyfreeze` Command](#run-storyfreeze-command)
 - [API](#api)
   - [`withScreenshot`](#withscreenshot)
   - [type `ScreenshotOptions`](#type-screenshotoptions)
@@ -63,8 +62,8 @@ It is primarily responsible for image generation necessary for Visual Testing su
 ## Features
 
 - :camera: Take screenshots of each story via [Playwright][playwright].
-- :zap: Parallel capture, sharding, and opt-in same-story capture reuse.
-- :package: Simple mode requires no addon configuration.
+- :zap: Persistent Preview capture with parallel workers and sharding.
+- :package: Fail-fast validation through the StoryFreeze addon.
 - :rocket: Provide flexible screenshot shooting options.
 - :tada: Framework-neutral preview and capture protocol.
 
@@ -83,29 +82,13 @@ Browser installation is explicit; installing StoryFreeze does not automatically 
 
 ## Getting Started
 
-StoryFreeze runs with 2 modes. One is "simple" and another is "managed".
-The default `--mode auto` detects the StoryFreeze preview marker. Use
-`--mode managed` in CI when the addon is required, so a missing or incompatible
-addon fails the run instead of falling back to simple mode. `--mode simple`
-explicitly disables addon detection.
-
-With the simple mode, you don't need to configure your Storybook. All you need is give Storybook's URL, such as:
+StoryFreeze captures a static or hosted Storybook 10 that has the StoryFreeze
+addon installed. Build and serve Storybook before starting the CLI:
 
 ```sh
+$ storybook build -o storybook-static
+$ npx vite preview --outDir storybook-static --port 9001
 $ npx storyfreeze http://localhost:9001
-```
-
-You can launch your server via `--server-cmd` option.
-
-```sh
-$ storyfreeze --server-cmd "start-storybook -p 9001" http://localhost:9001
-```
-
-Of course, you can use pre-built Storybook:
-
-```sh
-$ build-storybook -o dist-storybook
-$ storyfreeze --server-cmd "npx http-server dist-storybook -p 9001" http://localhost:9001
 ```
 
 The static server must preserve the query string on `iframe.html`. If you use
@@ -120,17 +103,13 @@ The static server must preserve the query string on `iframe.html`. If you use
 StoryFreeze stops before capturing when a redirect removes the story or request
 query parameters.
 
-Also, StoryFreeze can crawls built and hosted Storybook pages:
+StoryFreeze can also crawl an already hosted Storybook:
 
 ```sh
 $ storyfreeze https://next--storybookjs.netlify.app/vue-kitchen-sink/
 ```
 
-### Managed mode
-
-#### Setup Storybook
-
-If you want to control how stories are captured (timing or size or etc...), use managed mode.
+### Setup Storybook
 
 First, add `storyfreeze` to your Storybook config file:
 
@@ -224,12 +203,6 @@ export const Small = {
 ```sh
 $ npx start-storybook -p 9009
 $ npx storyfreeze http://localhost:9009
-```
-
-Or you can exec with one-liner via `--server-cmd` option:
-
-```sh
-$ npx storyfreeze http://localhost:9009 --server-cmd "start-storybook -p 9009"
 ```
 
 ## API
@@ -340,7 +313,7 @@ type Viewport = {
 ```
 
 > [!NOTE]
-> The `viewport` and `viewports` fields also accept a device-name string printed by `storyfreeze --list-devices`. StoryFreeze keeps the same fixed registry across browser isolation modes.
+> The `viewport` and `viewports` fields also accept the fixed Chromium device names documented by StoryFreeze, such as `iPad` and `iPhone 5`.
 >
 > When a story sets neither `viewport` nor `viewports`, StoryFreeze resolves a viewport from Storybook's viewport addon globals instead, using `globals.viewport` (or `storyGlobals.viewport`) together with the matching entry in `parameters.viewport.options`. The resolution order is: explicit `parameters.screenshot.viewport` (or `viewports`) > Storybook viewport globals > the CLI's `--viewport` default. Only a single viewport is injected this way, so it never adds a filename suffix.
 
@@ -378,7 +351,6 @@ Returns whether current process runs in StoryFreeze browser. It's useful to chan
 ## Command Line Options
 
 <!-- inject:clihelp -->
-
 ```txt
 storyfreeze (storyfreeze v0.2.0-rc.2)
 USAGE:
@@ -388,49 +360,34 @@ ARGUMENTS:
   storybook-url           Storybook URL.
 
 OPTIONS:
-  -h, --help                                                       Display this help message
-  -v, --version                                                    Display this version
-  -o, --out-dir [out-dir]                                          Output directory. (default: __screenshots__)
-  -p, --parallel [parallel]                                        Maximum number of capture workers. (default: 4)
-  --mode [mode]                                                    Preview mode. Use managed in CI to require the StoryFreeze addon. (default: auto, choices: auto | managed | simple)
-  -f, --flat                                                       Flatten output filename. (default: false)
-  -i, --include <include>                                          Including stories name rule.
-  -e, --exclude <exclude>                                          Excluding stories name rule.
-  --delay <delay>                                                  Waiting time [msec] before screenshot for each story. (default: 0)
-  -V, --viewport <viewport>                                        Viewport. (default: 800x600)
-  --disable-css-animation                                          Disable CSS animation and transition. (default: true)
-  --no-disable-css-animation                                       Negatable of --disable-css-animation
-  --disable-wait-assets                                            Disable waiting for requested assets. (default: false)
-  --trace                                                          Emit Chromium trace files per screenshot. (default: false)
-  --silent                                                         Suppress StoryFreeze output. (default: false)
-  --verbose                                                        Enable verbose StoryFreeze output. (default: false)
-  --forward-console-logs                                           Forward in-page console logs to the user's console. (default: false)
-  --server-cmd <server-cmd>                                        Command line to launch Storybook server. (default: )
-  --server-timeout [server-timeout]                                Timeout [msec] for starting Storybook server. (default: 60000)
-  --shard [shard]                                                  The sharding options for this run. In the format <shardNumber>/<totalShards>. <shardNumber> is a number between 1 and <totalShards>. <totalShards> is the total number of computers working. (default: 1/1)
-  --capture-timeout [capture-timeout]                              Timeout [msec] for capturing a story. (default: 5000)
-  --capture-max-retry-count [capture-max-retry-count]              Number of times to retry capture. (default: 3)
-  --metrics-watch-retry-count [metrics-watch-retry-count]          Number of times to retry until browser metrics are stable. (default: 1000)
-  --viewport-delay <viewport-delay>                                Delay time [msec] between changing viewport and capturing. (default: 0)
-  --reload-after-change-viewport                                   Whether to reload after viewport changed. (default: false)
-  --state-change-delay <state-change-delay>                        Delay time [msec] after changing element's state. (default: 0)
-  --max-captures-per-context [max-captures-per-context]            Recycle a browser context after this many captures. Zero disables count-based recycling. (default: 128)
-  --max-context-age <max-context-age>                              Recycle a browser context after this many milliseconds. Zero disables age-based recycling. (default: 0)
-  --list-devices                                                   List available device descriptors. (default: false)
-  -C, --chromium-channel [chromium-channel]                        Channel to search local Chromium. (default: *, choices: canary | stable | *)
-  --chromium-path <chromium-path>                                  Executable Chromium path. (default: )
-  --browser-isolation [browser-isolation]                          Browser topology preset for capture workers. (default: process, choices: process | context | hybrid | auto)
-  --capture-protocol [capture-protocol]                            Capture protocol. auto reuses managed Storybook Preview pages between stories. (default: auto, choices: strict | story-session | auto)
-  --browser-launch-options <browser-launch-options>                JSON string of browser launch options. (default: {})
+  -h, --help                                                   Display this help message
+  -v, --version                                                Display this version
+  -o, --out-dir [out-dir]                                      Output directory. (default: __screenshots__)
+  -p, --parallel [parallel]                                    Maximum number of capture workers. (default: 4)
+  -f, --flat                                                   Flatten output filename. (default: false)
+  -i, --include <include>                                      Including stories name rule.
+  -e, --exclude <exclude>                                      Excluding stories name rule.
+  --delay <delay>                                              Waiting time [msec] before screenshot for each story. (default: 0)
+  -V, --viewport <viewport>                                    Viewport. (default: 800x600)
+  --disable-css-animation                                      Disable CSS animation and transition. (default: true)
+  --no-disable-css-animation                                   Negatable of --disable-css-animation
+  --disable-wait-assets                                        Disable waiting for requested assets. (default: false)
+  --silent                                                     Suppress StoryFreeze output. (default: false)
+  --verbose                                                    Enable verbose StoryFreeze output. (default: false)
+  --forward-console-logs                                       Forward in-page console logs to the user's console. (default: false)
+  --shard [shard]                                              The sharding options for this run. In the format <shardNumber>/<totalShards>. <shardNumber> is a number between 1 and <totalShards>. <totalShards> is the total number of computers working. (default: 1/1)
+  --capture-timeout [capture-timeout]                          Timeout [msec] for capturing a story. (default: 5000)
+  --capture-max-retry-count [capture-max-retry-count]          Number of times to retry capture. (default: 3)
+  -C, --chromium-channel [chromium-channel]                    Channel to search local Chromium. (default: *, choices: canary | stable | *)
+  --chromium-path <chromium-path>                              Executable Chromium path. (default: )
+  --browser-launch-options <browser-launch-options>            JSON string of browser launch options. (default: {})
 
 EXAMPLES:
   storyfreeze http://localhost:9009
   storyfreeze http://localhost:9009 -V 1024x768 -V 320x568
   storyfreeze http://localhost:9009 -i "some-kind/a-story"
   storyfreeze http://example.com/your-storybook -e "**/default" -V iPad
-  storyfreeze --server-cmd "start-storybook -p 3000" http://localhost:3000
 ```
-
 <!-- endinject -->
 
 ## Multiple PNGs from 1 story
@@ -506,17 +463,21 @@ The above example generates the following:
 
 ### Persistent Preview capture sessions
 
-Managed Storybooks use `--capture-protocol auto` by default. Each capture worker opens the Preview once, switches stories through Storybook's event channel, and keeps request and story state correlated inside that page:
+Each capture worker opens the managed Preview once, switches stories through
+Storybook's event channel, and keeps request and story state correlated inside
+that page:
 
 ```sh
-$ npx storyfreeze --capture-protocol auto http://localhost:9009
+$ npx storyfreeze http://localhost:9009
 ```
 
-`auto` falls back to fresh navigation when the internal Preview protocol is unavailable, including addon-free simple mode. Use `--capture-protocol strict` for diagnostic runs that require a fresh navigation for every capture. `--capture-protocol story-session` requires the managed protocol and reports a missing or invalid session as an error instead of falling back.
+The addon and managed Preview protocol are required. A missing or incompatible
+addon is an error and never falls back to capturing an unverified page.
 
 Width and height changes use a live viewport update. StoryFreeze also updates mobile, touch, orientation, and DPR emulation in the existing worker where the browser supports it, then invalidates the Preview document before reuse. Same-story variants retain the existing apply/reset isolation checks. A failed worker session is closed before its capture enters the existing retry path, and terminal failure stops new queue assignments.
 
-Context count and age limits are applied at safe capture boundaries. The default count limit recycles each worker after 128 captures; set `--max-captures-per-context 0` to disable it.
+Each process-isolated worker recycles its context after 128 captures or after a
+session fault. This safety boundary is intentionally not configurable.
 
 State-changing click variants require a story-owned reset hook before they are eligible:
 
@@ -682,11 +643,9 @@ Chromium's sandbox is enabled by default, including when capturing a hosted Stor
 $ npx storyfreeze --browser-launch-options '{"args":["--no-sandbox","--disable-setuid-sandbox","--disable-dev-shm-usage"]}' http://localhost:9009
 ```
 
-Capture workers use separate browser processes by default. `--browser-isolation context` uses one browser process with an isolated context per worker, while `hybrid` distributes contexts across up to two processes. `auto` deterministically selects a consolidated, hybrid, or separate-process topology from the capture plan, logical CPUs, available memory, and high-cost capture ratio. High-cost plans favor separate processes; low-cost plans favor hybrid consolidation, while memory-constrained or small plans use one process. Workers start lazily from the number of captures and emulation-profile groups, preserve configured parallel capacity up to the capture count, then expand only when queue depth requires them. Every worker still uses an isolated context and every capture in the stable path uses a fresh document.
-
-The current balanced [browser isolation record](https://github.com/l4dybird/storyfreeze/blob/master/benchmarks/browser-isolation-record.json) observed context-mode wall p50 7.8% lower, wall p95 6.2% lower, peak RSS 54.1% lower, and a Chromium process peak of 14 instead of 32. Its capture-request p95 was still 6.8% slower, above the 5% default gate, so process isolation remains the default. `hybrid` and `auto` are opt-in until their representative matrix records are accepted.
-
-`--trace` writes the existing Chromium CPU trace JSON format. Because Chromium CPU tracing is browser-process scoped, combining `--trace` with any non-process browser isolation emits a warning and automatically uses process isolation for that run. The configured parallelism is preserved.
+Capture workers use separate browser processes. `--parallel` controls the
+maximum worker count and defaults to four; StoryFreeze does not select a
+different browser topology automatically.
 
 ## Storybook compatibility
 

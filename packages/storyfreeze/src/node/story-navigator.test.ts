@@ -126,7 +126,7 @@ describe(detectPreviewMode, () => {
 
     await expect(
       detectPreviewMode(page, new URL('https://example.test'), 'button--primary', 100, 'simple'),
-    ).resolves.toEqual({ mode: 'simple', reason: 'forced by --mode simple' });
+    ).resolves.toEqual({ mode: 'simple', reason: 'simple Preview mode was explicitly selected' });
     expect(page.evaluate).not.toHaveBeenCalled();
   });
 
@@ -135,7 +135,7 @@ describe(detectPreviewMode, () => {
 
     await expect(
       detectPreviewMode(page, new URL('https://example.test'), 'button--primary', 0, 'managed'),
-    ).rejects.toThrow(/required by --mode managed.*preview marker was not found/);
+    ).rejects.toThrow(/managed StoryFreeze Preview is required.*marker was not found/);
   });
 
   it('stops mode detection when aborted', async () => {

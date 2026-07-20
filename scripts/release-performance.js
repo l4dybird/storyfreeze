@@ -9,6 +9,13 @@ const { PNG } = require('pngjs');
 
 const sampleIntervalMs = 50;
 const processExitGraceMs = 2_000;
+const npmRegistry = 'https://registry.npmjs.org/';
+const referenceRc = {
+  commit: '63dbda81ee5bb8b4ea46a585b10c0a06fde19fff',
+  tree: 'f615d6ce72b316ce23ed47c1c3c295777b3918be',
+  version: '0.2.0-rc.2',
+};
+const referenceStoryCaptureVersion = '9.0.0';
 const requiredZeroFields = [
   'cleanupErrorCount',
   'crashCount',
@@ -27,6 +34,10 @@ const requiredZeroFields = [
 
 function hashBuffer(value) {
   return crypto.createHash('sha256').update(value).digest('hex');
+}
+
+function packageIntegrity(target) {
+  return `sha512-${crypto.createHash('sha512').update(fs.readFileSync(target)).digest('base64')}`;
 }
 
 function hashPath(target) {
@@ -254,7 +265,36 @@ function packCandidatePackage(
   if (!fs.statSync(packageArchivePath, { throwIfNoEntry: false })?.isFile()) {
     throw new Error(`npm pack did not create the reported candidate archive: ${packageArchivePath}`);
   }
+  const afterPack = candidateWorkspaceStatus(repositoryDir);
+  if (afterPack) throw new Error(`Candidate pack changed tracked package inputs:\n${afterPack}`);
   return packageArchivePath;
+}
+
+function publishedPackageIntegrity(name, version, npmBefore) {
+  const metadata = JSON.parse(
+    execFileSync(
+      'npm',
+      [
+        'view',
+        `${name}@${version}`,
+        'name',
+        'version',
+        'dist.integrity',
+        '--json',
+        `--before=${npmBefore}`,
+        `--registry=${npmRegistry}`,
+      ],
+      { encoding: 'utf8', maxBuffer: 20 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] },
+    ),
+  );
+  if (
+    metadata?.name !== name ||
+    metadata?.version !== version ||
+    !/^sha512-[A-Za-z0-9+/]+=*$/.test(metadata?.['dist.integrity'] ?? '')
+  ) {
+    throw new Error(`Unable to authenticate ${name}@${version} against the npm registry.`);
+  }
+  return metadata['dist.integrity'];
 }
 
 function resolvePackageExecutable(packageRoot, metadata, requestedBinName) {
@@ -311,7 +351,13 @@ function prepareImplementationPackage(
   implementation,
   configDir,
   packageWorkspace,
-  { dependencyLockArtifactPath, npmBefore, packageArchivePath: explicitPackageArchivePath } = {},
+  {
+    dependencyArtifactDir,
+    expectedIntegrity,
+    expectedPackageName,
+    npmBefore,
+    packageArchivePath: explicitPackageArchivePath,
+  } = {},
 ) {
   if (typeof npmBefore !== 'string' || !Number.isFinite(Date.parse(npmBefore))) {
     throw new Error('prepareImplementationPackage requires a shared npmBefore timestamp.');
@@ -339,18 +385,31 @@ function prepareImplementationPackage(
   if (typeof metadata.name !== 'string' || metadata.name.length === 0) {
     throw new Error(`implementations.${name}.packagePath does not declare a package name.`);
   }
+  if (expectedPackageName && metadata.name !== expectedPackageName) {
+    throw new Error(
+      `implementations.${name} must contain ${expectedPackageName}, not ${JSON.stringify(metadata.name)}.`,
+    );
+  }
   if (implementation.version !== undefined && metadata.version !== implementation.version) {
     throw new Error(
       `implementations.${name}.version ${JSON.stringify(implementation.version)} does not match package metadata ${JSON.stringify(metadata.version)}.`,
     );
   }
+  const measuredPackageIntegrity = packageIntegrity(packageArchivePath);
+  if (expectedIntegrity && measuredPackageIntegrity !== expectedIntegrity) {
+    throw new Error(
+      `implementations.${name} archive integrity does not match ${metadata.name}@${metadata.version} on npm.`,
+    );
+  }
   fs.mkdirSync(consumerRoot, { recursive: true });
+  const localPackageArchivePath = path.join(consumerRoot, 'measured-package.tgz');
+  fs.copyFileSync(packageArchivePath, localPackageArchivePath);
   fs.writeFileSync(
     path.join(consumerRoot, 'package.json'),
     `${JSON.stringify({
       name: `storyfreeze-release-${name}`,
       private: true,
-      dependencies: { [metadata.name]: `file:${packageArchivePath}` },
+      dependencies: { [metadata.name]: 'file:./measured-package.tgz' },
     })}\n`,
   );
   execFileSync(
@@ -363,6 +422,7 @@ function prepareImplementationPackage(
       '--no-audit',
       '--no-fund',
       `--before=${npmBefore}`,
+      `--registry=${npmRegistry}`,
     ],
     { cwd: consumerRoot, maxBuffer: 20 * 1024 * 1024, stdio: 'pipe' },
   );
@@ -370,14 +430,20 @@ function prepareImplementationPackage(
   if (!fs.statSync(dependencyLockPath, { throwIfNoEntry: false })?.isFile()) {
     throw new Error(`Unable to create the dependency lock for implementations.${name}.`);
   }
-  execFileSync('npm', ['ci', '--ignore-scripts', '--legacy-peer-deps', '--no-audit', '--no-fund'], {
-    cwd: consumerRoot,
-    maxBuffer: 20 * 1024 * 1024,
-    stdio: 'pipe',
-  });
-  if (dependencyLockArtifactPath) {
-    fs.mkdirSync(path.dirname(dependencyLockArtifactPath), { recursive: true });
-    fs.copyFileSync(dependencyLockPath, dependencyLockArtifactPath);
+  execFileSync(
+    'npm',
+    ['ci', '--ignore-scripts', '--legacy-peer-deps', '--no-audit', '--no-fund', `--registry=${npmRegistry}`],
+    {
+      cwd: consumerRoot,
+      maxBuffer: 20 * 1024 * 1024,
+      stdio: 'pipe',
+    },
+  );
+  if (dependencyArtifactDir) {
+    fs.mkdirSync(dependencyArtifactDir, { recursive: true });
+    for (const artifact of ['package.json', 'package-lock.json', 'measured-package.tgz']) {
+      fs.copyFileSync(path.join(consumerRoot, artifact), path.join(dependencyArtifactDir, artifact));
+    }
   }
   const nodeModulesRoot = path.resolve(consumerRoot, 'node_modules');
   const installedPackageRoot = path.resolve(nodeModulesRoot, ...metadata.name.split('/'));
@@ -396,6 +462,7 @@ function prepareImplementationPackage(
     commandPrefixArgs: [executable.executablePath],
     packageArchivePath,
     packageHash: hashPath(packageArchivePath),
+    packageIntegrity: measuredPackageIntegrity,
     packageName: metadata.name,
     packageBinName: executable.binName,
     packageBinPath: executable.binPath,
@@ -423,8 +490,11 @@ function validateConfig(config) {
   for (const name of ['candidate', 'rc', 'storycapture']) {
     validateImplementation(name, config.implementations?.[name], config.parallel);
   }
-  if (config.implementations.rc.version !== '0.2.0-rc.2') {
-    throw new Error('implementations.rc.version must be 0.2.0-rc.2.');
+  if (config.implementations.rc.version !== referenceRc.version) {
+    throw new Error(`implementations.rc.version must be ${referenceRc.version}.`);
+  }
+  if (config.implementations.storycapture.version !== referenceStoryCaptureVersion) {
+    throw new Error(`implementations.storycapture.version must be ${referenceStoryCaptureVersion}.`);
   }
   for (const name of ['candidate', 'rc']) {
     for (const field of ['commit', 'tree']) {
@@ -433,6 +503,9 @@ function validateConfig(config) {
         throw new Error(`implementations.${name}.${field} must be a full Git SHA.`);
       }
     }
+  }
+  if (config.implementations.rc.commit !== referenceRc.commit || config.implementations.rc.tree !== referenceRc.tree) {
+    throw new Error('implementations.rc commit/tree must identify the tagged RC.2 source.');
   }
   for (const [comparison, allowed] of Object.entries({
     candidateRc: ['candidate', 'rc'],
@@ -827,14 +900,26 @@ function evaluateRecord(record) {
     if (!/^[0-9a-f]{64}$/i.test(implementation?.packageHash ?? '')) {
       errors.push(`implementations.${name}.packageHash must be a SHA-256 hash.`);
     }
+    if (!/^sha512-[A-Za-z0-9+/]+=*$/.test(implementation?.packageIntegrity ?? '')) {
+      errors.push(`implementations.${name}.packageIntegrity must be an SHA-512 SRI value.`);
+    }
     if (!/^[0-9a-f]{64}$/i.test(implementation?.dependencyLockHash ?? '')) {
       errors.push(`implementations.${name}.dependencyLockHash must be a SHA-256 hash.`);
     }
     if (
       typeof implementation?.dependencyLockArtifact !== 'string' ||
-      !/^dependencies\/[a-z0-9-]+-package-lock\.json$/i.test(implementation.dependencyLockArtifact)
+      !/^dependencies\/[a-z0-9-]+\/package-lock\.json$/i.test(implementation.dependencyLockArtifact)
     ) {
       errors.push(`implementations.${name}.dependencyLockArtifact must identify its recorded lockfile.`);
+    }
+    if (
+      typeof implementation?.packageArtifact !== 'string' ||
+      !/^dependencies\/[a-z0-9-]+\/measured-package\.tgz$/i.test(implementation.packageArtifact)
+    ) {
+      errors.push(`implementations.${name}.packageArtifact must identify its recorded package archive.`);
+    }
+    if (name !== 'candidate' && implementation?.registryIntegrity !== implementation?.packageIntegrity) {
+      errors.push(`implementations.${name}.registryIntegrity must match its measured package integrity.`);
     }
     if (name !== 'storycapture') {
       for (const field of ['commit', 'tree']) {
@@ -844,8 +929,17 @@ function evaluateRecord(record) {
       }
     }
   }
-  if (record?.implementations?.rc?.version !== '0.2.0-rc.2') {
-    errors.push('implementations.rc.version must be 0.2.0-rc.2.');
+  if (record?.implementations?.rc?.version !== referenceRc.version) {
+    errors.push(`implementations.rc.version must be ${referenceRc.version}.`);
+  }
+  if (
+    record?.implementations?.rc?.commit !== referenceRc.commit ||
+    record?.implementations?.rc?.tree !== referenceRc.tree
+  ) {
+    errors.push('implementations.rc commit/tree must identify the tagged RC.2 source.');
+  }
+  if (record?.implementations?.storycapture?.version !== referenceStoryCaptureVersion) {
+    errors.push(`implementations.storycapture.version must be ${referenceStoryCaptureVersion}.`);
   }
   if (!Array.isArray(record?.schedule) || record.schedule.length !== 24) {
     errors.push('schedule must contain 24 warmup and measured runs.');
@@ -1050,12 +1144,30 @@ async function recordReleasePerformance(config, { configDir, outputFile }) {
   let referenceManifest;
   try {
     const candidatePackagePath = packCandidatePackage(repositoryDir, path.join(temporaryRoot, 'candidate-package'));
+    const packedCandidateCommit = execFileSync('git', ['rev-parse', 'HEAD'], {
+      cwd: repositoryDir,
+      encoding: 'utf8',
+    }).trim();
+    const packedCandidateTree = execFileSync('git', ['rev-parse', 'HEAD^{tree}'], {
+      cwd: repositoryDir,
+      encoding: 'utf8',
+    }).trim();
+    if (packedCandidateCommit !== candidateCommit || packedCandidateTree !== candidateTree) {
+      throw new Error('repositoryDir HEAD changed while packing the candidate.');
+    }
+    const registryIntegrities = {
+      rc: publishedPackageIntegrity('storyfreeze', config.implementations.rc.version, npmBefore),
+      storycapture: publishedPackageIntegrity('storycapture', config.implementations.storycapture.version, npmBefore),
+    };
+    const expectedPackageNames = { candidate: 'storyfreeze', rc: 'storyfreeze', storycapture: 'storycapture' };
     const implementations = Object.fromEntries(
       Object.entries(config.implementations).map(([name, implementation]) => [
         name,
         {
           ...prepareImplementationPackage(name, implementation, configDir, path.join(temporaryRoot, 'packages', name), {
-            dependencyLockArtifactPath: path.join(artifactDir, 'dependencies', `${name}-package-lock.json`),
+            dependencyArtifactDir: path.join(artifactDir, 'dependencies', name),
+            expectedIntegrity: registryIntegrities[name],
+            expectedPackageName: expectedPackageNames[name],
             npmBefore,
             ...(name === 'candidate' ? { packageArchivePath: candidatePackagePath } : {}),
           }),
@@ -1114,10 +1226,13 @@ async function recordReleasePerformance(config, { configDir, outputFile }) {
             binName: implementation.packageBinName,
             binPath: implementation.packageBinPath,
             commit: implementation.commit,
-            dependencyLockArtifact: `dependencies/${name}-package-lock.json`,
+            dependencyLockArtifact: `dependencies/${name}/package-lock.json`,
             dependencyLockHash: implementation.dependencyLockHash,
+            packageArtifact: `dependencies/${name}/measured-package.tgz`,
             packageName: implementation.packageName,
             packageHash: implementation.packageHash,
+            packageIntegrity: implementation.packageIntegrity,
+            ...(name === 'candidate' ? {} : { registryIntegrity: registryIntegrities[name] }),
             tree: implementation.tree,
             version: implementation.version,
           },

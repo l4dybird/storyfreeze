@@ -42,6 +42,12 @@ atomic writes, path containment and collision checks, the 64 MiB screenshot
 buffer limit, retry and fail-stop behavior, sandboxed browser defaults, and
 explicit launch options.
 
+Worker boot receives the process abort signal. Abort starts idempotent cleanup
+immediately and all boot/close operations are drained before Storybook is
+disconnected. Playwright's 30-second launch timeout is the lifecycle safety
+default; a missing, invalid, or explicitly disabled launch timeout cannot create
+an unbounded startup, while a positive explicit timeout is preserved.
+
 The CLI exposes only capture inputs and Playwright launch settings. Runtime
 modes, browser topology, tracing, server lifecycle, diagnostics, watcher tuning,
 and context lifetime are internal decisions and are not configurable.
@@ -120,19 +126,24 @@ The JSON config has `schemaVersion: 1`, `parallel: 4`,
 known invalid Preview PNG hashes, and `candidate`, `rc`, and `storycapture`
 package specifications. The runner requires a clean repository, rebuilds and
 packs the candidate directly from `repositoryDir` HEAD, and rejects an external
-candidate archive or version. RC.2 and StoryCapture remain explicit npm
-tarballs. It extracts every measured package, verifies archived versions where
-specified, and creates each isolated consumer's dependency lock using one shared
-24-hour npm cutoff. It then installs that exact lock with scripts disabled and
-executes only the CLI declared by the package's `bin` metadata. The cutoff,
-lockfile hashes, copied lockfiles, and package hashes are part of the artifact.
+candidate archive or version. RC.2 and StoryCapture 9.0.0 remain explicit npm
+tarballs, but their package names and SHA-512 integrity must match npm registry
+metadata resolved from `https://registry.npmjs.org/` at the shared 24-hour
+cutoff. It extracts every measured
+package, verifies archived versions where specified, and creates each isolated
+consumer's dependency lock using that cutoff. It then installs the exact lock
+with scripts disabled and executes only the CLI declared by the package's `bin`
+metadata. The cutoff, registry and measured integrity, lockfile hashes, copied
+lockfiles, and package hashes are part of the artifact.
 Every argument list explicitly uses `--parallel 4` and the `{storybookUrl}`,
 `{chromiumPath}`, and `{outDir}` placeholders. Candidate and RC specifications
 also carry full commit and tree SHAs; the candidate values must match the
-repository HEAD. An implementation with multiple bins selects one with
-`binName`. It may also supply `captureTimePattern` with one numeric capture group
-when its CLI does not emit StoryFreeze-compatible timing lines. A known invalid
-hash can be generated with:
+repository HEAD, while the RC values are fixed to the tagged RC.2 source. Thus
+the RC record cannot claim an unrelated commit for an otherwise valid registry
+archive. An implementation with multiple bins selects one with `binName`. It may
+also supply `captureTimePattern` with one numeric capture group when its CLI does
+not emit StoryFreeze-compatible timing lines. A known invalid hash can be
+generated with:
 
 ```sh
 node scripts/release-performance.js --hash-png ./no-preview.png
@@ -167,8 +178,8 @@ the Azure job):
       "args": ["--parallel", "4", "--chromium-path", "{chromiumPath}", "--out-dir", "{outDir}", "{storybookUrl}"],
       "packagePath": "../storyfreeze-0.2.0-rc.2.tgz",
       "version": "0.2.0-rc.2",
-      "commit": "<40-character RC.2 commit>",
-      "tree": "<40-character RC.2 tree>"
+      "commit": "63dbda81ee5bb8b4ea46a585b10c0a06fde19fff",
+      "tree": "f615d6ce72b316ce23ed47c1c3c295777b3918be"
     },
     "storycapture": {
       "args": ["--parallel", "4", "--chromium-path", "{chromiumPath}", "--out-dir", "{outDir}", "{storybookUrl}"],
@@ -185,9 +196,11 @@ order alternates. It records raw wall and capture time, sampled process-tree CPU
 and peak RSS, exit state, output paths/count/dimensions/decoded RGBA, and residual
 processes. The RC.2 warm-up is the visual reference for the same static build.
 The candidate version in the result is the version actually packed from HEAD;
-the later Changesets release changes version metadata only. Dependency lockfiles
-are stored under the adjacent `.artifacts/dependencies` directory so the exact
-resolved graphs can be audited with the record.
+the later Changesets release changes version metadata only. Each implementation
+gets a self-contained directory under `.artifacts/dependencies` containing its
+package manifest, lockfile, and measured tarball. The lock refers only to
+`file:./measured-package.tgz`, so `npm ci` can replay the exact resolved graph
+after the temporary measurement workspace has been removed.
 
 The release gate requires:
 

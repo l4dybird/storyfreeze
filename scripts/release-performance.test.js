@@ -7,6 +7,9 @@ const { execFileSync } = require('node:child_process');
 const test = require('node:test');
 const { PNG } = require('pngjs');
 
+const referenceRcCommit = '63dbda81ee5bb8b4ea46a585b10c0a06fde19fff';
+const referenceRcTree = 'f615d6ce72b316ce23ed47c1c3c295777b3918be';
+
 const {
   buildSchedule,
   compareManifests,
@@ -90,9 +93,11 @@ function record() {
         binName: 'storyfreeze',
         binPath: 'dist/node/cli.js',
         commit: sha,
-        dependencyLockArtifact: 'dependencies/candidate-package-lock.json',
+        dependencyLockArtifact: 'dependencies/candidate/package-lock.json',
         dependencyLockHash: hash,
+        packageArtifact: 'dependencies/candidate/measured-package.tgz',
         packageHash: hash,
+        packageIntegrity: `sha512-${Buffer.alloc(64).toString('base64')}`,
         packageName: 'storyfreeze',
         tree: sha,
         version: '0.2.0-rc.3',
@@ -100,21 +105,27 @@ function record() {
       rc: {
         binName: 'storyfreeze',
         binPath: 'dist/node/cli.js',
-        commit: sha,
-        dependencyLockArtifact: 'dependencies/rc-package-lock.json',
+        commit: referenceRcCommit,
+        dependencyLockArtifact: 'dependencies/rc/package-lock.json',
         dependencyLockHash: hash,
+        packageArtifact: 'dependencies/rc/measured-package.tgz',
         packageHash: hash,
+        packageIntegrity: `sha512-${Buffer.alloc(64).toString('base64')}`,
         packageName: 'storyfreeze',
-        tree: sha,
+        registryIntegrity: `sha512-${Buffer.alloc(64).toString('base64')}`,
+        tree: referenceRcTree,
         version: '0.2.0-rc.2',
       },
       storycapture: {
         binName: 'storycapture',
         binPath: 'cli.js',
-        dependencyLockArtifact: 'dependencies/storycapture-package-lock.json',
+        dependencyLockArtifact: 'dependencies/storycapture/package-lock.json',
         dependencyLockHash: hash,
+        packageArtifact: 'dependencies/storycapture/measured-package.tgz',
         packageHash: hash,
+        packageIntegrity: `sha512-${Buffer.alloc(64).toString('base64')}`,
         packageName: 'storycapture',
+        registryIntegrity: `sha512-${Buffer.alloc(64).toString('base64')}`,
         version: '9.0.0',
       },
     },
@@ -278,13 +289,32 @@ test('installs and resolves the CLI from the hashed npm archive', { skip: proces
         encoding: 'utf8',
       }),
     )[0];
+    const archivePath = path.join(directory, packed.filename);
+    const integrity = `sha512-${crypto.createHash('sha512').update(fs.readFileSync(archivePath)).digest('base64')}`;
+    assert.throws(
+      () =>
+        prepareImplementationPackage(
+          'fixture',
+          { args: [], packagePath: packed.filename, version: '1.0.0' },
+          directory,
+          path.join(directory, 'rejected'),
+          {
+            expectedIntegrity: `sha512-${Buffer.alloc(64, 1).toString('base64')}`,
+            expectedPackageName: 'storyfreeze-release-fixture',
+            npmBefore: '2026-01-01T00:00:00.000Z',
+          },
+        ),
+      /archive integrity does not match/,
+    );
     const prepared = prepareImplementationPackage(
       'fixture',
       { args: [], packagePath: packed.filename, version: '1.0.0' },
       directory,
       path.join(directory, 'prepared'),
       {
-        dependencyLockArtifactPath: path.join(directory, 'fixture-package-lock.json'),
+        dependencyArtifactDir: path.join(directory, 'artifact'),
+        expectedIntegrity: integrity,
+        expectedPackageName: 'storyfreeze-release-fixture',
         npmBefore: '2026-01-01T00:00:00.000Z',
       },
     );
@@ -294,12 +324,21 @@ test('installs and resolves the CLI from the hashed npm archive', { skip: proces
     assert.equal(prepared.packageBinPath, 'cli.js');
     assert.match(prepared.dependencyLockHash, /^[0-9a-f]{64}$/);
     assert.match(prepared.packageHash, /^[0-9a-f]{64}$/);
+    assert.equal(prepared.packageIntegrity, integrity);
+    const artifactLockPath = path.join(directory, 'artifact', 'package-lock.json');
     assert.equal(
       prepared.dependencyLockHash,
-      crypto
-        .createHash('sha256')
-        .update(fs.readFileSync(path.join(directory, 'fixture-package-lock.json')))
-        .digest('hex'),
+      crypto.createHash('sha256').update(fs.readFileSync(artifactLockPath)).digest('hex'),
+    );
+    const artifactLock = JSON.parse(fs.readFileSync(artifactLockPath, 'utf8'));
+    assert.equal(artifactLock.packages[''].dependencies['storyfreeze-release-fixture'], 'file:./measured-package.tgz');
+    assert.equal(
+      artifactLock.packages['node_modules/storyfreeze-release-fixture'].resolved,
+      'file:measured-package.tgz',
+    );
+    assert.equal(
+      fs.readFileSync(path.join(directory, 'artifact', 'measured-package.tgz')).equals(fs.readFileSync(archivePath)),
+      true,
     );
     assert.equal(fs.readFileSync(prepared.commandPrefixArgs[0], 'utf8'), '#!/usr/bin/env node\n');
   } finally {
@@ -371,8 +410,8 @@ test('requires the fixed release scenario and complete package argument template
     args,
     packagePath: 'package.tgz',
     version: '0.2.0-rc.2',
-    commit: sha,
-    tree: sha,
+    commit: referenceRcCommit,
+    tree: referenceRcTree,
   };
   const config = {
     schemaVersion: 1,
@@ -406,6 +445,17 @@ test('requires the fixed release scenario and complete package argument template
         ...config,
         implementations: {
           ...config.implementations,
+          rc: { ...archived, commit: sha, tree: sha },
+        },
+      }),
+    /tagged RC.2 source/,
+  );
+  assert.throws(
+    () =>
+      validateConfig({
+        ...config,
+        implementations: {
+          ...config.implementations,
           candidate: { ...candidate, command: 'node' },
         },
       }),
@@ -418,5 +468,16 @@ test('requires the fixed release scenario and complete package argument template
         implementations: { ...config.implementations, candidate: { ...candidate, packagePath: 'stale.tgz' } },
       }),
     /derived from repositoryDir HEAD/,
+  );
+  assert.throws(
+    () =>
+      validateConfig({
+        ...config,
+        implementations: {
+          ...config.implementations,
+          storycapture: { ...config.implementations.storycapture, version: '8.0.0' },
+        },
+      }),
+    /storycapture.version must be 9.0.0/,
   );
 });

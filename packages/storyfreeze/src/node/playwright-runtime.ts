@@ -441,7 +441,7 @@ export class PlaywrightRuntime {
           ? Math.min(configuredTimeout, defaultBrowserLaunchTimeoutMs)
           : defaultBrowserLaunchTimeoutMs;
       this.browser = await chromium.launch({
-        chromiumSandbox: true,
+        chromiumSandbox: false,
         headless: true,
         ...this.opt.launchOptions,
         executablePath,

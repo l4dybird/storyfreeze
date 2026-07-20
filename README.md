@@ -380,7 +380,7 @@ OPTIONS:
   --capture-max-retry-count [capture-max-retry-count]          Number of times to retry capture. (default: 3)
   -C, --chromium-channel [chromium-channel]                    Channel to search local Chromium. (default: *, choices: canary | stable | *)
   --chromium-path <chromium-path>                              Executable Chromium path. (default: )
-  --browser-launch-options <browser-launch-options>            JSON string of browser launch options. (default: {})
+  --browser-launch-options <browser-launch-options>            JSON string of browser launch options. (default: {"chromiumSandbox":false})
 
 EXAMPLES:
   storyfreeze http://localhost:9009
@@ -647,11 +647,21 @@ Use `--browser-launch-options '<json>'` for Playwright Chromium launch options.
 An explicit `--chromium-path` takes precedence over `executablePath` in the
 JSON.
 
-Chromium's sandbox is enabled by default, including when capturing a hosted Storybook. If a restricted container cannot start Chromium with its sandbox enabled, opt out explicitly for that trusted environment:
+StoryFreeze is intended to capture Storybooks that you control and trust.
+Chromium's sandbox is disabled by default so the CLI works in root-run and
+restricted CI containers without additional configuration. Do not use this
+default to capture an untrusted Storybook.
+
+Enable the Chromium sandbox explicitly when the execution environment supports
+it, especially when capturing a hosted Storybook:
 
 ```sh
-$ npx storyfreeze --browser-launch-options '{"args":["--no-sandbox","--disable-setuid-sandbox","--disable-dev-shm-usage"]}' http://localhost:9009
+$ npx storyfreeze --browser-launch-options '{"chromiumSandbox":true}' https://storybook.example.com
 ```
+
+Sandboxed Chromium generally needs to run as a non-root user in Linux
+containers. StoryFreeze does not add `--disable-dev-shm-usage` by default; add
+container-specific launch arguments only when that environment requires them.
 
 Capture workers use separate browser processes. `--parallel` controls the
 maximum worker count and defaults to four; StoryFreeze never increases it

@@ -80,6 +80,15 @@ settling. Start and stop the static server in the surrounding CI job. Chromium
 diagnostics should use Playwright or the browser process directly. Public
 screenshot options, output paths, and PNG semantics are unchanged.
 
+StoryFreeze assumes that the target Storybook is controlled and trusted, and
+keeps Chromium sandboxing disabled by default for compatibility with root-run
+CI containers. Enable it explicitly in environments that support a sandbox,
+especially for hosted Storybooks:
+
+```sh
+$ npx storyfreeze --browser-launch-options '{"chromiumSandbox":true}' https://storybook.example.com
+```
+
 ## Migrating to the Playwright-only browser runtime
 
 StoryFreeze uses Playwright exclusively. Browser installation remains explicit, so install the Chromium revision matched to StoryFreeze after installing or updating the package:

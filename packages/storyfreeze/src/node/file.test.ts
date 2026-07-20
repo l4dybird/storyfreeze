@@ -99,16 +99,18 @@ describe(FileSystem, () => {
     ).rejects.toThrow('Output path collision');
   });
 
-  it('rejects a directory symlink that escapes the output root', async () => {
-    const { outDir, fileSystem } = await output();
-    const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'storyfreeze-outside-'));
-    roots.push(outside);
-    await fs.symlink(outside, path.join(outDir, 'Linked'), process.platform === 'win32' ? 'junction' : 'dir');
+  it('rejects a directory symlink to the output root parent', async () => {
+    const parent = await fs.mkdtemp(path.join(os.tmpdir(), 'storyfreeze-output-parent-'));
+    roots.push(parent);
+    const outDir = path.join(parent, 'output');
+    await fs.mkdir(outDir);
+    const fileSystem = new FileSystem({ outDir, flat: false, parallel: 4 } as MainOptions);
+    await fs.symlink(parent, path.join(outDir, 'Linked'), process.platform === 'win32' ? 'junction' : 'dir');
 
     await expect(fileSystem.saveScreenshot('Linked', 'Escaped', [], Buffer.from('png'))).rejects.toThrow(
       'outside the output directory',
     );
-    await expect(fs.stat(path.join(outside, 'Escaped.png'))).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(fs.stat(path.join(parent, 'Escaped.png'))).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
   it('closes the output owner after an atomic write failure', async () => {

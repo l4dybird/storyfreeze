@@ -104,7 +104,7 @@ export class FileSystem {
 
   private assertPhysicalContainment(outputRoot: string, candidate: string) {
     const relative = path.relative(outputRoot, candidate);
-    if (relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
       throw new Error(`Refusing to write through a directory outside the output directory: ${candidate}`);
     }
   }

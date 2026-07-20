@@ -238,12 +238,18 @@ function candidateWorkspaceStatus(repositoryDir) {
 function packCandidatePackage(
   repositoryDir,
   packageWorkspace,
-  buildCandidate = directory =>
+  buildCandidate = directory => {
+    execFileSync('pnpm', ['install', '--frozen-lockfile'], {
+      cwd: directory,
+      maxBuffer: 20 * 1024 * 1024,
+      stdio: 'pipe',
+    });
     execFileSync('pnpm', ['--filter', 'storyfreeze', 'build'], {
       cwd: directory,
       maxBuffer: 20 * 1024 * 1024,
       stdio: 'pipe',
-    }),
+    });
+  },
 ) {
   const before = candidateWorkspaceStatus(repositoryDir);
   if (before) throw new Error(`repositoryDir must be clean before packing the candidate:\n${before}`);
@@ -268,6 +274,25 @@ function packCandidatePackage(
   const afterPack = candidateWorkspaceStatus(repositoryDir);
   if (afterPack) throw new Error(`Candidate pack changed tracked package inputs:\n${afterPack}`);
   return packageArchivePath;
+}
+
+function candidateBuildToolchain(repositoryDir) {
+  const pnpmLockPath = path.join(repositoryDir, 'pnpm-lock.yaml');
+  if (!fs.statSync(pnpmLockPath, { throwIfNoEntry: false })?.isFile()) {
+    throw new Error(`Candidate pnpm lockfile does not exist: ${pnpmLockPath}`);
+  }
+  const version = executable =>
+    execFileSync(executable, ['--version'], {
+      cwd: repositoryDir,
+      encoding: 'utf8',
+      maxBuffer: 20 * 1024 * 1024,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }).trim();
+  return {
+    npm: version('npm'),
+    pnpm: version('pnpm'),
+    pnpmLockSha256: hashPath(pnpmLockPath),
+  };
 }
 
 function publishedPackageIntegrity(name, version, npmBefore) {
@@ -885,6 +910,17 @@ function evaluateRecord(record) {
   if (!record?.scenario?.options || typeof record.scenario.options !== 'object') {
     errors.push('scenario.options is required.');
   }
+  for (const field of ['npm', 'pnpm']) {
+    if (
+      typeof record?.scenario?.candidateBuildToolchain?.[field] !== 'string' ||
+      record.scenario.candidateBuildToolchain[field].length === 0
+    ) {
+      errors.push(`scenario.candidateBuildToolchain.${field} is required.`);
+    }
+  }
+  if (!/^[0-9a-f]{64}$/i.test(record?.scenario?.candidateBuildToolchain?.pnpmLockSha256 ?? '')) {
+    errors.push('scenario.candidateBuildToolchain.pnpmLockSha256 must be a SHA-256 hash.');
+  }
   if (!Array.isArray(record?.scenario?.invalidPngHashes) || record.scenario.invalidPngHashes.length === 0) {
     errors.push('scenario.invalidPngHashes is required.');
   } else if (record.scenario.invalidPngHashes.some(value => !/^[0-9a-f]{64}$/i.test(value))) {
@@ -1155,6 +1191,7 @@ async function recordReleasePerformance(config, { configDir, outputFile }) {
     if (packedCandidateCommit !== candidateCommit || packedCandidateTree !== candidateTree) {
       throw new Error('repositoryDir HEAD changed while packing the candidate.');
     }
+    const buildToolchain = candidateBuildToolchain(repositoryDir);
     const registryIntegrities = {
       rc: publishedPackageIntegrity('storyfreeze', config.implementations.rc.version, npmBefore),
       storycapture: publishedPackageIntegrity('storycapture', config.implementations.storycapture.version, npmBefore),
@@ -1209,6 +1246,7 @@ async function recordReleasePerformance(config, { configDir, outputFile }) {
       recordedAt: new Date().toISOString(),
       scenario: {
         azureImage: config.azureImage,
+        candidateBuildToolchain: buildToolchain,
         chromium,
         expectedCaptures: config.expectedCaptures,
         invalidPngHashes: [...invalidPngHashes].sort(),

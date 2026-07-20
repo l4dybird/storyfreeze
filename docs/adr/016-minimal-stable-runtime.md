@@ -46,7 +46,8 @@ Worker boot receives the process abort signal. Abort starts idempotent cleanup
 immediately and all boot/close operations are drained before Storybook is
 disconnected. Playwright's 30-second launch timeout is the lifecycle safety
 default; a missing, invalid, or explicitly disabled launch timeout cannot create
-an unbounded startup, while a positive explicit timeout is preserved.
+an unbounded startup. Positive explicit values below that limit are preserved;
+larger values are capped at 30 seconds so abort cleanup remains bounded.
 
 The CLI exposes only capture inputs and Playwright launch settings. Runtime
 modes, browser topology, tracing, server lifecycle, diagnostics, watcher tuning,
@@ -125,8 +126,10 @@ The JSON config has `schemaVersion: 1`, `parallel: 4`,
 `repositoryDir`, one `chromiumPath`, Azure image identity, command timeout,
 known invalid Preview PNG hashes, and `candidate`, `rc`, and `storycapture`
 package specifications. The runner requires a clean repository, rebuilds and
-packs the candidate directly from `repositoryDir` HEAD, and rejects an external
-candidate archive or version. RC.2 and StoryCapture 9.0.0 remain explicit npm
+packs the candidate directly from `repositoryDir` HEAD after a frozen pnpm
+install, and rejects an external candidate archive or version. The recorded
+scenario includes the SHA-256 of `pnpm-lock.yaml` and the pnpm and npm versions
+that built the candidate. RC.2 and StoryCapture 9.0.0 remain explicit npm
 tarballs, but their package names and SHA-512 integrity must match npm registry
 metadata resolved from `https://registry.npmjs.org/` at the shared 24-hour
 cutoff. It extracts every measured

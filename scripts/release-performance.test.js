@@ -78,6 +78,11 @@ function record() {
     recordedAt: '2026-07-20T01:00:00.000Z',
     scenario: {
       azureImage: 'ubuntu-24.04',
+      candidateBuildToolchain: {
+        npm: '11.5.1',
+        pnpm: '11.11.0',
+        pnpmLockSha256: hash,
+      },
       chromium: 'Chromium 149',
       expectedCaptures: 452,
       invalidPngHashes: [hash],
@@ -396,6 +401,12 @@ test('passes only when both RC.2 and StoryCapture ratios pass', () => {
   const cutoffEvaluation = evaluateRecord(unsafeCutoff);
   assert.equal(cutoffEvaluation.gate.passed, false);
   assert.match(cutoffEvaluation.gate.errors.join('\n'), /at least 24 hours/);
+
+  const unknownBuildInputs = record();
+  delete unknownBuildInputs.scenario.candidateBuildToolchain.pnpmLockSha256;
+  const buildInputEvaluation = evaluateRecord(unknownBuildInputs);
+  assert.equal(buildInputEvaluation.gate.passed, false);
+  assert.match(buildInputEvaluation.gate.errors.join('\n'), /pnpmLockSha256/);
 });
 
 test('requires the fixed release scenario and complete package argument templates', () => {

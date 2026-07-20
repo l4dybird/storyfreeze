@@ -1,5 +1,11 @@
 # storyfreeze
 
+## 0.2.0-rc.2
+
+### Patch Changes
+
+- 12c4909: Remove the redundant metrics quiet window after three consecutive stable browser samples.
+
 ## 0.2.0-rc.1
 
 ### Patch Changes

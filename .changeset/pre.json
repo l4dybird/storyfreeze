@@ -22,6 +22,7 @@
     "promote-release-candidate",
     "protect-capture-paths",
     "quick-screenshots-rest",
+    "reduce-metrics-quiet-window",
     "reject-redirected-previews",
     "resize-runtime-viewport",
     "resolve-viewport-globals",

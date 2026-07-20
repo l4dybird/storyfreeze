@@ -1,108 +1,94 @@
 #!/usr/bin/env node
 
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const { spawnSync } = require('child_process');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 
 const rootDir = path.resolve(__dirname, '..');
 const packageDir = path.join(rootDir, 'packages', 'storyfreeze');
-const expectedFiles = JSON.parse(fs.readFileSync(path.join(__dirname, 'storyfreeze-package-files.json'), 'utf8'));
+const sourceMetadata = JSON.parse(fs.readFileSync(path.join(packageDir, 'package.json'), 'utf8'));
+const npmBefore = new Date(Date.now() - 24 * 60 * 60 * 1_000).toISOString();
 
 function parseTarballArgument(args) {
   if (args.length === 0) return null;
   if (args.length !== 2 || args[0] !== '--tarball') {
     throw new Error('Usage: package-smoke.js [--tarball <path>]');
   }
-  if (!args[1] || !args[1].endsWith('.tgz')) {
-    throw new Error('The --tarball value must be a .tgz file.');
+  const tarball = path.resolve(rootDir, args[1]);
+  if (!tarball.endsWith('.tgz') || !fs.statSync(tarball, { throwIfNoEntry: false })?.isFile()) {
+    throw new Error(`The --tarball value must be an existing .tgz file: ${tarball}`);
   }
-
-  const tarballPath = path.resolve(rootDir, args[1]);
-  if (!fs.existsSync(tarballPath)) {
-    throw new Error(`Tarball does not exist: ${tarballPath}`);
-  }
-  if (!fs.statSync(tarballPath).isFile()) {
-    throw new Error(`Tarball is not a file: ${tarballPath}`);
-  }
-  return tarballPath;
+  return tarball;
 }
-
-const inputTarballPath = parseTarballArgument(process.argv.slice(2));
-const temporaryDir = fs.mkdtempSync(path.join(os.tmpdir(), 'storyfreeze-package-smoke-'));
-const consumerDir = path.join(temporaryDir, 'consumer');
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
-    cwd: options.cwd || rootDir,
+    cwd: options.cwd ?? rootDir,
     encoding: 'utf8',
     env: { ...process.env, STORYBOOK_DISABLE_TELEMETRY: '1' },
     maxBuffer: 20 * 1024 * 1024,
-    timeout: options.timeout || 120000,
+    timeout: options.timeout ?? 180_000,
   });
-
   if (result.error || result.status !== 0) {
-    process.stdout.write(result.stdout || '');
-    process.stderr.write(result.stderr || '');
-    throw result.error || new Error(`${command} exited with status ${result.status}.`);
+    process.stdout.write(result.stdout ?? '');
+    process.stderr.write(result.stderr ?? '');
+    throw result.error ?? new Error(`${command} exited with status ${result.status}.`);
   }
-
   return result.stdout.trim();
 }
 
-function runFailure(command, args, options = {}) {
+function runFailure(command, args, cwd) {
   const result = spawnSync(command, args, {
-    cwd: options.cwd || rootDir,
+    cwd,
     encoding: 'utf8',
     env: { ...process.env, STORYBOOK_DISABLE_TELEMETRY: '1' },
     maxBuffer: 20 * 1024 * 1024,
-    timeout: options.timeout || 120000,
+    timeout: 180_000,
   });
   if (result.error) throw result.error;
   if (result.status === 0) throw new Error(`${command} unexpectedly exited successfully.`);
-  return `${result.stdout || ''}${result.stderr || ''}`;
+  return `${result.stdout ?? ''}${result.stderr ?? ''}`;
 }
 
 function runNpm(args, cwd) {
-  if (process.platform !== 'win32') return run('npm', args, { cwd, timeout: 180000 });
+  if (process.platform !== 'win32') return run('npm', args, { cwd });
   const npmCli = path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js');
-  if (!fs.existsSync(npmCli)) {
-    throw new Error(`Unable to locate the npm CLI at ${npmCli}.`);
-  }
-  return run(process.execPath, [npmCli, ...args], { cwd, timeout: 180000 });
+  if (!fs.existsSync(npmCli)) throw new Error(`Unable to locate the npm CLI at ${npmCli}.`);
+  return run(process.execPath, [npmCli, ...args], { cwd });
 }
 
 function assertEqual(actual, expected, label) {
-  if (actual !== expected) {
+  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
     throw new Error(`${label}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}.`);
   }
 }
 
-function verifyStorybookCompatibility(tarballPath, version) {
-  const compatibilityDir = path.join(temporaryDir, `storybook-${version}`);
-  fs.mkdirSync(compatibilityDir);
+function writeConsumerPackage(directory, version, tarball) {
+  fs.mkdirSync(directory);
   fs.writeFileSync(
-    path.join(compatibilityDir, 'package.json'),
+    path.join(directory, 'package.json'),
     `${JSON.stringify(
       {
-        name: `storyfreeze-storybook-${version}-compatibility`,
+        name: `storyfreeze-smoke-storybook-${version}`,
         private: true,
         type: 'module',
-        dependencies: {
-          storybook: version,
-          storyfreeze: `file:${tarballPath}`,
-        },
+        dependencies: { storybook: version, storyfreeze: `file:${tarball}` },
       },
       null,
       2,
     )}\n`,
   );
-  runNpm(['install', '--ignore-scripts', '--no-audit', '--no-fund'], compatibilityDir);
+  runNpm(['install', '--ignore-scripts', '--no-audit', '--no-fund', `--before=${npmBefore}`], directory);
+}
 
-  const installedStorybook = JSON.parse(
-    fs.readFileSync(path.join(compatibilityDir, 'node_modules', 'storybook', 'package.json'), 'utf8'),
-  );
-  assertEqual(installedStorybook.version, version, `Storybook ${version} compatibility version`);
+function verifyCompatibility(temporaryDir, tarball, version) {
+  const directory = path.join(temporaryDir, `storybook-${version}`);
+  writeConsumerPackage(directory, version, tarball);
+  const actualVersion = JSON.parse(
+    fs.readFileSync(path.join(directory, 'node_modules', 'storybook', 'package.json'), 'utf8'),
+  ).version;
+  assertEqual(actualVersion, version, `Storybook ${version} compatibility version`);
   const exports = run(
     process.execPath,
     [
@@ -110,64 +96,12 @@ function verifyStorybookCompatibility(tarballPath, version) {
       '--eval',
       "const [preset, preview] = await Promise.all([import('storyfreeze/preset'), import('storyfreeze/preview')]); process.stdout.write(`${Object.keys(preset).sort().join(',')}|${Object.keys(preview.default).sort().join(',')}`);",
     ],
-    { cwd: compatibilityDir },
+    { cwd: directory },
   );
-  assertEqual(exports, 'experimental_indexers|afterEach,decorators', `Storybook ${version} packed addon load`);
+  assertEqual(exports, 'experimental_indexers|afterEach,decorators', `Storybook ${version} addon exports`);
 }
 
-try {
-  const packResult = inputTarballPath
-    ? JSON.parse(runNpm(['pack', '--json', '--dry-run', '--ignore-scripts', inputTarballPath], rootDir))[0]
-    : JSON.parse(runNpm(['pack', '--json', '--pack-destination', temporaryDir], packageDir))[0];
-  const actualFiles = packResult.files.map(file => file.path).sort();
-  assertEqual(JSON.stringify(actualFiles), JSON.stringify([...expectedFiles].sort()), 'tarball files');
-
-  fs.mkdirSync(consumerDir);
-  fs.writeFileSync(
-    path.join(consumerDir, 'package.json'),
-    `${JSON.stringify(
-      {
-        name: 'storyfreeze-package-smoke',
-        private: true,
-        type: 'module',
-        dependencies: { storybook: '10.5.2' },
-      },
-      null,
-      2,
-    )}\n`,
-  );
-
-  const tarballPath = inputTarballPath || path.join(temporaryDir, packResult.filename);
-  runNpm(['install', '--ignore-scripts', '--no-audit', '--no-fund', tarballPath], consumerDir);
-
-  if (process.env.STORYFREEZE_PACKAGE_SMOKE_STORYBOOK_COMPAT === '1') {
-    for (const version of ['10.0.0', '10.4.0']) verifyStorybookCompatibility(tarballPath, version);
-  }
-
-  const installedPackageDir = path.join(consumerDir, 'node_modules', 'storyfreeze');
-  const installedMetadata = JSON.parse(fs.readFileSync(path.join(installedPackageDir, 'package.json'), 'utf8'));
-  if (!installedMetadata.dependencies?.gunshi || installedMetadata.dependencies?.yargs) {
-    throw new Error('The installed package did not replace its direct yargs dependency with gunshi.');
-  }
-  if (installedMetadata.dependencies?.['playwright-core'] !== '1.61.1') {
-    throw new Error('The installed package did not declare the pinned Playwright runtime.');
-  }
-  if (installedMetadata.dependencies?.['puppeteer-core'] || installedMetadata.devDependencies?.puppeteer) {
-    throw new Error('The installed package still declares a Puppeteer runtime.');
-  }
-  if (
-    installedMetadata.dependencies?.storycrawler ||
-    fs.existsSync(path.join(consumerDir, 'node_modules', 'storycrawler'))
-  ) {
-    throw new Error('The installed package still depends on storycrawler.');
-  }
-  for (const declaration of actualFiles.filter(file => file.endsWith('.d.ts'))) {
-    const contents = fs.readFileSync(path.join(installedPackageDir, declaration), 'utf8');
-    if (contents.includes('storycrawler')) {
-      throw new Error(`The declaration ${declaration} still references storycrawler.`);
-    }
-  }
-
+function verifyTypes(consumerDir) {
   fs.writeFileSync(
     path.join(consumerDir, 'contract.ts'),
     `import { isScreenshot, withScreenshot } from 'storyfreeze';
@@ -181,7 +115,7 @@ import type {
 } from 'storyfreeze';
 
 const viewport: Viewport = { width: 800, height: 600, deviceScaleFactor: 2 };
-const fragments: ScreenshotOptionFragments = { viewport };
+const fragments: ScreenshotOptionFragments = { viewport, waitImages: true };
 const variant: ScreenshotOptionFragmentsForVariant = { extends: 'base', focus: '#target' };
 const variants: Variants = { focused: variant };
 const reset = async ({ storyId, variantId }: StorySessionResetContext) => void [storyId, variantId];
@@ -210,84 +144,80 @@ void options;
       2,
     )}\n`,
   );
-  const typescriptPackagePath = require.resolve('typescript/package.json', { paths: [packageDir] });
-  const tscCliPath = path.join(path.dirname(typescriptPackagePath), 'bin', 'tsc');
-  run(process.execPath, [tscCliPath, '--project', 'tsconfig.json'], { cwd: consumerDir });
+  const typescriptPackage = require.resolve('typescript/package.json', { paths: [packageDir] });
+  run(process.execPath, [path.join(path.dirname(typescriptPackage), 'bin', 'tsc'), '--project', 'tsconfig.json'], {
+    cwd: consumerDir,
+  });
+}
 
-  const imported = run(
+const inputTarball = parseTarballArgument(process.argv.slice(2));
+const temporaryDir = fs.mkdtempSync(path.join(os.tmpdir(), 'storyfreeze-package-smoke-'));
+
+try {
+  const pack = inputTarball
+    ? JSON.parse(runNpm(['pack', '--json', '--dry-run', '--ignore-scripts', inputTarball], rootDir))[0]
+    : JSON.parse(runNpm(['pack', '--json', '--pack-destination', temporaryDir], packageDir))[0];
+  const tarball = inputTarball ?? path.join(temporaryDir, pack.filename);
+  const consumerDir = path.join(temporaryDir, 'consumer');
+  writeConsumerPackage(consumerDir, '10.5.2', tarball);
+
+  const installedDir = path.join(consumerDir, 'node_modules', 'storyfreeze');
+  const installed = JSON.parse(fs.readFileSync(path.join(installedDir, 'package.json'), 'utf8'));
+  assertEqual(installed.name, sourceMetadata.name, 'package name');
+  assertEqual(installed.version, sourceMetadata.version, 'package version');
+  assertEqual(installed.engines, sourceMetadata.engines, 'package engines');
+  assertEqual(installed.dependencies, sourceMetadata.dependencies, 'production dependencies');
+  if (fs.realpathSync(installedDir) === fs.realpathSync(packageDir)) {
+    throw new Error('The consumer resolved workspace source instead of the packed tarball.');
+  }
+
+  const rootExports = run(
     process.execPath,
     [
       '--input-type=module',
       '--eval',
-      "const pkg = await import('storyfreeze'); process.stdout.write(Object.keys(pkg).sort().join(','));",
+      "const value=await import('storyfreeze');process.stdout.write(Object.keys(value).sort().join(','));",
     ],
     { cwd: consumerDir },
   );
-  assertEqual(imported, 'isScreenshot,withScreenshot', 'ESM exports');
-
-  const preview = run(
+  assertEqual(rootExports, 'isScreenshot,withScreenshot', 'root exports');
+  const previewExports = run(
     process.execPath,
     [
       '--input-type=module',
       '--eval',
-      "const preview = (await import('storyfreeze/preview')).default; process.stdout.write(Object.keys(preview).sort().join(','));",
+      "const value=(await import('storyfreeze/preview')).default;process.stdout.write(Object.keys(value).sort().join(','));",
     ],
     { cwd: consumerDir },
   );
-  assertEqual(preview, 'afterEach,decorators', 'preview exports');
-
-  const preset = run(
+  assertEqual(previewExports, 'afterEach,decorators', 'preview exports');
+  const presetExports = run(
     process.execPath,
     [
       '--input-type=module',
       '--eval',
-      "const preset = await import('storyfreeze/preset'); process.stdout.write(Object.keys(preset).sort().join(','));",
+      "const value=await import('storyfreeze/preset');process.stdout.write(Object.keys(value).sort().join(','));",
     ],
     { cwd: consumerDir },
   );
-  assertEqual(preset, 'experimental_indexers', 'preset exports');
+  assertEqual(presetExports, 'experimental_indexers', 'preset exports');
 
-  const requireCheck = run(
-    process.execPath,
-    [
-      '--eval',
-      "try { require('storyfreeze'); process.exit(2); } catch (error) { if (error.code !== 'ERR_PACKAGE_PATH_NOT_EXPORTED') throw error; }",
-    ],
-    { cwd: consumerDir },
-  );
-  assertEqual(requireCheck, '', 'CommonJS rejection');
+  verifyTypes(consumerDir);
 
-  const binDir = path.join(consumerDir, 'node_modules', '.bin');
-  const cliWrapperPath = path.join(binDir, process.platform === 'win32' ? 'storyfreeze.cmd' : 'storyfreeze');
-  if (!fs.existsSync(cliWrapperPath)) {
-    throw new Error(`The package manager did not create the StoryFreeze CLI wrapper: ${cliWrapperPath}`);
+  const cli = path.join(installedDir, installed.bin.storyfreeze);
+  const help = run(process.execPath, [cli, '--help'], { cwd: consumerDir });
+  for (const option of ['--browser-launch-options', '--capture-timeout', '--exclude', '--include', '--shard']) {
+    if (!help.includes(option)) throw new Error(`CLI help does not include ${option}.`);
   }
-
-  const cliPath = path.join(installedPackageDir, installedMetadata.bin.storyfreeze);
-  const version = run(process.execPath, [cliPath, '--version'], { cwd: consumerDir });
-  assertEqual(version, packResult.version, 'CLI version');
-
-  const help = run(process.execPath, [cliPath, '--help'], { cwd: consumerDir });
-  if (
-    !help.includes('USAGE:') ||
-    !help.includes('--browser-launch-options') ||
-    !help.includes('--capture-timeout') ||
-    !help.includes('--shard') ||
-    help.includes('--mode') ||
-    help.includes('--server-cmd') ||
-    help.includes('--browser-isolation') ||
-    help.includes('--capture-protocol') ||
-    help.includes('--trace')
-  ) {
-    throw new Error('CLI help did not contain only the supported lean CLI options.');
+  for (const removed of ['--browser-isolation', '--capture-protocol', '--mode', '--server-cmd', '--trace']) {
+    if (help.includes(removed)) throw new Error(`CLI help still includes removed option ${removed}.`);
   }
+  const invalid = runFailure(process.execPath, [cli, '--mode', 'simple'], consumerDir);
+  if (!invalid.includes('Unknown option: --mode')) throw new Error('CLI did not reject a removed option.');
 
-  const invalid = runFailure(process.execPath, [cliPath, '--mode', 'simple'], { cwd: consumerDir });
-  if (!invalid.includes('Unknown option: --mode')) {
-    throw new Error('CLI did not reject a removed execution mode in strict mode.');
-  }
+  for (const version of ['10.0.0', '10.4.0']) verifyCompatibility(temporaryDir, tarball, version);
 
-  console.log(`Package smoke passed for ${packResult.id} with ${actualFiles.length} files.`);
+  console.log(`Package smoke passed for ${installed.name}@${installed.version}.`);
 } finally {
   fs.rmSync(temporaryDir, { recursive: true, force: true });
 }

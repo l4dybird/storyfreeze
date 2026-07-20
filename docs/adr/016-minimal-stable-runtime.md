@@ -94,17 +94,17 @@ The following measurements use the same commands on RC.2 commit `63dbda8` and
 the Phase 6M candidate. “Production lines” means physical lines in non-test
 TypeScript files; it is reported for scale and is not a release gate.
 
-| Measure                     |      RC.2 |         Phase 6M |  Change |
-| --------------------------- | --------: | ---------------: | ------: |
-| TypeScript files            |        87 |               59 |  -32.2% |
-| Production TypeScript files |        55 |               37 |  -32.7% |
-| Production physical lines   |    10,629 |            4,613 |  -56.6% |
-| Script files                |        26 |               13 |  -50.0% |
-| Workflow files              |         5 |                4 |  -20.0% |
-| Packed package files        |       223 |              151 |  -32.3% |
-| Tarball bytes               |   188,030 |           98,703 |  -47.5% |
-| Unpacked bytes              |   882,090 |          409,518 |  -53.6% |
-| Pull-request runner seconds | about 519 | pending final CI | pending |
+| Measure                     |      RC.2 | Phase 6M | Change |
+| --------------------------- | --------: | -------: | -----: |
+| TypeScript files            |        87 |       59 | -32.2% |
+| Production TypeScript files |        55 |       37 | -32.7% |
+| Production physical lines   |    10,629 |    4,613 | -56.6% |
+| Script files                |        26 |       13 | -50.0% |
+| Workflow files              |         5 |        4 | -20.0% |
+| Packed package files        |       223 |      151 | -32.3% |
+| Tarball bytes               |   188,030 |   98,703 | -47.5% |
+| Unpacked bytes              |   882,090 |  409,518 | -53.6% |
+| Pull-request runner seconds | about 519 |      287 | -44.7% |
 
 Performance is a release decision, not a pull-request benchmark. Raw measurements
 are uploaded as Azure artifacts and are not committed to the repository. The

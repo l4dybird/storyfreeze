@@ -53,10 +53,18 @@ describe(bootCaptureWorkers, () => {
       const delayed = new Promise<void>(resolve => (release = resolve));
       releases.push(release);
       const worker = {
-        boot: vi.fn(async () => {
-          await delayed;
-          events.push(`boot ${index}`);
-          return worker;
+        boot: vi.fn(async (_options, signal?: AbortSignal) => {
+          if (signal?.aborted) throw signal.reason;
+          return new Promise<typeof worker>((resolve, reject) => {
+            const onAbort = () => reject(signal?.reason);
+            signal?.addEventListener('abort', onAbort, { once: true });
+            void delayed.then(() => {
+              signal?.removeEventListener('abort', onAbort);
+              if (signal?.aborted) return;
+              events.push(`boot ${index}`);
+              resolve(worker);
+            });
+          });
         }),
         close: vi.fn(async () => {
           events.push(`close ${index}`);
@@ -73,7 +81,8 @@ describe(bootCaptureWorkers, () => {
     releases.forEach(release => release());
     await rejection;
     expect(workers.every(worker => worker.close.mock.calls.length === 1)).toBe(true);
-    expect(events).toEqual(['close 0', 'close 1', 'boot 0', 'boot 1']);
+    expect(events).toEqual(['close 0', 'close 1']);
+    expect(workers.every(worker => worker.boot.mock.calls[0][1] === controller.signal)).toBe(true);
     expect(releases).toHaveLength(2);
   });
 });

@@ -24,7 +24,7 @@ async function boundedOperation<T>(operation: Promise<T>, timeoutMs: number, lab
 }
 
 type BootableCaptureWorker<T> = {
-  boot(options?: BrowserSessionOptions): Promise<T>;
+  boot(options?: BrowserSessionOptions, signal?: AbortSignal): Promise<T>;
   close(): Promise<void>;
 };
 
@@ -47,7 +47,7 @@ export async function bootCaptureWorkers<T extends BootableCaptureWorker<T>>(
   signal?.addEventListener('abort', onAbort, { once: true });
   const boots = workers.map(worker =>
     Promise.resolve()
-      .then(() => worker.boot())
+      .then(() => worker.boot(undefined, signal))
       .catch(error => {
         firstFailure ??= { reason: error };
         void closeWorkers();

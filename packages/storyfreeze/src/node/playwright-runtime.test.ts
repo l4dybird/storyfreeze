@@ -59,6 +59,26 @@ describe(PlaywrightRuntime, () => {
     expect(fixture.browser.close).toHaveBeenCalledOnce();
   });
 
+  it('rejects boot on abort while close drains the finite in-flight launch', async () => {
+    const fixture = runtimeFixture();
+    let releaseLaunch = () => {};
+    const launchGate = new Promise<void>(resolve => (releaseLaunch = resolve));
+    playwright.launch.mockImplementation(async () => {
+      await launchGate;
+      return fixture.browser;
+    });
+    const controller = new AbortController();
+    const runtime = new PlaywrightRuntime({});
+    const booting = runtime.boot(undefined, controller.signal);
+    await vi.waitFor(() => expect(playwright.launch).toHaveBeenCalledOnce());
+
+    controller.abort(new Error('cancelled'));
+    await expect(booting).rejects.toThrow('cancelled');
+    releaseLaunch();
+    await runtime.close();
+    expect(fixture.browser.close).toHaveBeenCalledOnce();
+  });
+
   it('forwards every explicit Playwright launch option while owning the resolved executable path', async () => {
     runtimeFixture();
     const runtime = new PlaywrightRuntime({
@@ -108,6 +128,7 @@ describe(PlaywrightRuntime, () => {
       chromiumSandbox: true,
       executablePath: process.execPath,
       headless: true,
+      timeout: 30_000,
     });
     await runtime.recreate();
     expect(playwright.launch).toHaveBeenCalledOnce();
@@ -116,5 +137,18 @@ describe(PlaywrightRuntime, () => {
 
     await Promise.all([runtime.close(), runtime.close()]);
     expect(fixture.browser.close).toHaveBeenCalledOnce();
+  });
+
+  it('replaces a disabled launch timeout with the finite lifecycle default', async () => {
+    runtimeFixture();
+    const runtime = new PlaywrightRuntime({ launchOptions: { timeout: 0 } });
+    await runtime.boot();
+    expect(playwright.launch).toHaveBeenCalledWith({
+      chromiumSandbox: true,
+      executablePath: process.execPath,
+      headless: true,
+      timeout: 30_000,
+    });
+    await runtime.close();
   });
 });

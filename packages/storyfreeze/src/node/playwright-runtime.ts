@@ -26,8 +26,11 @@ export type BrowserLaunchOptions = {
   args?: string[];
   executablePath?: string;
   headless?: boolean;
+  timeout?: number;
   [key: string]: unknown;
 };
+
+const defaultBrowserLaunchTimeoutMs = 30_000;
 
 export interface PlaywrightRuntimeOptions {
   launchOptions?: BrowserLaunchOptions;
@@ -360,18 +363,20 @@ export class PlaywrightRuntime {
     return Boolean(this.browser?.isConnected() && this.capturePage?.isHealthy());
   }
 
-  async boot(options?: BrowserSessionOptions): Promise<this> {
+  async boot(options?: BrowserSessionOptions, signal?: AbortSignal): Promise<this> {
+    if (signal?.aborted) throw this.abortReason(signal);
     if (this.closePromise) await this.closePromise;
     if (this.capturePage) return this;
-    if (this.bootPromise) return this.bootPromise;
-    const generation = this.lifecycleGeneration;
-    const boot = this.performBoot(this.prepareSessionOptions(options), generation);
-    this.bootPromise = boot;
-    try {
-      return await boot;
-    } finally {
-      if (this.bootPromise === boot) this.bootPromise = undefined;
+    if (!this.bootPromise) {
+      const generation = this.lifecycleGeneration;
+      const boot = this.performBoot(this.prepareSessionOptions(options), generation);
+      this.bootPromise = boot;
+      const clear = () => {
+        if (this.bootPromise === boot) this.bootPromise = undefined;
+      };
+      void boot.then(clear, clear);
     }
+    return this.waitForBoot(this.bootPromise, signal);
   }
 
   protected async recreateContext(options?: BrowserSessionOptions) {
@@ -430,11 +435,17 @@ export class PlaywrightRuntime {
       }
       const executablePath = await this.locateChromium();
       if (!executablePath) throw new ChromiumNotFoundError();
+      const configuredTimeout = this.opt.launchOptions?.timeout;
+      const timeout =
+        typeof configuredTimeout === 'number' && Number.isFinite(configuredTimeout) && configuredTimeout > 0
+          ? configuredTimeout
+          : defaultBrowserLaunchTimeoutMs;
       this.browser = await chromium.launch({
         chromiumSandbox: true,
         headless: true,
         ...this.opt.launchOptions,
         executablePath,
+        timeout,
       } as Parameters<typeof chromium.launch>[0]);
       this._executablePath = executablePath;
       if (generation !== this.lifecycleGeneration) throw new Error('Browser boot was superseded by close.');
@@ -500,6 +511,33 @@ export class PlaywrightRuntime {
     if (!activeBoot) return;
     await activeBoot.catch(() => undefined);
     await this.cleanupResources();
+  }
+
+  private abortReason(signal: AbortSignal) {
+    return signal.reason instanceof Error ? signal.reason : new Error('Browser boot was interrupted.');
+  }
+
+  private waitForBoot(boot: Promise<this>, signal?: AbortSignal): Promise<this> {
+    if (!signal) return boot;
+    if (signal.aborted) {
+      void this.close().catch(() => undefined);
+      return Promise.reject(this.abortReason(signal));
+    }
+    return new Promise((resolve, reject) => {
+      const onAbort = () => {
+        void this.close().catch(() => undefined);
+        reject(this.abortReason(signal));
+      };
+      const finish = (action: () => void) => {
+        signal.removeEventListener('abort', onAbort);
+        action();
+      };
+      signal.addEventListener('abort', onAbort, { once: true });
+      boot.then(
+        value => finish(() => resolve(value)),
+        error => finish(() => reject(error)),
+      );
+    });
   }
 
   private async locateChromium() {

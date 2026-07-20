@@ -113,6 +113,26 @@ describe(FileSystem, () => {
     await expect(fs.stat(path.join(parent, 'Escaped.png'))).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
+  it('revalidates a directory symlink before every write', async () => {
+    const parent = await fs.mkdtemp(path.join(os.tmpdir(), 'storyfreeze-output-retarget-'));
+    roots.push(parent);
+    const outDir = path.join(parent, 'output');
+    const inside = path.join(outDir, 'inside');
+    const linked = path.join(outDir, 'Linked');
+    await fs.mkdir(inside, { recursive: true });
+    await fs.symlink(inside, linked, process.platform === 'win32' ? 'junction' : 'dir');
+    const fileSystem = new FileSystem({ outDir, flat: false, parallel: 4 } as MainOptions);
+
+    await fileSystem.saveScreenshot('Linked', 'First', [], Buffer.from('first'));
+    await fs.rm(linked, { force: true });
+    await fs.symlink(parent, linked, process.platform === 'win32' ? 'junction' : 'dir');
+
+    await expect(fileSystem.saveScreenshot('Linked', 'Second', [], Buffer.from('second'))).rejects.toThrow(
+      'outside the output directory',
+    );
+    await expect(fs.stat(path.join(parent, 'Second.png'))).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
   it('closes the output owner after an atomic write failure', async () => {
     const { fileSystem } = await output();
     vi.spyOn(fs, 'rename').mockRejectedValueOnce(new Error('rename failed'));

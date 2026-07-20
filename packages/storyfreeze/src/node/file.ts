@@ -121,7 +121,10 @@ export class FileSystem {
         return realDirectory;
       })();
       this.directoryPromises.set(directory, creating);
-      void creating.catch(() => this.directoryPromises.delete(directory));
+      const clear = () => {
+        if (this.directoryPromises.get(directory) === creating) this.directoryPromises.delete(directory);
+      };
+      void creating.then(clear, clear);
     }
     return creating;
   }
@@ -233,17 +236,19 @@ export class FileSystem {
     relativePath: string,
     signal?: AbortSignal,
   ) {
-    const temporaryPath = `${filePath}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`;
+    let temporaryPath: string | undefined;
     try {
       const realDirectory = await this.ensureDirectory(path.dirname(filePath));
-      this.reservePath(path.join(realDirectory, path.basename(filePath)), identity, relativePath);
+      const physicalPath = path.join(realDirectory, path.basename(filePath));
+      this.reservePath(physicalPath, identity, relativePath);
+      temporaryPath = `${physicalPath}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`;
       if (signal?.aborted) throw signal.reason ?? new Error('Screenshot output write was aborted.');
       await fs.writeFile(temporaryPath, buffer, signal ? { signal } : undefined);
       if (signal?.aborted) throw signal.reason ?? new Error('Screenshot output write was aborted.');
-      await fs.rename(temporaryPath, filePath);
+      await fs.rename(temporaryPath, physicalPath);
     } catch (error) {
       this.fail(error);
-      await fs.rm(temporaryPath, { force: true }).catch(() => undefined);
+      if (temporaryPath) await fs.rm(temporaryPath, { force: true }).catch(() => undefined);
       throw error;
     }
   }

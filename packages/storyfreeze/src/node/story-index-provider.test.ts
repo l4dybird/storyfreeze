@@ -48,7 +48,10 @@ describe(StorybookStoryIndexProvider, () => {
         viewportProfileHint: 'mobile portrait',
       },
     ]);
-    expect(fetchMock).toHaveBeenCalledWith(new URL('https://example.test/storybook/index.json'), { signal });
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock.mock.calls[0][0]).toEqual(new URL('https://example.test/storybook/index.json'));
+    expect(fetchMock.mock.calls[0][1]?.signal).toBeInstanceOf(AbortSignal);
+    expect(fetchMock.mock.calls[0][1]?.signal?.aborted).toBe(false);
   });
 
   it('rejects unsuccessful HTTP responses', async () => {
@@ -63,6 +66,22 @@ describe(StorybookStoryIndexProvider, () => {
     await expect(new StorybookStoryIndexProvider().load(new URL('https://example.test'))).rejects.toThrow(
       'Invalid JSON',
     );
+  });
+
+  it('aborts the index request when its operation timeout expires', async () => {
+    let requestSignal: AbortSignal | undefined;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(
+      (_url, options) =>
+        new Promise((_resolve, reject) => {
+          requestSignal = options?.signal ?? undefined;
+          requestSignal?.addEventListener('abort', () => reject(requestSignal?.reason), { once: true });
+        }),
+    );
+
+    await expect(new StorybookStoryIndexProvider().load(new URL('https://example.test'), undefined, 5)).rejects.toThrow(
+      'Story index load did not settle within 5 msec',
+    );
+    expect(requestSignal?.aborted).toBe(true);
   });
 
   it.each([

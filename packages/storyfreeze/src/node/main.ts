@@ -17,12 +17,6 @@ function throwIfAborted(signal?: AbortSignal) {
   throw signal.reason instanceof Error ? signal.reason : new Error('StoryFreeze was interrupted.');
 }
 
-async function boundedOperation<T>(operation: Promise<T>, timeoutMs: number, label: string, signal?: AbortSignal) {
-  const result = await raceAgainstTimeout(operation, timeoutMs, signal);
-  if (result.timedOut) throw new Error(`${label} did not settle within ${timeoutMs} msec.`);
-  return result.value;
-}
-
 type BootableCaptureWorker<T> = {
   boot(options?: BrowserSessionOptions, signal?: AbortSignal): Promise<T>;
   close(): Promise<void>;
@@ -146,12 +140,7 @@ export async function main(mainOptions: MainOptions, overrides: Partial<MainDepe
     connection = new ManagedStorybookConnection(mainOptions.serverOptions, logger);
     const storyIndexProvider = new StorybookStoryIndexProvider();
     await connection.connect(mainOptions.signal);
-    const allStories = await boundedOperation(
-      storyIndexProvider.load(new URL(connection.url), mainOptions.signal),
-      operationTimeoutMs,
-      'Story index load',
-      mainOptions.signal,
-    );
+    const allStories = await storyIndexProvider.load(new URL(connection.url), mainOptions.signal, operationTimeoutMs);
     throwIfAborted(mainOptions.signal);
 
     const stories = filterStories(allStories, mainOptions.include, mainOptions.exclude);

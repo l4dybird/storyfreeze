@@ -99,6 +99,18 @@ describe(FileSystem, () => {
     ).rejects.toThrow('Output path collision');
   });
 
+  it('rejects a directory symlink that escapes the output root', async () => {
+    const { outDir, fileSystem } = await output();
+    const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'storyfreeze-outside-'));
+    roots.push(outside);
+    await fs.symlink(outside, path.join(outDir, 'Linked'), process.platform === 'win32' ? 'junction' : 'dir');
+
+    await expect(fileSystem.saveScreenshot('Linked', 'Escaped', [], Buffer.from('png'))).rejects.toThrow(
+      'outside the output directory',
+    );
+    await expect(fs.stat(path.join(outside, 'Escaped.png'))).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
   it('closes the output owner after an atomic write failure', async () => {
     const { fileSystem } = await output();
     vi.spyOn(fs, 'rename').mockRejectedValueOnce(new Error('rename failed'));

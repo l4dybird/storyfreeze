@@ -27,7 +27,7 @@ type Waiter = {
 /** Safe output paths plus one weighted screenshot-to-write ownership budget. */
 export class FileSystem {
   private readonly reservedPaths = new Map<string, string>();
-  private readonly directoryPromises = new Map<string, Promise<void>>();
+  private readonly directoryPromises = new Map<string, Promise<string>>();
   private readonly outputRoot: string;
   private readonly maximumConcurrent: number;
   private readonly maximumBytes = MAXIMUM_RETAINED_SCREENSHOT_BYTES;
@@ -36,10 +36,22 @@ export class FileSystem {
   private active = 0;
   private activeBytes = 0;
   private failure?: { error: unknown };
+  private outputRootRealPath?: Promise<string>;
 
   constructor(private readonly opt: MainOptions) {
     this.outputRoot = path.resolve(opt.outDir);
     this.maximumConcurrent = Math.max(1, Math.min(8, opt.parallel || 1));
+  }
+
+  private reservePath(resolvedPath: string, identity: string, relativePath: string) {
+    const key = process.platform === 'win32' ? resolvedPath.toLowerCase() : resolvedPath;
+    const existing = this.reservedPaths.get(key);
+    if (existing !== undefined && existing !== identity) {
+      throw new Error(
+        `Output path collision for ${relativePath}. Use unique story names and variant suffixes so captures cannot overwrite each other.`,
+      );
+    }
+    this.reservedPaths.set(key, identity);
   }
 
   private getPath(kind: string, story: string, suffix: string[], extension: string, logicalId?: string) {
@@ -57,22 +69,57 @@ export class FileSystem {
       throw new Error(`Refusing to write outside the output directory: ${relativePath}`);
     }
 
-    const key = process.platform === 'win32' ? resolvedPath.toLowerCase() : resolvedPath;
     const identity = logicalId ?? JSON.stringify({ extension, kind, story, suffix });
-    const existing = this.reservedPaths.get(key);
-    if (existing !== undefined && existing !== identity) {
-      throw new Error(
-        `Output path collision for ${relativePath}. Use unique story names and variant suffixes so captures cannot overwrite each other.`,
-      );
+    this.reservePath(resolvedPath, identity, relativePath);
+    return { identity, relativePath, resolvedPath };
+  }
+
+  private ensureOutputRoot() {
+    if (!this.outputRootRealPath) {
+      const resolving = fs
+        .mkdir(this.outputRoot, { recursive: true })
+        .then(() => fs.realpath(this.outputRoot))
+        .catch(error => {
+          if (this.outputRootRealPath === resolving) this.outputRootRealPath = undefined;
+          throw error;
+        });
+      this.outputRootRealPath = resolving;
     }
-    this.reservedPaths.set(key, identity);
-    return resolvedPath;
+    return this.outputRootRealPath;
+  }
+
+  private async nearestExistingRealPath(directory: string) {
+    let current = directory;
+    while (true) {
+      try {
+        return await fs.realpath(current);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      }
+      const parent = path.dirname(current);
+      if (parent === current) throw new Error(`Unable to resolve an existing output directory for ${directory}.`);
+      current = parent;
+    }
+  }
+
+  private assertPhysicalContainment(outputRoot: string, candidate: string) {
+    const relative = path.relative(outputRoot, candidate);
+    if (relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+      throw new Error(`Refusing to write through a directory outside the output directory: ${candidate}`);
+    }
   }
 
   private ensureDirectory(directory: string) {
     let creating = this.directoryPromises.get(directory);
     if (!creating) {
-      creating = fs.mkdir(directory, { recursive: true }).then(() => undefined);
+      creating = (async () => {
+        const outputRoot = await this.ensureOutputRoot();
+        this.assertPhysicalContainment(outputRoot, await this.nearestExistingRealPath(directory));
+        await fs.mkdir(directory, { recursive: true });
+        const realDirectory = await fs.realpath(directory);
+        this.assertPhysicalContainment(outputRoot, realDirectory);
+        return realDirectory;
+      })();
       this.directoryPromises.set(directory, creating);
       void creating.catch(() => this.directoryPromises.delete(directory));
     }
@@ -179,10 +226,17 @@ export class FileSystem {
     this.release(permit);
   }
 
-  private async writeAtomic(filePath: string, buffer: Buffer, signal?: AbortSignal) {
+  private async writeAtomic(
+    filePath: string,
+    buffer: Buffer,
+    identity: string,
+    relativePath: string,
+    signal?: AbortSignal,
+  ) {
     const temporaryPath = `${filePath}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`;
     try {
-      await this.ensureDirectory(path.dirname(filePath));
+      const realDirectory = await this.ensureDirectory(path.dirname(filePath));
+      this.reservePath(path.join(realDirectory, path.basename(filePath)), identity, relativePath);
       if (signal?.aborted) throw signal.reason ?? new Error('Screenshot output write was aborted.');
       await fs.writeFile(temporaryPath, buffer, signal ? { signal } : undefined);
       if (signal?.aborted) throw signal.reason ?? new Error('Screenshot output write was aborted.');
@@ -214,9 +268,15 @@ export class FileSystem {
       this.bufferPermits.set(buffer, permit);
     }
     try {
-      const filePath = this.getPath(kind, story, suffix, '.png', logicalId);
-      await this.writeAtomic(filePath, buffer, writeSignal);
-      return filePath;
+      const destination = this.getPath(kind, story, suffix, '.png', logicalId);
+      await this.writeAtomic(
+        destination.resolvedPath,
+        buffer,
+        destination.identity,
+        destination.relativePath,
+        writeSignal,
+      );
+      return destination.resolvedPath;
     } finally {
       this.releaseScreenshotBuffer(buffer);
     }

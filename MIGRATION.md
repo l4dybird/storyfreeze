@@ -3,8 +3,8 @@
 <!-- toc -->
 
 - [From Storycapture 9 to StoryFreeze](#from-storycapture-9-to-storyfreeze)
+- [From 0.2.0-rc.2 to the stable runtime contract](#from-020-rc2-to-the-stable-runtime-contract)
 - [Migrating to the Playwright-only browser runtime](#migrating-to-the-playwright-only-browser-runtime)
-- [Adopting the performance roadmap modes](#adopting-the-performance-roadmap-modes)
 - [Migrating the CLI to Gunshi](#migrating-the-cli-to-gunshi)
 - [From storybook-chrome-screenshot 1.x to storyfreeze](#from-storybook-chrome-screenshot-1x-to-storyfreeze)
   - [Replace dependency](#replace-dependency)
@@ -16,7 +16,7 @@
   - [Other deprecated features](#other-deprecated-features)
 - [From zisui 1.x to storyfreeze](#from-zisui-1x-to-storyfreeze)
   - [Replace dependency](#replace-dependency-1)
-  - [Simple mode](#simple-mode)
+  - [Add the managed addon](#add-the-managed-addon)
   - [Managed mode for React](#managed-mode-for-react)
 
 <!-- tocstop -->
@@ -62,6 +62,24 @@ The `STORYCAP_SHOW` environment variable is now `STORYFREEZE_SHOW`. The
 available for direct integrations but must not be registered alongside the
 addon. Screenshot output paths and filenames are also unchanged.
 
+## From 0.2.0-rc.2 to the stable runtime contract
+
+StoryFreeze now supports only Storybook 10 static or hosted builds with the
+StoryFreeze addon. Start the server outside StoryFreeze, then pass its URL to
+the CLI. The managed persistent Preview protocol, process-isolated workers, and
+the 128-capture context lifetime are fixed runtime behavior.
+
+Remove `--mode`, `--capture-protocol`, `--browser-isolation`, `--server-cmd`,
+`--server-timeout`, `--trace`, `--metrics-watch-retry-count`,
+`--viewport-delay`, `--reload-after-change-viewport`,
+`--state-change-delay`, `--max-captures-per-context`, `--max-context-age`, and
+`--list-devices`. Removed options are rejected instead of ignored.
+
+Use `parameters.screenshot.waitFor` or `delay` for application-specific
+settling. Start and stop the static server in the surrounding CI job. Chromium
+diagnostics should use Playwright or the browser process directly. Public
+screenshot options, output paths, and PNG semantics are unchanged.
+
 ## Migrating to the Playwright-only browser runtime
 
 StoryFreeze uses Playwright exclusively. Browser installation remains explicit, so install the Chromium revision matched to StoryFreeze after installing or updating the package:
@@ -77,30 +95,12 @@ Remove `--browser-backend puppeteer`; StoryFreeze no longer exposes a backend se
 
 Screenshot paths, parallelism, capture options, and PNG behavior remain unchanged.
 
-## Adopting the performance roadmap modes
-
-The browser isolation default remains `--browser-isolation process`, while the capture protocol default changes from `strict` to `auto`. Existing commands retain one browser process per active worker, but managed Storybooks now reuse one Preview page across stories.
-
-The new browser runtime modes are opt-in:
-
-```sh
-# Up to two browser processes with multiple isolated contexts.
-$ npx storyfreeze --browser-isolation hybrid http://localhost:9001
-
-# Deterministic topology selection from the capture plan and machine capacity.
-$ npx storyfreeze --browser-isolation auto http://localhost:9001
-```
-
-`auto` switches managed stories through Storybook's event channel and falls back to fresh navigation when the internal Preview protocol is unavailable. Use `--capture-protocol strict` to retain fresh navigation for every capture. Use `story-session` to require the managed protocol and fail instead of falling back. Same-story variants continue to use the existing apply/reset validation. Output paths and PNG semantics are unchanged.
-
-Workers recycle after 128 captures by default. Set `--max-captures-per-context 0` to disable the count boundary, or set `--max-context-age` to add an age boundary.
-
 ## Migrating the CLI to Gunshi
 
 The StoryFreeze CLI now uses Gunshi and requires Node.js 22 or newer. Long
 options use kebab-case, so update camelCase invocations such as
-`--serverCmd`, `--outDir`, and `--captureMaxRetryCount` to `--server-cmd`,
-`--out-dir`, and `--capture-max-retry-count`. Legacy camelCase and unknown
+`--outDir` and `--captureMaxRetryCount` to `--out-dir` and
+`--capture-max-retry-count`. Legacy camelCase and unknown
 options are rejected.
 
 Repeat `--include`, `--exclude`, or `--viewport` once for each value. Boolean
@@ -214,7 +214,8 @@ Some fields of `ScreenshotOptions` are deprecated.
 
 ### CLI usage
 
-storyfreeze CLI accepts only Storybook's URL and you can boot local Storybook server with `--server-cmd` option.
+StoryFreeze accepts the URL of an already running static or hosted Storybook.
+Start and stop the server in the surrounding command or CI job.
 
 ```sh
 # Before
@@ -223,14 +224,15 @@ $ storybook-chrome-screenshot -p 8080 -h localhost -s ./public
 
 ```sh
 # After
-$ storyfreeze http://localhost:8080 --server-cmd "start-storybook -p 8080 -h localhost -s ./public"
+$ start-storybook -p 8080 -h localhost -s ./public
+$ storyfreeze http://localhost:8080
 ```
 
 ### CLI options
 
 Some CLI options of storybook-chrome-screenshot are deprecated.
 
-- `--browser-timeout`: Use `--server-timeout` instead of it
+- `--browser-timeout`: Configure the surrounding server job instead
 - `--filter-kind`, `--filter-story`: Use `--include` instead of them
 
 ### Other deprecated features
@@ -246,9 +248,10 @@ $ npm uninstall zisui
 $ npm install storyfreeze
 ```
 
-### Simple mode
+### Add the managed addon
 
-All you need is change CLI name :smile:
+StoryFreeze does not provide an addon-free mode. Add `storyfreeze` to the
+Storybook addons before changing the CLI name:
 
 ```sh
 # Before
@@ -261,8 +264,6 @@ $ zisui http://your.storybook.com
 
 $ storyfreeze http://your.storybook.com
 ```
-
-All CLI options of _zisui_ are available with StoryFreeze.
 
 ### Managed mode for React
 

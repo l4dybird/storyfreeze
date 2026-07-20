@@ -17,7 +17,7 @@ describe(runCli, () => {
     error.mockRestore();
   });
 
-  it('maps defaults to MainOptions', async () => {
+  it('maps the lean CLI to the fixed managed runtime', async () => {
     let received: MainOptions | undefined;
     const main = vi.fn(async (options: MainOptions) => {
       received = options;
@@ -27,24 +27,24 @@ describe(runCli, () => {
     await expect(runCli(['--silent'], { main })).resolves.toBe(0);
 
     expect(received).toMatchObject({
-      serverOptions: {
-        storybookUrl: 'http://localhost:9001',
-        serverCmd: '',
-        serverTimeout: 60_000,
-      },
+      serverOptions: { storybookUrl: 'http://localhost:9001' },
       outDir: '__screenshots__',
       parallel: 4,
-      mode: 'auto',
+      mode: 'managed',
       browserIsolation: 'process',
-      captureProtocol: 'auto',
+      captureProtocol: 'story-session',
       recyclingPolicy: { maxCapturesPerContext: 128, maxContextAgeMs: 0 },
       flat: false,
       include: [],
       exclude: [],
       delay: 0,
       viewportDelay: 0,
+      stateChangeDelay: 0,
+      reloadAfterChangeViewport: false,
       viewports: ['800x600'],
       shard: { shardNumber: 1, totalShards: 1 },
+      metricsWatchRetryCount: 1000,
+      trace: false,
       chromiumChannel: '*',
       chromiumPath: '',
     });
@@ -56,70 +56,39 @@ describe(runCli, () => {
     );
   });
 
-  it('maps context isolation and logs the effective mode', async () => {
-    const main = vi.fn(async (_options: MainOptions) => 0);
-
-    await expect(runCli(['--verbose', '--browser-isolation', 'context'], { main })).resolves.toBe(0);
-
-    expect(main.mock.calls[0][0]).toMatchObject({ browserIsolation: 'context', parallel: 4 });
-    expect(log.mock.calls.flat().join(' ')).toContain('Browser isolation: context');
-  });
-
-  it('maps an explicitly required preview mode', async () => {
-    const main = vi.fn(async (_options: MainOptions) => 0);
-
-    await expect(runCli(['--silent', '--mode', 'managed'], { main })).resolves.toBe(0);
-
-    expect(main.mock.calls[0][0]).toMatchObject({ mode: 'managed' });
-  });
-
-  it('keeps parallelism and forces process isolation for Chromium traces', async () => {
-    const main = vi.fn(async (_options: MainOptions) => 0);
-
-    await expect(
-      runCli(['--verbose', '--trace', '--browser-isolation', 'context', '--parallel', '4'], { main }),
-    ).resolves.toBe(0);
-
-    expect(main.mock.calls[0][0]).toMatchObject({ browserIsolation: 'process', parallel: 4, trace: true });
-    expect(error.mock.calls.flat().join(' ')).toContain(
-      '--trace requires process browser isolation. Using --browser-isolation process with --parallel 4.',
-    );
-    expect(log.mock.calls.flat().join(' ')).toContain('Browser isolation: process');
-  });
-
-  it('supports all existing short options and repeated values', async () => {
+  it('supports retained short options and repeated values', async () => {
     let received: MainOptions | undefined;
     const main = vi.fn(async (options: MainOptions) => {
       received = options;
       return 2;
     });
 
-    const code = await runCli(
-      [
-        'https://example.test',
-        '--silent',
-        '-o',
-        'shots',
-        '-p',
-        '2',
-        '-f',
-        '-i',
-        'Button/**',
-        '-i',
-        'Form/**',
-        '-e',
-        '**/Skip',
-        '-V',
-        '1024x768',
-        '-V',
-        'iPad',
-        '-C',
-        'stable',
-      ],
-      { main },
-    );
-
-    expect(code).toBe(0);
+    await expect(
+      runCli(
+        [
+          'https://example.test',
+          '--silent',
+          '-o',
+          'shots',
+          '-p',
+          '2',
+          '-f',
+          '-i',
+          'Button/**',
+          '-i',
+          'Form/**',
+          '-e',
+          '**/Skip',
+          '-V',
+          '1024x768',
+          '-V',
+          'iPad',
+          '-C',
+          'stable',
+        ],
+        { main },
+      ),
+    ).resolves.toBe(0);
     expect(received).toMatchObject({
       serverOptions: { storybookUrl: 'https://example.test' },
       outDir: 'shots',
@@ -132,49 +101,36 @@ describe(runCli, () => {
     });
   });
 
-  it('maps kebab-case long options and preserves verbose precedence', async () => {
+  it('maps retained long options and preserves verbose precedence', async () => {
     let received: MainOptions | undefined;
     const main = vi.fn(async (options: MainOptions) => {
       received = options;
       return 0;
     });
 
-    const code = await runCli(
-      [
-        '--silent',
-        '--verbose',
-        '--server-cmd',
-        'storybook dev',
-        '--server-timeout',
-        '1234',
-        '--capture-timeout',
-        '456',
-        '--capture-max-retry-count',
-        '7',
-        '--metrics-watch-retry-count',
-        '8',
-        '--viewport-delay',
-        '9',
-        '--state-change-delay',
-        '10',
-        '--reload-after-change-viewport',
-        '--forward-console-logs',
-        '--browser-launch-options',
-        '{"args":["--custom"],"headless":false}',
-      ],
-      { main },
-    );
+    await expect(
+      runCli(
+        [
+          '--silent',
+          '--verbose',
+          '--capture-timeout',
+          '456',
+          '--capture-max-retry-count',
+          '7',
+          '--forward-console-logs',
+          '--disable-wait-assets',
+          '--browser-launch-options',
+          '{"args":["--custom"],"headless":false}',
+        ],
+        { main },
+      ),
+    ).resolves.toBe(0);
 
-    expect(code).toBe(0);
     expect(received).toMatchObject({
-      serverOptions: { serverCmd: 'storybook dev', serverTimeout: 1234 },
       captureTimeout: 456,
       captureMaxRetryCount: 7,
-      metricsWatchRetryCount: 8,
-      viewportDelay: 9,
-      stateChangeDelay: 10,
-      reloadAfterChangeViewport: true,
       forwardConsoleLogs: true,
+      disableWaitAssets: true,
       launchOptions: { args: ['--custom'], headless: false },
     });
     expect(received?.logger.level).toBe('verbose');
@@ -192,12 +148,30 @@ describe(runCli, () => {
   });
 
   it.each([
-    ['legacy camelCase option', ['--serverCmd', 'storybook dev']],
+    '--mode',
+    '--capture-protocol',
+    '--browser-isolation',
+    '--trace',
+    '--server-cmd',
+    '--server-timeout',
+    '--metrics-watch-retry-count',
+    '--viewport-delay',
+    '--reload-after-change-viewport',
+    '--state-change-delay',
+    '--max-captures-per-context',
+    '--max-context-age',
+    '--list-devices',
+  ])('rejects removed option %s', async option => {
+    const main = vi.fn(async (_options: MainOptions) => 0);
+    await expect(runCli([option], { main })).resolves.toBe(1);
+    expect(main).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['legacy camelCase option', ['--captureTimeout', '123']],
     ['unknown option', ['--unknown-option']],
     ['invalid number', ['--parallel', 'many']],
-    ['invalid enum', ['--chromium-channel', 'nightly']],
-    ['invalid browser isolation', ['--browser-isolation', 'page']],
-    ['invalid preview mode', ['--mode', 'fallback']],
+    ['invalid channel', ['--chromium-channel', 'nightly']],
   ])('rejects %s before execution', async (_label, args) => {
     const main = vi.fn(async (_options: MainOptions) => 0);
     await expect(runCli(args, { main })).resolves.toBe(1);
@@ -205,29 +179,16 @@ describe(runCli, () => {
   });
 
   it.each(['--flat=false', '-f=false', '--no-disable-css-animation=true', '--help=false'])(
-    'rejects boolean assignment syntax %s without executing the command',
+    'rejects boolean assignment syntax %s without execution',
     async assignment => {
       const main = vi.fn(async (_options: MainOptions) => 0);
       const writeError = vi.fn((_message: string) => {});
 
       await expect(runCli([assignment], { main, writeError })).resolves.toBe(1);
-
       expect(main).not.toHaveBeenCalled();
       expect(writeError).toHaveBeenCalledWith(expect.stringContaining('Boolean option assignments are not supported'));
     },
   );
-
-  it('prints a semantic error once', async () => {
-    const main = vi.fn(async (_options: MainOptions) => 0);
-
-    await expect(runCli(['--shard', '2/1'], { main })).resolves.toBe(1);
-
-    expect(main).not.toHaveBeenCalled();
-    expect(error).toHaveBeenCalledTimes(1);
-    expect(error.mock.calls.flat().join(' ')).toContain(
-      'The shard number cannot be greater than the total number of shards.',
-    );
-  });
 
   it.each([
     ['invalid shard', ['--silent', '--shard', '2/1']],
@@ -241,13 +202,24 @@ describe(runCli, () => {
     expect(main).not.toHaveBeenCalled();
   });
 
-  it('lists devices without calling main', async () => {
+  it.each([
+    ['fractional parallelism', ['--parallel=1.5'], '--parallel'],
+    ['zero parallelism', ['--parallel=0'], '--parallel'],
+    ['negative delay', ['--delay=-1'], '--delay'],
+    ['zero capture timeout', ['--capture-timeout=0'], '--capture-timeout'],
+    ['negative retry count', ['--capture-max-retry-count=-1'], '--capture-max-retry-count'],
+  ])('rejects %s before starting the browser', async (_label, args, option) => {
     const main = vi.fn(async (_options: MainOptions) => 0);
 
-    await expect(runCli(['--list-devices'], { main })).resolves.toBe(0);
-
+    await expect(runCli(args, { main })).resolves.toBe(1);
     expect(main).not.toHaveBeenCalled();
-    expect(log.mock.calls.flat().join(' ')).toContain('iPad');
+    expect(error.mock.calls.flat().join(' ')).toContain(option);
+  });
+
+  it('prints semantic errors once', async () => {
+    const main = vi.fn(async (_options: MainOptions) => 0);
+    await expect(runCli(['--shard', '2/1'], { main })).resolves.toBe(1);
+    expect(error).toHaveBeenCalledTimes(1);
   });
 
   it.each([
@@ -278,24 +250,5 @@ describe(runCli, () => {
     const main = vi.fn(async (_options: MainOptions) => 0);
     await expect(runCli([option], { main })).resolves.toBe(0);
     expect(main).not.toHaveBeenCalled();
-  });
-
-  it.each([
-    ['fractional parallelism', ['--parallel=1.5'], '--parallel'],
-    ['zero parallelism', ['--parallel=0'], '--parallel'],
-    ['negative delay', ['--delay=-1'], '--delay'],
-    ['zero server timeout', ['--server-timeout=0'], '--server-timeout'],
-    ['zero capture timeout', ['--capture-timeout=0'], '--capture-timeout'],
-    ['negative retry count', ['--capture-max-retry-count=-1'], '--capture-max-retry-count'],
-    ['zero metrics samples', ['--metrics-watch-retry-count=0'], '--metrics-watch-retry-count'],
-    ['fractional viewport delay', ['--viewport-delay=1.5'], '--viewport-delay'],
-    ['negative state delay', ['--state-change-delay=-1'], '--state-change-delay'],
-  ])('rejects %s before starting the browser', async (_label, args, option) => {
-    const main = vi.fn(async (_options: MainOptions) => 0);
-
-    await expect(runCli(args, { main })).resolves.toBe(1);
-
-    expect(main).not.toHaveBeenCalled();
-    expect(error.mock.calls.flat().join(' ')).toContain(option);
   });
 });

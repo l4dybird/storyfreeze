@@ -18,6 +18,7 @@
     "test": "vp run --filter \"./packages/**\" --fail-if-no-match test",
     "package:smoke": "node scripts/package-smoke.js",
     "publish:dry-run": "node scripts/publish-dry-run.js",
+    "release:performance": "node scripts/release-performance.js",
     "e2e": "bash e2e.sh"
   },
   "repository": {

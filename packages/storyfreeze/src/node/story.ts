@@ -5,4 +5,5 @@ export type Story = {
   kind: string;
   story: string;
   version: 'v5';
+  viewportProfileHint?: string;
 };

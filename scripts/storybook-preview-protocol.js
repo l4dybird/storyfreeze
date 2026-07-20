@@ -195,7 +195,7 @@ function validateCapture({ script, directoryName, expectedPaths, extraFragments 
   }
 
   const expectedFragments = [
-    'StoryFreeze runs with managed mode',
+    'Runtime: managed persistent Playwright Preview with process-isolated workers',
     `capturing ${expectedPaths.length} PNGs`,
     'Found Storybook server',
     ...extraFragments,
@@ -346,11 +346,7 @@ async function main() {
       script: 'storyfreeze:managed-static',
       directoryName: '__screenshots__/managed-static',
       expectedPaths: managedScreenshotPaths,
-      extraFragments: [
-        'Browser backend: playwright',
-        'Runtime: managed persistent Preview with process-isolated workers',
-        'Found 3 stories.',
-      ],
+      extraFragments: ['Found 3 stories.', 'Started 3 persistent capture workers.'],
     });
     await assertCapturesConcurrently([
       {
@@ -363,7 +359,7 @@ async function main() {
         script: 'storyfreeze:shard-static',
         directoryName: '__screenshots__/shard-static',
         expectedPaths: interactionScreenshotPaths,
-        extraFragments: ['Found 3 stories. 1 are being processed by this shard (number 2 of 2).'],
+        extraFragments: ['Found 3 stories. 1 are being processed by shard 2/2.'],
       },
       {
         script: 'storyfreeze:retry-static',

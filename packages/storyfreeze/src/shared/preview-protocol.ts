@@ -10,12 +10,6 @@ export type NormalizedScreenshotOptions = Omit<ScreenshotOptions, 'reset' | 'wai
   variants?: Record<string, Omit<ScreenshotOptionFragmentsForVariant, 'waitFor'>>;
 };
 
-export interface PreviewRuntimeMetadata {
-  hasCustomReset: boolean;
-  hasRuntimeWaitFor: boolean;
-  runtimeWaitForVariants: string[];
-}
-
 export interface SerializedError {
   name: string;
   message: string;
@@ -35,7 +29,6 @@ export type StoryFreezePreviewStateV1 =
       status: 'ready';
       options: NormalizedScreenshotOptions;
       rootOptions?: NormalizedScreenshotOptions;
-      runtime?: PreviewRuntimeMetadata;
     })
   | (PreviewStateBaseV1 & { status: 'error'; error: SerializedError });
 
@@ -63,50 +56,7 @@ export interface WorkerStorySelection extends SelectWorkerStoryRequest {
 export interface WorkerSessionPreviewProtocol {
   protocolVersion: typeof STORYFREEZE_WORKER_SESSION_PROTOCOL_VERSION;
   selectStory(request: SelectWorkerStoryRequest): Promise<WorkerStorySelection>;
-  completeCapture(requestId: string): void;
+  completeCapture(requestId: string, variantId: string): Promise<void>;
   current(): WorkerStorySelection | undefined;
   dispose(): void;
-}
-
-export const STORYFREEZE_STORY_SESSION_GLOBAL = '__STORYFREEZE_STORY_SESSION__';
-export const STORYFREEZE_STORY_SESSION_PROTOCOL_VERSION = 3 as const;
-
-export interface OpenStorySessionRequest {
-  sessionId: string;
-  storyId: string;
-  profileHash: string;
-}
-
-export interface SessionReady {
-  storyId: string;
-  sessionGeneration: number;
-  profileHash: string;
-}
-
-export interface VariantReady extends SessionReady {
-  variantId: string;
-  variantGeneration: number;
-}
-
-export interface ResetVerification extends SessionReady {
-  activeElement: string | null;
-  activeElementMatchesBaseline: boolean;
-  baseActiveElement: string | null;
-  argsHash: string;
-  baseArgsHash: string;
-  baseDocumentFingerprint: string;
-  globalsHash: string;
-  baseGlobalsHash: string;
-  documentFingerprint: string;
-  scrollPositionMatchesBaseline: boolean;
-  selectionMatchesBaseline: boolean;
-}
-
-export interface StorySessionPreviewProtocol {
-  protocolVersion: typeof STORYFREEZE_STORY_SESSION_PROTOCOL_VERSION;
-  openSession(request: OpenStorySessionRequest): Promise<SessionReady>;
-  applyVariant(variantId: string): Promise<VariantReady>;
-  resetVariant(variantId: string): Promise<SessionReady>;
-  verifyReset(): Promise<ResetVerification>;
-  closeSession(): Promise<void>;
 }

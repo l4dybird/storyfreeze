@@ -3,133 +3,142 @@ import type { FileSystem } from './file.js';
 import type { Logger } from './logger.js';
 import type { Story } from './story.js';
 import type { VariantKey } from '../shared/types.js';
-import {
-  captureDiagnosticsEnabled,
-  emitCaptureDiagnostic,
-  measureCaptureDiagnostic,
-  subscribeCaptureDiagnostics,
-} from './capture-diagnostics.js';
-import { createCaptureId } from './capture-manifest.js';
-import { CaptureLeaseQueue } from './capture-lease-queue.js';
-import { profileSwitchCost, type PlannedCapture } from './capture-plan.js';
-import { sameEmulationProfile, type EmulationProfile } from './emulation-profile.js';
 import { variantKeyIdentifier } from '../shared/screenshot-options-helper.js';
-import {
-  SessionOutputConsumedError,
-  type SessionVariantExecutionResult,
-  type SessionVariantOutput,
-  type SessionVariantRequest,
-} from './story-session.js';
-import type { CaptureProtocolMode } from './types.js';
-import type { PreparedExecutionPlan } from './execution-plan.js';
 
-interface CaptureRequest {
+type CaptureRequest = {
   captureId: string;
-  rid: string;
+  requestId: string;
+  retryCount: number;
   story: Story;
-  storyId: string;
   variantKey: VariantKey;
-  count: number;
-  queuedAt?: number;
-  profile?: EmulationProfile;
-  profileHint?: string;
-  estimatedCostMs?: number;
-  plannedCapture?: PlannedCapture;
-  sessionId?: string;
-  sessionVariants?: SessionVariantRequest[];
+};
+
+function captureId(storyId: string, keys: readonly string[]) {
+  const variant = keys.length === 0 ? 'root:' : `variant:${keys.map(key => encodeURIComponent(key)).join('/')}`;
+  return `${encodeURIComponent(storyId)}::${variant}`;
 }
 
-function createRequest({
-  story,
-  variantKey = { isDefault: true, keys: [] },
-  count = 0,
-  plannedCapture,
-  sessionId,
-  sessionVariants,
-  profileHint,
-}: {
-  story: Story;
-  variantKey?: VariantKey;
-  count?: number;
-  plannedCapture?: PlannedCapture;
-  sessionId?: string;
-  sessionVariants?: SessionVariantRequest[];
-  profileHint?: string;
-}): CaptureRequest {
-  const effectiveVariantKey = plannedCapture
-    ? { isDefault: plannedCapture.variantKey.length === 0, keys: [...plannedCapture.variantKey] }
-    : variantKey;
-  const base = encodeURIComponent(story.id);
-  const rid = effectiveVariantKey.keys.length
-    ? `${base}?keys=${encodeURIComponent(variantKeyIdentifier(effectiveVariantKey.keys))}`
-    : base;
+function requestFor(story: Story, variantKey: VariantKey = { isDefault: true, keys: [] }, retryCount = 0) {
+  const encodedStory = encodeURIComponent(story.id);
   return {
-    captureId: plannedCapture?.captureId ?? createCaptureId(story.id, effectiveVariantKey.keys),
-    rid,
+    captureId: captureId(story.id, variantKey.keys),
+    requestId: variantKey.keys.length
+      ? `${encodedStory}?keys=${encodeURIComponent(variantKeyIdentifier(variantKey.keys))}`
+      : encodedStory,
+    retryCount,
     story,
-    storyId: story.id,
-    variantKey: effectiveVariantKey,
-    count,
-    queuedAt: captureDiagnosticsEnabled() ? performance.now() : undefined,
-    ...(plannedCapture
-      ? {
-          plannedCapture,
-          profile: plannedCapture.profile,
-          estimatedCostMs: plannedCapture.estimatedCostMs,
-          ...(plannedCapture.profileHint === undefined ? {} : { profileHint: plannedCapture.profileHint }),
+    variantKey,
+  } satisfies CaptureRequest;
+}
+
+/**
+ * Groups stories by their static viewport hint and assigns the largest groups
+ * first to the least-loaded worker. Every tie is resolved deterministically.
+ */
+export function assignStories(stories: readonly Story[], workerCount: number): Story[][] {
+  if (!Number.isSafeInteger(workerCount) || workerCount < 1) throw new Error('workerCount must be at least one.');
+  const groups = new Map<string, Story[]>();
+  for (const story of [...stories].sort((left, right) => left.id.localeCompare(right.id))) {
+    const key = story.viewportProfileHint ?? '';
+    const group = groups.get(key) ?? [];
+    group.push(story);
+    groups.set(key, group);
+  }
+  const ordered = [...groups.entries()].sort(
+    ([leftKey, left], [rightKey, right]) => right.length - left.length || leftKey.localeCompare(rightKey),
+  );
+  const assignments = Array.from({ length: workerCount }, () => [] as Story[]);
+  for (const [, group] of ordered) {
+    let target = 0;
+    for (let workerId = 1; workerId < assignments.length; workerId += 1) {
+      if (assignments[workerId].length < assignments[target].length) target = workerId;
+    }
+    assignments[target].push(...group);
+  }
+  return assignments;
+}
+
+class CaptureQueue {
+  private readonly lanes: CaptureRequest[][];
+  private readonly known = new Set<string>();
+  private readonly waiters: Array<() => void> = [];
+  private active = 0;
+  private stopped = false;
+
+  constructor(assignments: readonly (readonly Story[])[]) {
+    this.lanes = assignments.map(stories => stories.map(story => requestFor(story)));
+    for (const lane of this.lanes) for (const request of lane) this.known.add(request.captureId);
+  }
+
+  get pendingCount() {
+    return this.lanes.reduce((total, lane) => total + lane.length, 0);
+  }
+
+  take(workerId: number): CaptureRequest | undefined {
+    if (this.stopped) return undefined;
+    let request = this.lanes[workerId].shift();
+    if (!request) {
+      let source = -1;
+      for (let candidate = 0; candidate < this.lanes.length; candidate += 1) {
+        if (candidate !== workerId && (source < 0 || this.lanes[candidate].length > this.lanes[source].length)) {
+          source = candidate;
         }
-      : {}),
-    ...(!plannedCapture && profileHint !== undefined ? { profileHint } : {}),
-    ...(sessionId ? { sessionId } : {}),
-    ...(sessionVariants ? { sessionVariants } : {}),
-  };
-}
-
-function percentileSummary(values: number[]) {
-  if (values.length === 0) return { p50: null, p95: null };
-  const sorted = [...values].sort((left, right) => left - right);
-  const at = (rank: number) => sorted[Math.max(0, Math.ceil(rank * sorted.length) - 1)];
-  return { p50: at(0.5), p95: at(0.95) };
-}
-
-async function withOperationTimeout<T>(
-  operation: Promise<T>,
-  timeoutMs: number,
-  label: string,
-  onTimeout: () => unknown | Promise<unknown> = async () => {},
-): Promise<T> {
-  const effectiveTimeout = Math.min(2_147_483_647, Math.max(1, Math.floor(timeoutMs)));
-  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_resolve, reject) => {
-    timeoutHandle = setTimeout(() => {
-      try {
-        void Promise.resolve(onTimeout()).catch(() => {});
-        reject(new Error(`${label} did not settle within ${effectiveTimeout} msec.`));
-      } catch (error) {
-        reject(
-          new AggregateError(
-            [error],
-            `${label} did not settle within ${effectiveTimeout} msec and its worker could not be closed.`,
-          ),
-        );
       }
-    }, effectiveTimeout);
-  });
-  try {
-    return await Promise.race([operation, timeout]);
-  } finally {
-    if (timeoutHandle) clearTimeout(timeoutHandle);
+      if (source >= 0 && this.lanes[source].length > 0) request = this.lanes[source].pop();
+    }
+    if (request) this.active += 1;
+    return request;
+  }
+
+  enqueueVariants(workerId: number, story: Story, variants: readonly VariantKey[]) {
+    if (this.stopped) return;
+    const additions = variants
+      .map(variant => requestFor(story, variant))
+      .filter(request => {
+        if (this.known.has(request.captureId)) return false;
+        this.known.add(request.captureId);
+        return true;
+      });
+    this.lanes[workerId].unshift(...additions);
+    this.wakeAll();
+  }
+
+  retry(workerId: number, request: CaptureRequest) {
+    this.active -= 1;
+    this.lanes[workerId].unshift(requestFor(request.story, request.variantKey, request.retryCount + 1));
+    this.wakeAll();
+  }
+
+  complete() {
+    this.active -= 1;
+    this.wakeAll();
+  }
+
+  stop() {
+    this.stopped = true;
+    this.wakeAll();
+  }
+
+  isDrained() {
+    return this.active === 0 && this.pendingCount === 0;
+  }
+
+  waitForChange() {
+    if (this.stopped || this.isDrained() || this.pendingCount > 0) return Promise.resolve();
+    return new Promise<void>(resolve => this.waiters.push(resolve));
+  }
+
+  private wakeAll() {
+    for (const resolve of this.waiters.splice(0)) resolve();
   }
 }
 
 /** Executor to capture all stories. */
 export interface ScreenshotService {
-  /** Run the capture procedure and return the number of PNG files written. */
   execute(): Promise<number>;
 }
 
 export interface ScreenshotWorker {
-  close?(): Promise<void>;
   screenshot(
     requestId: string,
     story: Story,
@@ -137,597 +146,107 @@ export interface ScreenshotWorker {
     retryCount: number,
     logger: Logger,
     forwardConsoleLogs: boolean,
-    trace: boolean,
     fileSystem: FileSystem,
-    plannedCapture?: PlannedCapture,
   ): Promise<{
     buffer: Buffer | null;
-    resolvedProfile?: EmulationProfile;
     succeeded: boolean;
     variantKeysToPush: VariantKey[];
     defaultVariantSuffix?: string;
   }>;
-  screenshotSessionVariants?(
-    sessionId: string,
-    story: Story,
-    requests: SessionVariantRequest[],
-    logger: Logger,
-    forwardConsoleLogs: boolean,
-    trace: boolean,
-    fileSystem: FileSystem,
-    protocolMode: Exclude<CaptureProtocolMode, 'strict'>,
-    /** Takes ownership of a non-null output buffer when it begins consuming it. */
-    onOutput?: (output: SessionVariantOutput) => Promise<void>,
-  ): Promise<SessionVariantExecutionResult>;
 }
 
-/** Parameters for {@link createScreenshotService}. */
 export type ScreenshotServiceOptions = {
   logger: Logger;
   workers: ScreenshotWorker[];
   fileSystem: FileSystem;
   stories: Story[];
   forwardConsoleLogs: boolean;
-  trace: boolean;
-  executionPlan?: PreparedExecutionPlan;
-  initialWorkerCount?: number;
-  bootWorker?: (workerId: number) => Promise<void>;
-  operationTimeoutMs?: number;
 };
 
-function initialAssignments(
-  stories: Story[],
-  workers: ScreenshotWorker[],
-  executionPlan?: PreparedExecutionPlan,
-): { assignments: CaptureRequest[][]; plannedWorkerCostMs: number[] } {
-  const assignments = Array.from({ length: workers.length }, () => [] as CaptureRequest[]);
-  if (!executionPlan) {
-    stories.forEach((story, index) => assignments[index % workers.length].push(createRequest({ story })));
-    return { assignments, plannedWorkerCostMs: assignments.map(queue => queue.length * 500) };
-  }
-  if (executionPlan.workers.length !== workers.length) {
-    throw new Error(`Execution plan has ${executionPlan.workers.length} workers, but ${workers.length} are available.`);
-  }
-
-  const storiesById = new Map(stories.map(story => [story.id, story]));
-  for (const workerPlan of executionPlan.workers) {
-    for (const item of workerPlan.workItems) {
-      const story = storiesById.get(item.storyId);
-      if (!story) throw new Error(`Execution plan refers to unknown story ${item.storyId}.`);
-      const session = item.session;
-      assignments[workerPlan.workerId].push(
-        createRequest({
-          story,
-          plannedCapture: item.primaryCapture,
-          ...(session
-            ? {
-                sessionId: session.sessionId,
-                sessionVariants: session.variants.map(variant => ({
-                  variantKey: {
-                    isDefault: variant.capture.variantKey.length === 0,
-                    keys: [...variant.capture.variantKey],
-                  },
-                  plannedCapture: variant.capture,
-                })),
-              }
-            : {}),
-        }),
-      );
-    }
-  }
-  return {
-    assignments,
-    plannedWorkerCostMs: executionPlan.workers.map(worker => worker.estimatedRemainingMs),
-  };
-}
-
-/** Create an affinity-aware, duplicate-safe screenshot service. */
+/** Create the single deterministic capture queue used by the production runtime. */
 export function createScreenshotService({
   fileSystem,
   logger,
   stories,
   workers,
   forwardConsoleLogs,
-  trace,
-  executionPlan,
-  initialWorkerCount = workers.length,
-  bootWorker,
-  operationTimeoutMs = 60_000,
 }: ScreenshotServiceOptions): ScreenshotService {
   if (workers.length === 0) throw new Error('No screenshot workers are available.');
-  if (!Number.isSafeInteger(initialWorkerCount) || initialWorkerCount < 1 || initialWorkerCount > workers.length) {
-    throw new Error('initialWorkerCount must identify at least one available worker.');
-  }
-  if (initialWorkerCount < workers.length && !bootWorker) {
-    throw new Error('bootWorker is required when capture workers are started lazily.');
-  }
-  if (!Number.isFinite(operationTimeoutMs) || operationTimeoutMs < 1) {
-    throw new Error('operationTimeoutMs must be a positive finite number.');
-  }
-  const capturePlan = executionPlan?.capturePlan;
-  const captureProtocol = executionPlan?.captureProtocol ?? 'strict';
-  const { assignments, plannedWorkerCostMs } = initialAssignments(stories, workers, executionPlan);
-  const runtimeProfilesByHint = new Map<string, EmulationProfile>();
-  const queue = new CaptureLeaseQueue(assignments);
-  const diagnosticsEnabled = captureDiagnosticsEnabled();
-  const initialCaptureCount = assignments.reduce((total, requests) => total + requests.length, 0);
-  const queueDiagnostics = diagnosticsEnabled
-    ? {
-        busyWorkerMs: 0,
-        inFlight: 0,
-        peakInFlight: 0,
-        peakQueued: initialCaptureCount,
-        queueWaits: [] as number[],
-        settled: 0,
-        totalEnqueued: initialCaptureCount,
-        actualWorkerBusyMs: workers.map(() => 0),
-        estimationErrors: [] as number[],
-        expensiveProfileSwitchCount: 0,
-        profileSwitchCount: 0,
-      }
-    : undefined;
-  const planDiagnostics = capturePlan
-    ? {
-        manifestCaptureCount: capturePlan.captures.length,
-        runtimeDiscoveryCaptureCount: capturePlan.captures.filter(
-          capture => capture.executionMode === 'runtime-discovery',
-        ).length,
-        runtimeValidationCaptureCount: capturePlan.captures.filter(
-          capture => capture.executionMode === 'runtime-validation',
-        ).length,
-      }
-    : undefined;
-
-  if (capturePlan && planDiagnostics) {
-    emitCaptureDiagnostic({
-      type: 'phase1-plan',
-      ...planDiagnostics,
-      profileCount: capturePlan.profileCount,
-      plannedWorkerCostMs,
-      storyCount: capturePlan.storyCount,
-    });
-  }
+  const queue = new CaptureQueue(assignStories(stories, workers.length));
 
   return {
-    execute: async () => {
-      const startedAt = diagnosticsEnabled ? performance.now() : 0;
-      let runtimeValidationMismatchCount = 0;
-      let viewportTriggeredNavigationCount = 0;
-      const unsubscribeDiagnostics = diagnosticsEnabled
-        ? subscribeCaptureDiagnostics(event => {
-            if (event.type === 'runtime-validation-mismatch') runtimeValidationMismatchCount += 1;
-            if (event.type === 'viewport-triggered-navigation') viewportTriggeredNavigationCount += 1;
-          })
-        : () => false;
-      const lastProfiles: Array<EmulationProfile | undefined> = workers.map(() => undefined);
-      const lastProfileHints: Array<string | undefined> = workers.map(() => undefined);
-      const lastStoryIds: Array<string | undefined> = workers.map(() => undefined);
-      const outputCaptureIds = new Set<string>();
+    async execute() {
       let captured = 0;
       let firstFailure: { error: unknown } | undefined;
-      let inFlightCount = 0;
-      let lazyWorkerBootCount = 0;
-      const workerStates = workers.map((_, workerId) =>
-        workerId < initialWorkerCount ? ('ready' as const) : ('dormant' as const),
-      ) as Array<'dormant' | 'booting' | 'ready' | 'failed'>;
-      const activationResolvers: Array<(active: boolean) => void> = [];
-      const activations = workers.map(
-        (_, workerId) =>
-          new Promise<boolean>(resolve => {
-            activationResolvers[workerId] = resolve;
-            if (workerId < initialWorkerCount) resolve(true);
-          }),
-      );
-
-      const deactivateDormantWorkers = () => {
-        workerStates.forEach((state, workerId) => {
-          if (state !== 'dormant') return;
-          workerStates[workerId] = 'failed';
-          activationResolvers[workerId](false);
-        });
-      };
-
-      const requestAdditionalWorkers = () => {
-        const desiredWorkerCount = Math.min(
-          workers.length,
-          Math.max(initialWorkerCount, queue.pendingCount + inFlightCount),
-        );
-        let availableWorkerCount = workerStates.filter(state => state === 'ready' || state === 'booting').length;
-        while (availableWorkerCount < desiredWorkerCount) {
-          const workerId = workerStates.findIndex(state => state === 'dormant');
-          if (workerId < 0) return;
-          workerStates[workerId] = 'booting';
-          lazyWorkerBootCount += 1;
-          availableWorkerCount += 1;
-          void measureCaptureDiagnostic({ type: 'runtime-phase', phase: 'lazy-worker-boot', workerId }, () =>
-            withOperationTimeout(
-              bootWorker!(workerId),
-              operationTimeoutMs,
-              `Capture worker ${workerId} boot`,
-              () => workers[workerId].close?.() ?? Promise.resolve(),
-            ),
-          ).then(
-            () => {
-              workerStates[workerId] = 'ready';
-              activationResolvers[workerId](true);
-              queue.wakeAll();
-            },
-            error => {
-              workerStates[workerId] = 'failed';
-              if (firstFailure === undefined) firstFailure = { error };
-              activationResolvers[workerId](false);
-              deactivateDormantWorkers();
-              queue.wakeAll();
-            },
-          );
-        }
-      };
-
-      const enqueueCapture = (request: CaptureRequest) => {
-        if (!queue.enqueue(request)) return false;
-        if (queueDiagnostics) {
-          queueDiagnostics.totalEnqueued += 1;
-          queueDiagnostics.peakQueued = Math.max(queueDiagnostics.peakQueued, queue.pendingCount);
-        }
-        emitCaptureDiagnostic({
-          type: 'capture-discovered',
-          captureId: request.captureId,
-          requestId: request.rid,
-          storyId: request.story.id,
-          variantKey: request.variantKey.keys,
-        });
-        requestAdditionalWorkers();
-        return true;
-      };
-
-      const saveCaptureOutput = async (
-        story: Story,
-        variantKey: VariantKey,
-        buffer: Buffer | null,
-        durationMs: number,
-        retryCount: number,
-        defaultVariantSuffix?: string,
-      ) => {
-        if (!buffer) return;
-        const captureId = createCaptureId(story.id, variantKey.keys);
-        if (outputCaptureIds.has(captureId)) {
-          fileSystem.releaseScreenshotBuffer?.(buffer);
-          return;
-        }
-        outputCaptureIds.add(captureId);
-        try {
-          const suffix = variantKey.isDefault && defaultVariantSuffix ? [defaultVariantSuffix] : variantKey.keys;
-          const logicalId = JSON.stringify({ storyId: story.id, variantKey });
-          const outputController = new AbortController();
-          const path = await withOperationTimeout(
-            fileSystem.saveScreenshot(story.kind, story.story, suffix, buffer, logicalId, outputController.signal),
-            operationTimeoutMs,
-            `Screenshot output ${captureId}`,
-            () => outputController.abort(new Error(`Screenshot output ${captureId} timed out.`)),
-          );
-          logger.log(`Screenshot stored: ${logger.color.magenta(path)} in ${durationMs} msec.`);
-          emitCaptureDiagnostic({
-            type: 'capture-output',
-            durationMs,
-            path,
-            requestId: variantKey.keys.length
-              ? `${encodeURIComponent(story.id)}?keys=${encodeURIComponent(variantKeyIdentifier(variantKey.keys))}`
-              : encodeURIComponent(story.id),
-            retryCount,
-            storyId: story.id,
-            variantKey: variantKey.keys,
-          });
-          captured += 1;
-        } catch (error) {
-          outputCaptureIds.delete(captureId);
-          throw error;
-        }
-      };
 
       const runWorker = async (worker: ScreenshotWorker, workerId: number) => {
-        if (!(await activations[workerId])) return;
-        while (firstFailure === undefined) {
-          const lease = queue.lease(
-            workerId,
-            lastProfiles[workerId],
-            lastStoryIds[workerId],
-            lastProfileHints[workerId],
-          );
-          if (!lease) {
-            if (queue.isDrained()) {
-              deactivateDormantWorkers();
-              return;
-            }
+        while (!firstFailure) {
+          const request = queue.take(workerId);
+          if (!request) {
+            if (queue.isDrained()) return;
             await queue.waitForChange();
             continue;
           }
 
-          const request = lease.capture;
-          const cachedProfile = request.profileHint ? runtimeProfilesByHint.get(request.profileHint) : undefined;
-          const effectivePlannedCapture =
-            cachedProfile && request.plannedCapture?.executionMode === 'runtime-discovery'
-              ? {
-                  ...request.plannedCapture,
-                  profile: cachedProfile,
-                  runtimeProfileResolved: true,
-                }
-              : request.plannedCapture;
-          queue.markRunning(request.captureId);
-          inFlightCount += 1;
-          const taskStartedAt = diagnosticsEnabled ? performance.now() : 0;
-          const queueWaitMs = request.queuedAt === undefined ? undefined : performance.now() - request.queuedAt;
-          const previousProfile = lastProfiles[workerId];
-          if (request.profile) {
-            const switchCost = profileSwitchCost(previousProfile, request.profile);
-            if (queueDiagnostics && previousProfile && !sameEmulationProfile(previousProfile, request.profile)) {
-              queueDiagnostics.profileSwitchCount += 1;
-              if (switchCost >= 350) queueDiagnostics.expensiveProfileSwitchCount += 1;
-            }
-            lastProfiles[workerId] = request.profile;
-            lastProfileHints[workerId] = request.profileHint;
-          }
-          lastStoryIds[workerId] = request.story.id;
-
-          if (queueDiagnostics) {
-            queueDiagnostics.inFlight += 1;
-            queueDiagnostics.peakInFlight = Math.max(queueDiagnostics.peakInFlight, queueDiagnostics.inFlight);
-            queueDiagnostics.queueWaits.push(queueWaitMs!);
-          }
-          if (queueWaitMs !== undefined) {
-            emitCaptureDiagnostic({
-              type: 'queue-task',
-              state: 'start',
-              durationMs: queueWaitMs,
-              inFlight: queueDiagnostics!.inFlight,
-              queued: queue.pendingCount,
-              requestId: request.rid,
-              retryCount: request.count,
-              storyId: request.story.id,
-              variantKey: request.variantKey.keys,
-              workerId,
-              leaseOwnerWorkerId: lease.ownerWorkerId,
-              stolen: lease.stolen,
-            });
-          }
-
-          let requeued = false;
           try {
-            const [result, elapsedTime] = await time(
-              withOperationTimeout(
-                worker.screenshot(
-                  request.rid,
-                  request.story,
-                  request.variantKey,
-                  request.count,
-                  logger,
-                  forwardConsoleLogs,
-                  trace,
-                  fileSystem,
-                  effectivePlannedCapture,
-                ),
-                operationTimeoutMs,
-                `Capture ${request.captureId}`,
-                () => worker.close?.() ?? Promise.resolve(),
+            const [result, durationMs] = await time(
+              worker.screenshot(
+                request.requestId,
+                request.story,
+                request.variantKey,
+                request.retryCount,
+                logger,
+                forwardConsoleLogs,
+                fileSystem,
               ),
             );
-            const { succeeded, buffer, resolvedProfile, variantKeysToPush, defaultVariantSuffix } = result;
-
-            if (resolvedProfile) {
-              lastProfiles[workerId] = resolvedProfile;
-              request.profile = resolvedProfile;
-              if (request.profileHint) runtimeProfilesByHint.set(request.profileHint, resolvedProfile);
-            }
-
-            if (!succeeded) {
-              const retry = createRequest({
-                story: request.story,
-                variantKey: request.variantKey,
-                count: request.count + 1,
-                plannedCapture: request.plannedCapture,
-                sessionId: request.sessionId,
-                sessionVariants: request.sessionVariants,
-                profileHint: request.profileHint,
-              });
-              queue.requeue(request.captureId, retry, workerId);
-              requeued = true;
-              if (queueDiagnostics) {
-                queueDiagnostics.totalEnqueued += 1;
-                queueDiagnostics.peakQueued = Math.max(queueDiagnostics.peakQueued, queue.pendingCount);
-              }
-              await Promise.resolve();
+            if (!result.succeeded) {
+              queue.retry(workerId, request);
               continue;
             }
 
-            await saveCaptureOutput(
-              request.story,
-              request.variantKey,
-              buffer,
-              elapsedTime,
-              request.count,
-              defaultVariantSuffix,
-            );
-
-            let sessionCandidates: Map<string, SessionVariantRequest> | undefined;
-            if ((request.sessionVariants?.length ?? 0) > 0 || variantKeysToPush.length > 0) {
-              sessionCandidates = new Map();
-              for (const candidate of request.sessionVariants ?? []) {
-                sessionCandidates.set(createCaptureId(request.story.id, candidate.variantKey.keys), candidate);
-              }
-              for (const variantKey of variantKeysToPush) {
-                const captureId = createCaptureId(request.story.id, variantKey.keys);
-                if (!sessionCandidates.has(captureId)) sessionCandidates.set(captureId, { variantKey });
-              }
-            }
-
-            if (
-              captureProtocol !== 'strict' &&
-              request.sessionId &&
-              worker.screenshotSessionVariants &&
-              sessionCandidates &&
-              sessionCandidates.size > 0
-            ) {
-              const sessionResult = await withOperationTimeout(
-                worker.screenshotSessionVariants(
-                  request.sessionId,
-                  request.story,
-                  [...sessionCandidates.values()],
-                  logger,
-                  forwardConsoleLogs,
-                  trace,
-                  fileSystem,
-                  captureProtocol === 'story-session' ? 'auto' : captureProtocol,
-                  output =>
-                    saveCaptureOutput(request.story, output.variantKey, output.buffer, output.durationMs, 0).catch(
-                      error => {
-                        throw new SessionOutputConsumedError(error);
-                      },
-                    ),
-                ),
-                operationTimeoutMs * (sessionCandidates.size + 2),
-                `Story session ${request.sessionId}`,
-                () => worker.close?.() ?? Promise.resolve(),
+            if (result.buffer) {
+              const suffix =
+                request.variantKey.isDefault && result.defaultVariantSuffix
+                  ? [result.defaultVariantSuffix]
+                  : request.variantKey.keys;
+              const logicalId = JSON.stringify({ storyId: request.story.id, variantKey: request.variantKey });
+              const outputPath = await fileSystem.saveScreenshot(
+                request.story.kind,
+                request.story.story,
+                suffix,
+                result.buffer,
+                logicalId,
               );
-              for (const output of sessionResult.outputs) {
-                await saveCaptureOutput(request.story, output.variantKey, output.buffer, output.durationMs, 0);
-              }
-              for (const fallback of sessionResult.strictFallbacks) {
-                enqueueCapture(
-                  createRequest({
-                    story: request.story,
-                    variantKey: fallback.variantKey,
-                    plannedCapture: fallback.plannedCapture,
-                    profileHint: request.profileHint,
-                  }),
-                );
-              }
-            } else {
-              for (const candidate of sessionCandidates?.values() ?? []) {
-                enqueueCapture(
-                  createRequest({
-                    story: request.story,
-                    variantKey: candidate.variantKey,
-                    plannedCapture: candidate.plannedCapture,
-                    profileHint: request.profileHint,
-                  }),
-                );
-              }
+              logger.log(`Screenshot stored: ${logger.color.magenta(outputPath)} in ${durationMs} msec.`);
+              captured += 1;
             }
-            if (queueDiagnostics && request.estimatedCostMs !== undefined) {
-              queueDiagnostics.estimationErrors.push(Math.abs(elapsedTime - request.estimatedCostMs));
-            }
-            queue.complete(request.captureId);
+            queue.enqueueVariants(workerId, request.story, result.variantKeysToPush);
+            queue.complete();
           } catch (error) {
-            queue.fail(request.captureId);
-            if (firstFailure === undefined) firstFailure = { error };
-            deactivateDormantWorkers();
-            queue.wakeAll();
-          } finally {
-            if (queueDiagnostics) {
-              const busyWorkerMs = performance.now() - taskStartedAt;
-              queueDiagnostics.busyWorkerMs += busyWorkerMs;
-              queueDiagnostics.actualWorkerBusyMs[workerId] += busyWorkerMs;
-              queueDiagnostics.inFlight -= 1;
-              queueDiagnostics.settled += 1;
-              emitCaptureDiagnostic({
-                type: 'queue-task',
-                state: 'end',
-                durationMs: busyWorkerMs,
-                inFlight: queueDiagnostics.inFlight,
-                queued: queue.pendingCount,
-                requestId: request.rid,
-                retryCount: request.count,
-                storyId: request.story.id,
-                variantKey: request.variantKey.keys,
-                workerId,
-                requeued,
-              });
-            }
-            inFlightCount -= 1;
+            queue.complete();
+            if (!firstFailure) firstFailure = { error };
+            queue.stop();
           }
         }
       };
 
-      try {
-        requestAdditionalWorkers();
-        const workerResults = await Promise.allSettled(
-          workers.map((worker, workerId) =>
-            runWorker(worker, workerId).catch(error => {
-              if (firstFailure === undefined) firstFailure = { error };
-              deactivateDormantWorkers();
-              queue.wakeAll();
-              throw error;
-            }),
-          ),
-        );
-        for (const result of workerResults) {
-          if (result.status === 'rejected' && firstFailure === undefined) firstFailure = { error: result.reason };
-        }
-        let flushFailure: { error: unknown } | undefined;
-        if (fileSystem.flush) {
-          try {
-            await withOperationTimeout(
-              Promise.resolve().then(() => fileSystem.flush!()),
-              operationTimeoutMs,
-              'Screenshot output flush',
-            );
-          } catch (error) {
-            flushFailure = { error };
-          }
-        }
-        if (firstFailure !== undefined && flushFailure !== undefined) {
-          throw new AggregateError(
-            [firstFailure.error, flushFailure.error],
-            'Capture execution and output flush both failed.',
-          );
-        }
-        if (firstFailure !== undefined) throw firstFailure.error;
-        if (flushFailure !== undefined) throw flushFailure.error;
-        return captured;
-      } finally {
-        unsubscribeDiagnostics();
-        if (queueDiagnostics) {
-          const durationMs = performance.now() - startedAt;
-          const leaseDiagnostics = queue.snapshot;
-          const queueWait = percentileSummary(queueDiagnostics.queueWaits);
-          const estimationError = percentileSummary(queueDiagnostics.estimationErrors);
-          emitCaptureDiagnostic({
-            type: 'queue-summary',
-            busyWorkerMs: queueDiagnostics.busyWorkerMs,
-            busyWorkerUtilization:
-              durationMs === 0 || workers.length === 0
-                ? 0
-                : queueDiagnostics.busyWorkerMs / (durationMs * workers.length),
-            durationMs,
-            bootedWorkerCount: initialWorkerCount + lazyWorkerBootCount,
-            initialWorkerCount,
-            peakInFlight: queueDiagnostics.peakInFlight,
-            peakQueued: queueDiagnostics.peakQueued,
-            queueWaitP50Ms: queueWait.p50,
-            queueWaitP95Ms: queueWait.p95,
-            settled: queueDiagnostics.settled,
-            totalEnqueued: queueDiagnostics.totalEnqueued,
-            workerCount: workers.length,
-          });
-          emitCaptureDiagnostic({
-            type: 'phase1-summary',
-            actualWorkerBusyMs: queueDiagnostics.actualWorkerBusyMs,
-            affinityHitCount: leaseDiagnostics.affinityHitCount,
-            affinityMissCount: leaseDiagnostics.affinityMissCount,
-            duplicateEnqueueCount: leaseDiagnostics.duplicateEnqueueCount,
-            estimationErrorP50: estimationError.p50,
-            estimationErrorP95: estimationError.p95,
-            expensiveProfileSwitchCount: queueDiagnostics.expensiveProfileSwitchCount,
-            manifestCaptureCount: planDiagnostics?.manifestCaptureCount ?? initialCaptureCount,
-            plannedWorkerCostMs,
-            profileSwitchCount: queueDiagnostics.profileSwitchCount,
-            runtimeDiscoveryCaptureCount: planDiagnostics?.runtimeDiscoveryCaptureCount ?? 0,
-            runtimeValidationMismatchCount,
-            stealCount: leaseDiagnostics.stealCount,
-            viewportTriggeredNavigationCount,
-            workerIdleMs: queueDiagnostics.actualWorkerBusyMs.map(busy => Math.max(0, durationMs - busy)),
-          });
-        }
+      const results = await Promise.allSettled(workers.map((worker, workerId) => runWorker(worker, workerId)));
+      for (const result of results) {
+        if (result.status === 'rejected' && !firstFailure) firstFailure = { error: result.reason };
       }
+      let flushFailure: { error: unknown } | undefined;
+      try {
+        await fileSystem.flush();
+      } catch (error) {
+        flushFailure = { error };
+      }
+      if (firstFailure && flushFailure) {
+        throw new AggregateError([firstFailure.error, flushFailure.error], 'Capture and output flush both failed.');
+      }
+      if (firstFailure) throw firstFailure.error;
+      if (flushFailure) throw flushFailure.error;
+      return captured;
     },
   };
 }

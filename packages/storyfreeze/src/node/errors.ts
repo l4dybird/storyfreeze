@@ -15,6 +15,14 @@ export class CaptureAttemptTimeoutError extends Error {
   }
 }
 
+export class CaptureAttemptDidNotDrainError extends Error {
+  name = 'CaptureAttemptDidNotDrainError';
+
+  constructor(message: string, cause: unknown) {
+    super(message, { cause });
+  }
+}
+
 export class PreviewProtocolVersionError extends Error {
   name = 'PreviewProtocolVersionError';
 
@@ -67,7 +75,11 @@ export class PreviewReadyTimeoutError extends Error {
     super(
       `StoryFreeze preview did not become ready in ${timeout} msec. URL: ${url}; storyId: ${expected.storyId}; requestId: ${
         expected.requestId
-      }; lastState: ${JSON.stringify(lastState)}.`,
+      }; lastState: ${JSON.stringify(lastState)}.${
+        lastState === undefined
+          ? ' The StoryFreeze addon did not publish managed Preview state; verify that the addon is installed in this static build.'
+          : ''
+      }`,
     );
   }
 }
@@ -82,36 +94,6 @@ export class PreviewUrlRedirectError extends Error {
       )} and storyfreezeRequestId=${JSON.stringify(requestId)} at ${expectedUrl}, but the browser reached ${
         actualUrl || '(an empty URL)'
       }. The static server may be redirecting /iframe.html and discarding its query string. If you use serve, add {"cleanUrls": false} to serve.json.`,
-    );
-  }
-}
-
-export class PreviewModeRequiredError extends Error {
-  name = 'PreviewModeRequiredError';
-
-  constructor(timeout: number, url: string) {
-    super(
-      `The managed StoryFreeze Preview is required, but its marker was not found within ${timeout} msec at ${url}. Add storyfreeze to the Storybook addons and ensure the addon version matches the CLI.`,
-    );
-  }
-}
-
-export class SimplePreviewRenderError extends Error {
-  name = 'SimplePreviewRenderError';
-
-  constructor(storyId: string, url: string, detail: string) {
-    super(`Storybook did not render story ${JSON.stringify(storyId)} at ${url}: ${detail}`);
-  }
-}
-
-export class SimplePreviewReadyTimeoutError extends Error {
-  name = 'SimplePreviewReadyTimeoutError';
-
-  constructor(timeout: number, storyId: string, url: string, bodyClassName: string) {
-    super(
-      `Storybook did not show a rendered preview for story ${JSON.stringify(
-        storyId,
-      )} within ${timeout} msec. URL: ${url}; body classes: ${JSON.stringify(bodyClassName)}.`,
     );
   }
 }

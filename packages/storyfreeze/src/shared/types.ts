@@ -59,7 +59,7 @@ export interface ScreenshotOptions extends ScreenshotOptionFragments {
   viewports?: string[] | { [key: string]: string | Viewport };
   variants?: Variants;
   defaultVariantSuffix?: string;
-  /** Restores story-owned state after an opt-in same-document variant capture. */
+  /** Cleans up story-owned state after each non-default variant capture. */
   reset?: (context: StorySessionResetContext) => void | Promise<void>;
 }
 
@@ -88,19 +88,4 @@ export type VariantKey = {
 export interface Exposed {
   getBaseScreenshotOptions(): StrictScreenshotOptions;
   getCurrentVariantKey(): VariantKey;
-  waitBrowserMetricsStable(): Promise<void>;
 }
-
-export type PreviewCaptureDiagnostic = {
-  type: 'visual-commit';
-  didTimeout: boolean;
-  elapsedMs: number;
-  fontsStatus: FontFaceSetLoadStatus | 'unsupported';
-  imageCount: number;
-  imageDecodeFailureCount: number;
-  requestId: string;
-  storyId: string;
-  usedAnimationFrameFallback: boolean;
-  variantKey: string[];
-  visibilityState: DocumentVisibilityState;
-};

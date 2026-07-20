@@ -54,7 +54,7 @@ describe(initializeWorkerSessionController, () => {
 
     channel.emit('currentStoryWasSet', { storyId: 'button--secondary', viewMode: 'story' });
     await expect(selecting).resolves.toMatchObject({ generation: 1 });
-    protocol.completeCapture('worker-0-2');
+    await protocol.completeCapture('worker-0-2', '');
     expect(getWorkerSessionIdentity(target)).toBeUndefined();
 
     await expect(
@@ -78,7 +78,7 @@ describe(initializeWorkerSessionController, () => {
     channel.emit('currentStoryWasSet', { storyId: 'button--stale' });
     await expect(selecting).rejects.toThrow('requested story button--secondary');
     expect((target as any)[STORYFREEZE_PREVIEW_STATE_GLOBAL]).toMatchObject({ status: 'error' });
-    protocol.completeCapture('worker-0-2');
+    await protocol.completeCapture('worker-0-2', '');
     await expect(protocol.selectStory({ requestId: 'worker-0-2', storyId: 'button--secondary' })).rejects.toThrow(
       'already been used',
     );
@@ -98,6 +98,25 @@ describe(initializeWorkerSessionController, () => {
       status: 'error',
       error: { message: 'The component threw.' },
     });
+  });
+
+  it('runs the public reset hook after a variant and propagates rejection', async () => {
+    const reset = vi.fn(async () => {});
+    const target = {
+      location: { href: 'https://example.test/iframe.html?id=button--primary' },
+      __STORYFREEZE_CAPTURE_RESET__: { storyId: 'button--primary', reset },
+    } as unknown as typeof window;
+    const channel = new FakeChannel();
+    const protocol = initializeWorkerSessionController(target, channel)!;
+    await protocol.selectStory({ requestId: 'worker-0-1', storyId: 'button--primary' });
+    await protocol.completeCapture('worker-0-1', 'focused');
+    expect(reset).toHaveBeenCalledWith({ storyId: 'button--primary', variantId: 'focused' });
+
+    const failingReset = vi.fn(async () => Promise.reject(new Error('reset failed')));
+    (target as any).__STORYFREEZE_CAPTURE_RESET__ = { storyId: 'button--primary', reset: failingReset };
+    await protocol.selectStory({ requestId: 'worker-0-2', storyId: 'button--primary' });
+    await expect(protocol.completeCapture('worker-0-2', 'clicked')).rejects.toThrow('reset failed');
+    expect(getWorkerSessionIdentity(target)).toBeUndefined();
   });
 
   it('disposes listeners and rejects an in-flight selection', async () => {

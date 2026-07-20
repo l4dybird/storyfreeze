@@ -1,10 +1,9 @@
-import fs from 'fs/promises';
-import path from 'path';
-import { randomBytes } from 'crypto';
-import type { MainOptions } from './types.js';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { randomBytes } from 'node:crypto';
 import sanitize from 'sanitize-filename';
-import { captureDiagnosticsEnabled, emitCaptureDiagnostic } from './capture-diagnostics.js';
-import type { ScreenshotCaptureDimensions } from './browser-backend.js';
+import type { MainOptions } from './types.js';
+import type { ScreenshotCaptureDimensions } from './playwright-runtime.js';
 
 export const MAXIMUM_RETAINED_SCREENSHOT_BYTES = 64 * 1024 * 1024;
 
@@ -18,60 +17,50 @@ export function estimateScreenshotBufferReservation(dimensions: ScreenshotCaptur
   return rawBytes + Math.ceil(rawBytes * 0.02) + 1024 * 1024;
 }
 
-export interface TraceFile {
-  write(chunk: Buffer): Promise<void>;
-  commit(kind: string, story: string, suffix: string[], logicalId?: string): Promise<string>;
-  discard(): Promise<void>;
-}
+type Permit = { bytes: number; released: boolean };
+type Waiter = {
+  bytes: number;
+  resolve(permit: Permit): void;
+  reject(error: unknown): void;
+};
 
-export interface ScreenshotBudgetDiagnosticContext {
-  backend?: string;
-  requestId?: string;
-  retryCount?: number;
-  storyId?: string;
-  variantKey?: string[];
-  workerId?: number;
-}
-
+/** Safe output paths plus one weighted screenshot-to-write ownership budget. */
 export class FileSystem {
   private readonly reservedPaths = new Map<string, string>();
-  private readonly directoryPromises = new Map<string, Promise<void>>();
+  private readonly directoryPromises = new Map<string, Promise<string>>();
   private readonly outputRoot: string;
-  private readonly maximumConcurrentWrites: number;
-  private readonly maximumBufferedBytes = MAXIMUM_RETAINED_SCREENSHOT_BYTES;
-  private readonly writeWaiters: Array<{ bytes: number; resolve: () => void; reject: (error: unknown) => void }> = [];
-  private readonly screenshotWaiters: Array<{
-    bytes: number;
-    resolve: () => void;
-    reject: (error: unknown) => void;
-  }> = [];
-  private readonly screenshotReservations = new WeakMap<
-    Buffer,
-    { bytes: number; context?: ScreenshotBudgetDiagnosticContext }
-  >();
-  private readonly pendingWrites = new Set<Promise<unknown>>();
-  private activeWrites = 0;
-  private activeWriteBytes = 0;
-  private activeScreenshotReservations = 0;
-  private retainedScreenshotBytes = 0;
-  private peakScreenshotReservations = 0;
-  private peakRetainedScreenshotBytes = 0;
-  private writerFailure?: { error: unknown };
+  private readonly maximumConcurrent: number;
+  private readonly maximumBytes = MAXIMUM_RETAINED_SCREENSHOT_BYTES;
+  private readonly waiters: Waiter[] = [];
+  private readonly bufferPermits = new WeakMap<Buffer, Permit>();
+  private active = 0;
+  private activeBytes = 0;
+  private failure?: { error: unknown };
+  private outputRootRealPath?: Promise<string>;
 
-  constructor(private opt: MainOptions) {
+  constructor(private readonly opt: MainOptions) {
     this.outputRoot = path.resolve(opt.outDir);
-    this.maximumConcurrentWrites = Math.max(1, Math.min(8, opt.parallel || 1));
+    this.maximumConcurrent = Math.max(1, Math.min(8, opt.parallel || 1));
+  }
+
+  private reservePath(resolvedPath: string, identity: string, relativePath: string) {
+    const key = process.platform === 'win32' ? resolvedPath.toLowerCase() : resolvedPath;
+    const existing = this.reservedPaths.get(key);
+    if (existing !== undefined && existing !== identity) {
+      throw new Error(
+        `Output path collision for ${relativePath}. Use unique story names and variant suffixes so captures cannot overwrite each other.`,
+      );
+    }
+    this.reservedPaths.set(key, identity);
   }
 
   private getPath(kind: string, story: string, suffix: string[], extension: string, logicalId?: string) {
     const name = this.opt.flat
       ? sanitize((kind + '_' + story).replace(/\//g, '_'))
-      : kind
+      : `${kind
           .split('/')
-          .map(k => sanitize(k))
-          .join('/') +
-        '/' +
-        sanitize(story);
+          .map(part => sanitize(part))
+          .join('/')}/${sanitize(story)}`;
     const safeSuffix = suffix.map(part => sanitize(part));
     const relativePath = name + (safeSuffix.length ? `_${safeSuffix.join('_')}` : '') + extension;
     const resolvedPath = path.resolve(this.outputRoot, relativePath);
@@ -80,300 +69,195 @@ export class FileSystem {
       throw new Error(`Refusing to write outside the output directory: ${relativePath}`);
     }
 
-    const reservationKey = process.platform === 'win32' ? resolvedPath.toLowerCase() : resolvedPath;
     const identity = logicalId ?? JSON.stringify({ extension, kind, story, suffix });
-    const reservedBy = this.reservedPaths.get(reservationKey);
-    if (reservedBy !== undefined && reservedBy !== identity) {
-      throw new Error(
-        `Output path collision for ${relativePath}. Use unique story names and variant suffixes so captures cannot overwrite each other.`,
-      );
-    }
-    this.reservedPaths.set(reservationKey, identity);
+    this.reservePath(resolvedPath, identity, relativePath);
+    return { identity, relativePath, resolvedPath };
+  }
 
-    return resolvedPath;
+  private ensureOutputRoot() {
+    if (!this.outputRootRealPath) {
+      const resolving = fs
+        .mkdir(this.outputRoot, { recursive: true })
+        .then(() => fs.realpath(this.outputRoot))
+        .catch(error => {
+          if (this.outputRootRealPath === resolving) this.outputRootRealPath = undefined;
+          throw error;
+        });
+      this.outputRootRealPath = resolving;
+    }
+    return this.outputRootRealPath;
+  }
+
+  private async nearestExistingRealPath(directory: string) {
+    let current = directory;
+    while (true) {
+      try {
+        return await fs.realpath(current);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      }
+      const parent = path.dirname(current);
+      if (parent === current) throw new Error(`Unable to resolve an existing output directory for ${directory}.`);
+      current = parent;
+    }
+  }
+
+  private assertPhysicalContainment(outputRoot: string, candidate: string) {
+    const relative = path.relative(outputRoot, candidate);
+    if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+      throw new Error(`Refusing to write through a directory outside the output directory: ${candidate}`);
+    }
   }
 
   private ensureDirectory(directory: string) {
     let creating = this.directoryPromises.get(directory);
     if (!creating) {
-      creating = fs.mkdir(directory, { recursive: true }).then(() => undefined);
+      creating = (async () => {
+        const outputRoot = await this.ensureOutputRoot();
+        this.assertPhysicalContainment(outputRoot, await this.nearestExistingRealPath(directory));
+        await fs.mkdir(directory, { recursive: true });
+        const realDirectory = await fs.realpath(directory);
+        this.assertPhysicalContainment(outputRoot, realDirectory);
+        return realDirectory;
+      })();
       this.directoryPromises.set(directory, creating);
-      void creating.catch(() => this.directoryPromises.delete(directory));
+      const clear = () => {
+        if (this.directoryPromises.get(directory) === creating) this.directoryPromises.delete(directory);
+      };
+      void creating.then(clear, clear);
     }
     return creating;
   }
 
-  private acquireWrite(bytes: number, signal?: AbortSignal) {
-    if (this.writerFailure !== undefined) return Promise.reject(this.writerFailure.error);
-    if (signal?.aborted) return Promise.reject(signal.reason ?? new Error('Screenshot output write was aborted.'));
-    return new Promise<void>((resolve, reject) => {
+  private acquire(bytes: number, signal?: AbortSignal): Promise<Permit> {
+    if (this.failure) return Promise.reject(this.failure.error);
+    if (signal?.aborted) return Promise.reject(signal.reason ?? new Error('Screenshot output was aborted.'));
+    return new Promise((resolve, reject) => {
       let onAbort = () => {};
-      const waiter = {
+      const waiter: Waiter = {
         bytes,
-        resolve: () => {
+        resolve: permit => {
           signal?.removeEventListener('abort', onAbort);
-          resolve();
+          resolve(permit);
         },
-        reject: (error: unknown) => {
+        reject: error => {
           signal?.removeEventListener('abort', onAbort);
           reject(error);
         },
       };
       onAbort = () => {
-        const index = this.writeWaiters.indexOf(waiter);
+        const index = this.waiters.indexOf(waiter);
         if (index < 0) return;
-        this.writeWaiters.splice(index, 1);
-        waiter.reject(signal?.reason ?? new Error('Screenshot output write was aborted.'));
-        this.startWaitingWrites();
+        this.waiters.splice(index, 1);
+        waiter.reject(signal?.reason ?? new Error('Screenshot output was aborted.'));
+        this.drain();
       };
       signal?.addEventListener('abort', onAbort, { once: true });
-      this.writeWaiters.push(waiter);
-      this.startWaitingWrites();
+      this.waiters.push(waiter);
+      this.drain();
     });
   }
 
-  private startWaitingWrites() {
-    while (this.writeWaiters.length > 0 && this.activeWrites < this.maximumConcurrentWrites) {
-      const next = this.writeWaiters[0];
-      const fits = this.activeWriteBytes + next.bytes <= this.maximumBufferedBytes;
-      if (!fits && this.activeWrites > 0) return;
-      this.writeWaiters.shift();
-      this.activeWrites += 1;
-      this.activeWriteBytes += next.bytes;
-      next.resolve();
+  private drain() {
+    while (this.waiters.length > 0 && this.active < this.maximumConcurrent) {
+      const next = this.waiters[0];
+      if (this.active > 0 && this.activeBytes + next.bytes > this.maximumBytes) return;
+      this.waiters.shift();
+      const permit = { bytes: next.bytes, released: false };
+      this.active += 1;
+      this.activeBytes += next.bytes;
+      next.resolve(permit);
     }
   }
 
-  private releaseWrite(bytes: number) {
-    this.activeWrites -= 1;
-    this.activeWriteBytes -= bytes;
-    this.startWaitingWrites();
-  }
-
-  private acquireScreenshotReservation(bytes: number, signal?: AbortSignal) {
-    if (this.writerFailure !== undefined) return Promise.reject(this.writerFailure.error);
-    if (signal?.aborted)
-      return Promise.reject(signal.reason ?? new Error('Screenshot output reservation was aborted.'));
-    return new Promise<void>((resolve, reject) => {
-      let onAbort = () => {};
-      const waiter = {
-        bytes,
-        resolve: () => {
-          signal?.removeEventListener('abort', onAbort);
-          resolve();
-        },
-        reject: (error: unknown) => {
-          signal?.removeEventListener('abort', onAbort);
-          reject(error);
-        },
-      };
-      onAbort = () => {
-        const index = this.screenshotWaiters.indexOf(waiter);
-        if (index < 0) return;
-        this.screenshotWaiters.splice(index, 1);
-        waiter.reject(signal?.reason ?? new Error('Screenshot output reservation was aborted.'));
-        this.startWaitingScreenshotCaptures();
-      };
-      signal?.addEventListener('abort', onAbort, { once: true });
-      this.screenshotWaiters.push(waiter);
-      this.startWaitingScreenshotCaptures();
-    });
-  }
-
-  private startWaitingScreenshotCaptures() {
-    while (this.screenshotWaiters.length > 0 && this.activeScreenshotReservations < this.maximumConcurrentWrites) {
-      const next = this.screenshotWaiters[0];
-      const fits = this.retainedScreenshotBytes + next.bytes <= this.maximumBufferedBytes;
-      if (!fits && this.activeScreenshotReservations > 0) return;
-      this.screenshotWaiters.shift();
-      this.activeScreenshotReservations += 1;
-      this.retainedScreenshotBytes += next.bytes;
-      next.resolve();
+  private resize(permit: Permit, bytes: number) {
+    const delta = bytes - permit.bytes;
+    if (delta > 0 && this.active > 1 && this.activeBytes + delta > this.maximumBytes) {
+      throw new Error(`A screenshot used ${bytes} bytes, exceeding its ${permit.bytes}-byte output reservation.`);
     }
+    permit.bytes = bytes;
+    this.activeBytes += delta;
+    if (delta < 0) this.drain();
   }
 
-  private releaseScreenshotReservation(bytes: number) {
-    this.activeScreenshotReservations -= 1;
-    this.retainedScreenshotBytes -= bytes;
-    this.startWaitingScreenshotCaptures();
+  private release(permit: Permit) {
+    if (permit.released) return;
+    permit.released = true;
+    this.active -= 1;
+    this.activeBytes -= permit.bytes;
+    this.drain();
   }
 
-  private closeWriter(error: unknown) {
-    if (this.writerFailure !== undefined) return;
-    this.writerFailure = { error };
-    for (const waiter of this.writeWaiters.splice(0)) waiter.reject(error);
-    for (const waiter of this.screenshotWaiters.splice(0)) waiter.reject(error);
+  private fail(error: unknown) {
+    if (this.failure) return;
+    this.failure = { error };
+    for (const waiter of this.waiters.splice(0)) waiter.reject(error);
   }
 
-  private emitScreenshotBudgetDiagnostic(
-    state: 'acquired' | 'captured' | 'failed' | 'released',
-    context: ScreenshotBudgetDiagnosticContext | undefined,
-    details: Record<string, unknown>,
-  ) {
-    emitCaptureDiagnostic({
-      type: 'screenshot-budget',
-      ...context,
-      activeReservations: this.activeScreenshotReservations,
-      maximumBufferedBytes: this.maximumBufferedBytes,
-      peakActiveReservations: this.peakScreenshotReservations,
-      peakRetainedBytes: this.peakRetainedScreenshotBytes,
-      retainedBytes: this.retainedScreenshotBytes,
-      state,
-      ...details,
-    });
-  }
-
-  /** Reserves retained-buffer capacity before Chromium creates a PNG. */
   async captureScreenshot(
     reservationBytes: number | undefined,
     capture: () => Promise<Buffer | null>,
     signal?: AbortSignal,
-    diagnosticContext?: ScreenshotBudgetDiagnosticContext,
   ) {
-    const diagnosticsEnabled = captureDiagnosticsEnabled();
-    const waitStartedAt = diagnosticsEnabled ? performance.now() : 0;
-    const queuedBefore = diagnosticsEnabled ? this.screenshotWaiters.length : 0;
-    let reservedBytes =
+    const bytes =
       reservationBytes === undefined || !Number.isFinite(reservationBytes)
-        ? this.maximumBufferedBytes
+        ? this.maximumBytes
         : Math.max(1, Math.ceil(reservationBytes));
-    let acquired = false;
-    try {
-      await this.acquireScreenshotReservation(reservedBytes, signal);
-      acquired = true;
-    } catch (error) {
-      if (diagnosticsEnabled) {
-        this.emitScreenshotBudgetDiagnostic('failed', diagnosticContext, {
-          durationMs: performance.now() - waitStartedAt,
-          error: error instanceof Error ? { message: error.message, name: error.name } : String(error),
-          queuedBefore,
-          reservationBytes: reservedBytes,
-          stage: 'reservation',
-        });
-      }
-      throw error;
-    }
-    if (diagnosticsEnabled) {
-      this.peakScreenshotReservations = Math.max(this.peakScreenshotReservations, this.activeScreenshotReservations);
-      this.peakRetainedScreenshotBytes = Math.max(this.peakRetainedScreenshotBytes, this.retainedScreenshotBytes);
-      this.emitScreenshotBudgetDiagnostic('acquired', diagnosticContext, {
-        durationMs: performance.now() - waitStartedAt,
-        queuedBefore,
-        reservationBytes: reservedBytes,
-      });
-    }
+    const permit = await this.acquire(bytes, signal);
     try {
       const buffer = await capture();
       if (!buffer) {
-        this.releaseScreenshotReservation(reservedBytes);
-        if (diagnosticsEnabled) {
-          this.emitScreenshotBudgetDiagnostic('released', diagnosticContext, {
-            actualBytes: 0,
-            reservationBytes: reservedBytes,
-          });
-        }
+        this.release(permit);
         return null;
       }
-      if (this.writerFailure !== undefined) throw this.writerFailure.error;
-      if (this.screenshotReservations.has(buffer)) {
-        throw new Error('A captured screenshot buffer cannot hold more than one output reservation.');
-      }
-      const initialReservationBytes = reservedBytes;
-      const reservationDelta = buffer.byteLength - initialReservationBytes;
-      if (reservationDelta > 0) {
-        if (
-          this.activeScreenshotReservations > 1 &&
-          this.retainedScreenshotBytes + reservationDelta > this.maximumBufferedBytes
-        ) {
-          throw new Error(
-            `A screenshot used ${buffer.byteLength} bytes, exceeding its ${reservedBytes}-byte output reservation.`,
-          );
-        }
-      }
-      this.retainedScreenshotBytes += reservationDelta;
-      reservedBytes = buffer.byteLength;
-      this.screenshotReservations.set(buffer, { bytes: reservedBytes, context: diagnosticContext });
-      if (diagnosticsEnabled) {
-        this.peakRetainedScreenshotBytes = Math.max(this.peakRetainedScreenshotBytes, this.retainedScreenshotBytes);
-        this.emitScreenshotBudgetDiagnostic('captured', diagnosticContext, {
-          actualBytes: buffer.byteLength,
-          reservationBytes: initialReservationBytes,
-          reservationDeltaBytes: reservationDelta,
-        });
-      }
-      if (reservationDelta < 0) this.startWaitingScreenshotCaptures();
+      if (this.failure) throw this.failure.error;
+      if (this.bufferPermits.has(buffer)) throw new Error('A screenshot buffer cannot own two output permits.');
+      this.resize(permit, buffer.byteLength);
+      this.bufferPermits.set(buffer, permit);
       return buffer;
     } catch (error) {
-      if (acquired) this.releaseScreenshotReservation(reservedBytes);
-      if (diagnosticsEnabled) {
-        this.emitScreenshotBudgetDiagnostic('failed', diagnosticContext, {
-          error: error instanceof Error ? { message: error.message, name: error.name } : String(error),
-          reservationBytes: reservedBytes,
-          stage: 'capture',
-        });
-      }
+      this.release(permit);
       throw error;
     }
   }
 
   releaseScreenshotBuffer(buffer: Buffer | null | undefined) {
     if (!buffer) return;
-    const reservation = this.screenshotReservations.get(buffer);
-    if (reservation === undefined) return;
-    this.screenshotReservations.delete(buffer);
-    this.releaseScreenshotReservation(reservation.bytes);
-    if (captureDiagnosticsEnabled()) {
-      this.emitScreenshotBudgetDiagnostic('released', reservation.context, {
-        actualBytes: reservation.bytes,
-        reservationBytes: reservation.bytes,
-      });
+    const permit = this.bufferPermits.get(buffer);
+    if (!permit) return;
+    this.bufferPermits.delete(buffer);
+    this.release(permit);
+  }
+
+  private async writeAtomic(
+    filePath: string,
+    buffer: Buffer,
+    identity: string,
+    relativePath: string,
+    signal?: AbortSignal,
+  ) {
+    let temporaryPath: string | undefined;
+    try {
+      const realDirectory = await this.ensureDirectory(path.dirname(filePath));
+      const physicalPath = path.join(realDirectory, path.basename(filePath));
+      this.reservePath(physicalPath, identity, relativePath);
+      temporaryPath = `${physicalPath}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`;
+      if (signal?.aborted) throw signal.reason ?? new Error('Screenshot output write was aborted.');
+      await fs.writeFile(temporaryPath, buffer, signal ? { signal } : undefined);
+      if (signal?.aborted) throw signal.reason ?? new Error('Screenshot output write was aborted.');
+      await fs.rename(temporaryPath, physicalPath);
+    } catch (error) {
+      this.fail(error);
+      if (temporaryPath) await fs.rm(temporaryPath, { force: true }).catch(() => undefined);
+      throw error;
     }
   }
 
-  private writeAtomic(filePath: string, buffer: Buffer, signal?: AbortSignal) {
-    const operation = (async () => {
-      await this.acquireWrite(buffer.byteLength, signal);
-      const temporaryPath = `${filePath}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`;
-
-      try {
-        await this.ensureDirectory(path.dirname(filePath));
-        if (signal?.aborted) throw signal.reason ?? new Error('Screenshot output write was aborted.');
-        await fs.writeFile(temporaryPath, buffer, signal ? { signal } : undefined);
-        if (signal?.aborted) throw signal.reason ?? new Error('Screenshot output write was aborted.');
-        await fs.rename(temporaryPath, filePath);
-      } catch (error) {
-        this.closeWriter(error);
-        await fs.rm(temporaryPath, { force: true }).catch(() => undefined);
-        throw error;
-      } finally {
-        this.releaseWrite(buffer.byteLength);
-      }
-    })();
-    this.pendingWrites.add(operation);
-    void operation.then(
-      () => this.pendingWrites.delete(operation),
-      () => this.pendingWrites.delete(operation),
-    );
-    return operation;
-  }
-
   async flush() {
-    await Promise.allSettled([...this.pendingWrites]);
-    if (this.writerFailure !== undefined) throw this.writerFailure.error;
+    if (this.failure) throw this.failure.error;
   }
 
-  /**
-   *
-   * Save a captured buffer as a PNG image. The method takes ownership of the
-   * retained buffer and releases its reservation after the write settles.
-   *
-   * @param kind - Story kind
-   * @param story - Name of this story
-   * @param suffix - File name suffix
-   * @param buffer - PNG buffer to save
-   * @returns Absolute file path
-   *
-   **/
+  /** Takes ownership of the buffer and releases its permit after the atomic write. */
   async saveScreenshot(
     kind: string,
     story: string,
@@ -382,78 +266,24 @@ export class FileSystem {
     logicalId?: string,
     signal?: AbortSignal,
   ) {
+    const writeSignal = signal ?? this.opt.signal;
+    let permit = this.bufferPermits.get(buffer);
+    if (!permit) {
+      permit = await this.acquire(buffer.byteLength, writeSignal);
+      this.bufferPermits.set(buffer, permit);
+    }
     try {
-      const filePath = this.getPath(kind, story, suffix, '.png', logicalId);
-      await this.writeAtomic(filePath, buffer, signal);
-      return filePath;
+      const destination = this.getPath(kind, story, suffix, '.png', logicalId);
+      await this.writeAtomic(
+        destination.resolvedPath,
+        buffer,
+        destination.identity,
+        destination.relativePath,
+        writeSignal,
+      );
+      return destination.resolvedPath;
     } finally {
       this.releaseScreenshotBuffer(buffer);
     }
-  }
-
-  async createTraceFile(): Promise<TraceFile> {
-    await this.ensureDirectory(this.outputRoot);
-    const temporaryPath = path.join(
-      this.outputRoot,
-      `.storyfreeze-trace.${process.pid}.${randomBytes(6).toString('hex')}.tmp`,
-    );
-    const handle = await fs.open(temporaryPath, 'wx');
-    let state: 'open' | 'committed' | 'discarded' = 'open';
-    let closed = false;
-    const close = async () => {
-      if (closed) return;
-      await handle.close();
-      closed = true;
-    };
-
-    return {
-      write: async chunk => {
-        if (state !== 'open') throw new Error('Cannot write to a finalized Chromium trace.');
-        await handle.writeFile(chunk);
-      },
-      commit: async (kind, story, suffix, logicalId) => {
-        if (state !== 'open') throw new Error('Cannot commit a finalized Chromium trace.');
-        const filePath = this.getPath(kind, story, [...suffix, 'trace'], '.json', logicalId);
-        await this.ensureDirectory(path.dirname(filePath));
-        await close();
-        try {
-          await fs.rename(temporaryPath, filePath);
-          state = 'committed';
-          return filePath;
-        } catch (error) {
-          state = 'discarded';
-          try {
-            await fs.rm(temporaryPath, { force: true });
-          } catch (cleanupError) {
-            throw new AggregateError([error, cleanupError], 'Trace commit and temporary-file cleanup both failed.');
-          }
-          throw error;
-        }
-      },
-      discard: async () => {
-        if (state !== 'open') return;
-        state = 'discarded';
-        let closeFailure: { error: unknown } | undefined;
-        try {
-          await close();
-        } catch (error) {
-          closeFailure = { error };
-        }
-        let removeFailure: { error: unknown } | undefined;
-        try {
-          await fs.rm(temporaryPath, { force: true });
-        } catch (error) {
-          removeFailure = { error };
-        }
-        if (closeFailure !== undefined && removeFailure !== undefined) {
-          throw new AggregateError(
-            [closeFailure.error, removeFailure.error],
-            'Trace close and temporary-file cleanup both failed.',
-          );
-        }
-        if (closeFailure !== undefined) throw closeFailure.error;
-        if (removeFailure !== undefined) throw removeFailure.error;
-      },
-    };
   }
 }

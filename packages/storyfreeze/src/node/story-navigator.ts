@@ -1,17 +1,13 @@
 import { raceAgainstTimeout, sleep } from './async-utils.js';
-import type { CapturePage } from './browser-backend.js';
-import type { PreviewMode, RunMode } from './types.js';
+import type { PlaywrightCapturePage } from './playwright-runtime.js';
 import {
   PreviewAddonVersionMismatchError,
-  PreviewModeRequiredError,
   PreviewProtocolVersionError,
   PreviewReadyTimeoutError,
   PreviewRenderError,
   PreviewStateMismatchError,
   PreviewStateValidationError,
   PreviewUrlRedirectError,
-  SimplePreviewReadyTimeoutError,
-  SimplePreviewRenderError,
 } from './errors.js';
 import {
   STORYFREEZE_ADDON_VERSION,
@@ -19,7 +15,6 @@ import {
   STORYFREEZE_PREVIEW_STATE_GLOBAL,
   STORYFREEZE_REQUEST_ID_PARAM,
   type NormalizedScreenshotOptions,
-  type PreviewRuntimeMetadata,
   type StoryFreezePreviewStateV1,
 } from '../shared/preview-protocol.js';
 import { WorkerSessionProtocolClient } from './worker-session-protocol.js';
@@ -46,18 +41,7 @@ export function createStoryPreviewUrl(baseUrl: URL, storyId: string, requestId: 
   return url;
 }
 
-type NavigationPage = Pick<CapturePage, 'currentUrl' | 'evaluate' | 'goto'>;
-
-export type PreviewModeDetection = {
-  mode: RunMode;
-  reason: string;
-};
-
-type SimplePreviewState =
-  | { status: 'ready'; bodyClassName: string }
-  | { status: 'pending'; bodyClassName: string }
-  | { status: 'no-preview'; bodyClassName: string }
-  | { status: 'error'; bodyClassName: string; message: string; stack: string };
+type NavigationPage = Pick<PlaywrightCapturePage, 'currentUrl' | 'evaluate' | 'goto'>;
 
 function assertPreviewUrl(page: NavigationPage, expectedUrl: URL, expected: ExpectedPreviewState) {
   const actualUrl = page.currentUrl();
@@ -82,28 +66,6 @@ async function readPreviewState(page: NavigationPage): Promise<unknown> {
   );
 }
 
-async function readSimplePreviewState(page: NavigationPage): Promise<SimplePreviewState> {
-  return page.evaluate(() => {
-    const bodyClassName = document.body?.className ?? '';
-    const bodyClasses = document.body?.classList;
-    if (bodyClasses?.contains('sb-show-nopreview')) {
-      return { status: 'no-preview' as const, bodyClassName };
-    }
-    if (bodyClasses?.contains('sb-show-errordisplay')) {
-      return {
-        status: 'error' as const,
-        bodyClassName,
-        message: document.querySelector('#error-message')?.textContent?.trim() ?? '',
-        stack: document.querySelector('#error-stack')?.textContent?.trim() ?? '',
-      };
-    }
-    if (bodyClasses?.contains('sb-show-main')) {
-      return { status: 'ready' as const, bodyClassName };
-    }
-    return { status: 'pending' as const, bodyClassName };
-  });
-}
-
 function validatePreviewState(raw: unknown, expected: ExpectedPreviewState): StoryFreezePreviewStateV1 {
   if (!isRecord(raw)) {
     throw new PreviewStateValidationError('state must be an object');
@@ -124,17 +86,6 @@ function validatePreviewState(raw: unknown, expected: ExpectedPreviewState): Sto
     if (raw.rootOptions !== undefined && !isRecord(raw.rootOptions)) {
       throw new PreviewStateValidationError('ready.rootOptions must be an object when provided');
     }
-    if (raw.runtime !== undefined) {
-      if (
-        !isRecord(raw.runtime) ||
-        typeof raw.runtime.hasCustomReset !== 'boolean' ||
-        typeof raw.runtime.hasRuntimeWaitFor !== 'boolean' ||
-        !Array.isArray(raw.runtime.runtimeWaitForVariants) ||
-        !raw.runtime.runtimeWaitForVariants.every(key => typeof key === 'string')
-      ) {
-        throw new PreviewStateValidationError('ready.runtime metadata is invalid');
-      }
-    }
   } else if (raw.status === 'error') {
     if (!isRecord(raw.error) || typeof raw.error.name !== 'string' || typeof raw.error.message !== 'string') {
       throw new PreviewStateValidationError('error must contain string name and message fields');
@@ -145,55 +96,10 @@ function validatePreviewState(raw: unknown, expected: ExpectedPreviewState): Sto
   return raw as unknown as StoryFreezePreviewStateV1;
 }
 
-async function waitForMarker(
-  page: NavigationPage,
-  expected: ExpectedPreviewState,
-  timeout: number,
-  signal?: AbortSignal,
-): Promise<StoryFreezePreviewStateV1 | undefined> {
-  const deadline = Date.now() + timeout;
-  do {
-    if (signal?.aborted) {
-      throw signal.reason instanceof Error ? signal.reason : new Error('StoryFreeze was interrupted.');
-    }
-    const read = await raceAgainstTimeout(readPreviewState(page), deadline - Date.now(), signal);
-    if (read.timedOut) return undefined;
-    const raw = read.value;
-    if (raw !== undefined) return validatePreviewState(raw, expected);
-    await sleep(25);
-  } while (Date.now() < deadline);
-  return undefined;
-}
-
-export async function detectPreviewMode(
-  page: NavigationPage,
-  baseUrl: URL,
-  storyId: string,
-  timeout: number,
-  requestedMode: PreviewMode = 'auto',
-  signal?: AbortSignal,
-): Promise<PreviewModeDetection> {
-  const requestId = 'mode-detection';
-  const url = createStoryPreviewUrl(baseUrl, storyId, requestId);
-  await page.goto(url.href, { timeout: 60000, waitUntil: 'domcontentloaded' });
-  assertPreviewUrl(page, url, { storyId, requestId });
-  if (requestedMode === 'simple') {
-    return { mode: 'simple', reason: 'simple Preview mode was explicitly selected' };
-  }
-  if (await waitForMarker(page, { storyId, requestId }, timeout, signal)) {
-    return { mode: 'managed', reason: 'the StoryFreeze preview marker was detected' };
-  }
-  if (requestedMode === 'managed') {
-    throw new PreviewModeRequiredError(timeout, page.currentUrl());
-  }
-  return { mode: 'simple', reason: 'the StoryFreeze preview marker was not detected' };
-}
-
 export class StoryNavigator {
   private sequence = 0;
   private current?: ExpectedPreviewState;
   private _rootOptions?: NormalizedScreenshotOptions;
-  private _runtimeMetadata?: PreviewRuntimeMetadata;
   private reusableDocument = false;
   private workerSessionSupport: 'unknown' | 'supported' | 'unsupported' = 'unknown';
   private readonly workerSession: WorkerSessionProtocolClient;
@@ -208,10 +114,6 @@ export class StoryNavigator {
 
   get rootOptions() {
     return this._rootOptions;
-  }
-
-  get runtimeMetadata() {
-    return this._runtimeMetadata;
   }
 
   get canSelectStory() {
@@ -230,7 +132,6 @@ export class StoryNavigator {
     const requestId = `${this.workerId}-${++this.sequence}`;
     this.current = { storyId, requestId };
     this._rootOptions = undefined;
-    this._runtimeMetadata = undefined;
     const url = createStoryPreviewUrl(this.baseUrl, storyId, requestId, retryCount);
     await this.page.goto(url.href, { timeout, waitUntil: 'domcontentloaded' });
     assertPreviewUrl(this.page, url, this.current);
@@ -242,22 +143,16 @@ export class StoryNavigator {
     const requestId = `${this.workerId}-${++this.sequence}`;
     this.current = { storyId, requestId };
     this._rootOptions = undefined;
-    this._runtimeMetadata = undefined;
     await this.workerSession.selectStory(this.current);
     this.workerSessionSupport = 'supported';
   }
 
-  async completeCapture(): Promise<void> {
-    await this.workerSession.completeCapture();
+  async completeCapture(variantId: string): Promise<void> {
+    await this.workerSession.completeCapture(variantId);
   }
 
   invalidateDocument(): void {
     this.reusableDocument = false;
-    this.workerSession.invalidate();
-  }
-
-  markWorkerSessionUnavailable(): void {
-    this.workerSessionSupport = 'unsupported';
     this.workerSession.invalidate();
   }
 
@@ -277,7 +172,6 @@ export class StoryNavigator {
         const state = validatePreviewState(lastState, this.current);
         if (state.status === 'ready') {
           this._rootOptions = state.rootOptions ?? state.options;
-          this._runtimeMetadata = state.runtime;
           return state.options;
         }
         if (state.status === 'error') throw new PreviewRenderError(state.storyId, state.error);
@@ -286,38 +180,5 @@ export class StoryNavigator {
     } while (Date.now() < deadline);
 
     throw new PreviewReadyTimeoutError(timeout, this.page.currentUrl(), this.current, lastState);
-  }
-
-  async waitForSimpleReady(timeout: number, signal?: AbortSignal): Promise<void> {
-    if (!this.current) throw new Error('Story preview navigation has not started.');
-    const deadline = Date.now() + timeout;
-    let lastState: SimplePreviewState = { status: 'pending', bodyClassName: '' };
-
-    do {
-      if (signal?.aborted) {
-        throw signal.reason instanceof Error ? signal.reason : new Error('StoryFreeze was interrupted.');
-      }
-      const read = await raceAgainstTimeout(readSimplePreviewState(this.page), deadline - Date.now(), signal);
-      if (read.timedOut) break;
-      lastState = read.value;
-      if (lastState.status === 'ready') return;
-      if (lastState.status === 'no-preview') {
-        throw new SimplePreviewRenderError(this.current.storyId, this.page.currentUrl(), 'No Preview is visible.');
-      }
-      if (lastState.status === 'error') {
-        const detail = [lastState.message || 'Storybook error display is visible.', lastState.stack]
-          .filter(Boolean)
-          .join('\n');
-        throw new SimplePreviewRenderError(this.current.storyId, this.page.currentUrl(), detail);
-      }
-      await sleep(25);
-    } while (Date.now() < deadline);
-
-    throw new SimplePreviewReadyTimeoutError(
-      timeout,
-      this.current.storyId,
-      this.page.currentUrl(),
-      lastState.bodyClassName,
-    );
   }
 }

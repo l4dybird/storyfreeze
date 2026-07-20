@@ -10,8 +10,8 @@ import {
 } from 'gunshi';
 import { renderHeader } from 'gunshi/renderer';
 import { time } from './async-utils.js';
-import { lazyPlaywrightBrowserBackend } from './playwright-backend-loader.js';
-import type { BrowserBackend, BrowserLaunchOptions, ChromeChannel } from './browser-backend.js';
+import type { BrowserLaunchOptions } from './playwright-runtime.js';
+import type { ChromeChannel } from './chromium-resolver.js';
 import { Logger } from './logger.js';
 import { main } from './main.js';
 import { parseShardOptions } from './shard-utilities.js';
@@ -107,7 +107,6 @@ export interface SignalHost {
 
 export interface CliDependencies {
   main: typeof main;
-  browserBackend: BrowserBackend;
   signalHost: SignalHost;
   env: NodeJS.ProcessEnv;
   writeError(message: string): void;
@@ -115,7 +114,6 @@ export interface CliDependencies {
 
 const defaultDependencies: CliDependencies = {
   main,
-  browserBackend: lazyPlaywrightBrowserBackend,
   signalHost: process,
   env: process.env,
   writeError: message => process.stderr.write(message),
@@ -187,23 +185,11 @@ function toMainOptions(
     delay: values.delay,
     viewports: values.viewport ?? ['800x600'],
     parallel: values.parallel,
-    mode: 'managed',
-    browserIsolation: 'process',
-    captureProtocol: 'story-session',
     shard: parseShardOptions(values.shard),
     captureTimeout: values.captureTimeout,
     captureMaxRetryCount: values.captureMaxRetryCount,
-    metricsWatchRetryCount: 1000,
-    viewportDelay: 0,
-    reloadAfterChangeViewport: false,
-    stateChangeDelay: 0,
-    recyclingPolicy: {
-      maxCapturesPerContext: 128,
-      maxContextAgeMs: 0,
-    },
     disableCssAnimation: values.disableCssAnimation,
     disableWaitAssets: values.disableWaitAssets,
-    trace: false,
     forwardConsoleLogs: values.forwardConsoleLogs,
     chromiumChannel: values.chromiumChannel,
     chromiumPath: values.chromiumPath,
@@ -233,8 +219,6 @@ async function execute(values: StoryfreezeCliValues, dependencies: CliDependenci
     return 1;
   }
 
-  const browserBackend = dependencies.browserBackend;
-
   const { logger: _, ...rest } = opt;
   const shutdownController = new AbortController();
   let receivedSignal: NodeJS.Signals | undefined;
@@ -251,13 +235,10 @@ async function execute(values: StoryfreezeCliValues, dependencies: CliDependenci
   dependencies.signalHost.once('SIGTERM', handleSigterm);
 
   logger.debug('Option:', rest);
-  logger.debug('Browser backend:', browserBackend.name);
-  logger.debug('Runtime:', 'managed persistent Preview with process-isolated workers');
+  logger.debug('Runtime:', 'managed persistent Playwright Preview with process-isolated workers');
 
   try {
-    const [numberOfCaptured, duration] = await time(
-      dependencies.main({ ...opt, signal: shutdownController.signal }, { browserBackend }),
-    );
+    const [numberOfCaptured, duration] = await time(dependencies.main({ ...opt, signal: shutdownController.signal }));
     logger.log(
       `Screenshot was ended successfully in ${logger.color.green(duration + ' msec')} capturing ${logger.color.green(
         numberOfCaptured + '',

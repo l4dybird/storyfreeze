@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vite-plus/test';
 import { addViewportProfileTags, resolveStoryFileTestRegexp, storyfreezeViewportIndexer } from './viewport-indexer.js';
 
-const options = { makeTitle: (title: string) => title };
+const options = { makeTitle: (title?: string) => title ?? '' };
 
 function storyTags(code: string) {
   return Object.fromEntries(

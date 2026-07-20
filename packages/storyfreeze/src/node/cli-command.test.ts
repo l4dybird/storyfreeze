@@ -17,7 +17,7 @@ describe(runCli, () => {
     error.mockRestore();
   });
 
-  it('maps the lean CLI to the fixed managed runtime', async () => {
+  it('maps the lean CLI to the managed Playwright runtime', async () => {
     let received: MainOptions | undefined;
     const main = vi.fn(async (options: MainOptions) => {
       received = options;
@@ -30,30 +30,18 @@ describe(runCli, () => {
       serverOptions: { storybookUrl: 'http://localhost:9001' },
       outDir: '__screenshots__',
       parallel: 4,
-      mode: 'managed',
-      browserIsolation: 'process',
-      captureProtocol: 'story-session',
-      recyclingPolicy: { maxCapturesPerContext: 128, maxContextAgeMs: 0 },
       flat: false,
       include: [],
       exclude: [],
       delay: 0,
-      viewportDelay: 0,
-      stateChangeDelay: 0,
-      reloadAfterChangeViewport: false,
       viewports: ['800x600'],
       shard: { shardNumber: 1, totalShards: 1 },
-      metricsWatchRetryCount: 1000,
-      trace: false,
       chromiumChannel: '*',
       chromiumPath: '',
     });
     expect(received?.logger.level).toBe('silent');
     expect(received?.launchOptions).toEqual({ headless: true });
-    expect(main).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({ browserBackend: expect.objectContaining({ name: 'playwright' }) }),
-    );
+    expect(main).toHaveBeenCalledWith(expect.anything());
   });
 
   it('supports retained short options and repeated values', async () => {

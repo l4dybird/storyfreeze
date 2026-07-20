@@ -16,7 +16,7 @@ describe(WorkerSessionProtocolClient, () => {
       generation: 2,
     });
     expect(client.current).toMatchObject({ requestId: '0-2' });
-    await client.completeCapture();
+    await client.completeCapture('focused');
     expect(client.current).toBeUndefined();
     expect(evaluate).toHaveBeenCalledTimes(2);
   });

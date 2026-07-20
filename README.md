@@ -250,7 +250,7 @@ interface ScreenshotOptions {
 - `viewport`, `viewports`: See type `Viewport` section below.
 - `variants`: See type `Variants` section below.
 - `defaultVariantSuffix`: If set, StoryFreeze appends this suffix to the default capture filename.
-- `reset`: Restores story-owned state after an opt-in same-document variant capture. It is not used by the default strict fresh-navigation path.
+- `reset`: Runs after each non-default variant capture. A rejected callback fails that capture; StoryFreeze remounts the story before the next variant.
 - `waitImages`: Deprecated. Use `waitAssets`. If set true, StoryFreeze waits until `<img>` in the story are loaded.
 - `omitBackground`: If set true, StoryFreeze omits the background of the page allowing for transparent screenshots. Note the storybook theme will need to be transparent as well.
 - `captureBeyondViewport`: If set true, StoryFreeze captures beyond the viewport through the Chromium screenshot protocol. The default is true for the Playwright Chromium runtime.
@@ -474,12 +474,17 @@ $ npx storyfreeze http://localhost:9009
 The addon and managed Preview protocol are required. A missing or incompatible
 addon is an error and never falls back to capturing an unverified page.
 
-Width and height changes use a live viewport update. StoryFreeze also updates mobile, touch, orientation, and DPR emulation in the existing worker where the browser supports it, then invalidates the Preview document before reuse. Same-story variants retain the existing apply/reset isolation checks. A failed worker session is closed before its capture enters the existing retry path, and terminal failure stops new queue assignments.
+Width and height changes use a live viewport update. Crossing a mobile, touch, or
+DPR boundary recreates the worker context and remounts the story. Every variant
+is rendered through Storybook's remount boundary. A failed worker context is
+closed before its capture enters the existing retry path, and terminal failure
+stops new queue assignments.
 
 Each process-isolated worker recycles its context after 128 captures or after a
 session fault. This safety boundary is intentionally not configurable.
 
-State-changing click variants require a story-owned reset hook before they are eligible:
+Applications may also use a reset hook to clean up timers, listeners, or other
+state they own after a non-default variant:
 
 ```js
 export const Toggle = {
@@ -496,7 +501,10 @@ export const Toggle = {
 };
 ```
 
-The reset hook must settle within the capture timeout and restore or cancel component-owned timers, listeners, module/window globals, and other state outside the preview document. Args or globals containing class instances or opaque host objects that cannot preserve their internal state are rejected for story sessions; `auto` falls back to `strict`. Closed shadow roots, canvas bitmap state, CSSOM or adopted-stylesheet changes, and mutations that occur only after verification cannot be proven reset-safe. Use `strict` for those stories; `auto` falls back when an observable mismatch is found, but it cannot guarantee detection of invisible or arbitrarily late side effects.
+The reset hook must settle within the capture timeout. A rejected hook is a
+capture failure. StoryFreeze uses a Storybook remount for component state
+isolation; the hook remains useful for application-owned state outside that
+render lifecycle.
 
 ### Parallelisation across multiple computers
 
@@ -635,7 +643,9 @@ StoryFreeze resolves an explicit `--chromium-path` or `--chromium-channel` first
 
 You can change search channel with `--chromium-channel` option or set executable Chromium file path with `--chromium-path` option.
 
-Use `--browser-launch-options '<json>'` for browser launch arguments. `args`, `headless`, and `executablePath` are supported. An explicit `--chromium-path` takes precedence over `executablePath` in the JSON.
+Use `--browser-launch-options '<json>'` for Playwright Chromium launch options.
+An explicit `--chromium-path` takes precedence over `executablePath` in the
+JSON.
 
 Chromium's sandbox is enabled by default, including when capturing a hosted Storybook. If a restricted container cannot start Chromium with its sandbox enabled, opt out explicitly for that trusted environment:
 
@@ -644,21 +654,19 @@ $ npx storyfreeze --browser-launch-options '{"args":["--no-sandbox","--disable-s
 ```
 
 Capture workers use separate browser processes. `--parallel` controls the
-maximum worker count and defaults to four; StoryFreeze does not select a
-different browser topology automatically.
+maximum worker count and defaults to four; StoryFreeze never increases it
+automatically.
 
 ## Storybook compatibility
 
 ### Storybook versions
 
 The package peer range is Storybook `^10.0.0`. The release gate uses the current
-Storybook 10 React/Vite fixture for complete simple and managed static E2E. The
+Storybook 10 React/Vite fixture for complete managed static E2E. The
 packed preset is also load-checked with Storybook 10.0 and 10.4 so the viewport
 indexer fallback remains compatible with releases that do not export
 `STORY_FILE_TEST_REGEXP`.
 
-- Simple mode:
-  - [x] Storybook 10.x
 - Managed mode:
   - [x] Storybook 10.x
 
@@ -666,7 +674,7 @@ See also packages in `examples` directory.
 
 ### UI frameworks
 
-The capture protocol is UI-framework neutral. React + Vite is the blocking
+The addon integration is UI-framework neutral. React + Vite is the blocking
 release fixture; other Storybook 10 framework integrations are supported by the
 same preview protocol but are not separate release-gate fixtures.
 

@@ -1,4 +1,4 @@
-import type { CapturePage } from './browser-backend.js';
+import type { PlaywrightCapturePage } from './playwright-runtime.js';
 import {
   STORYFREEZE_WORKER_SESSION_GLOBAL,
   STORYFREEZE_WORKER_SESSION_PROTOCOL_VERSION,
@@ -26,7 +26,7 @@ function validateSelection(value: unknown, expected: SelectWorkerStoryRequest): 
 export class WorkerSessionProtocolClient {
   private active?: WorkerStorySelection;
 
-  constructor(private readonly page: Pick<CapturePage, 'evaluate'>) {}
+  constructor(private readonly page: Pick<PlaywrightCapturePage, 'evaluate'>) {}
 
   get current() {
     return this.active;
@@ -63,11 +63,11 @@ export class WorkerSessionProtocolClient {
     }
   }
 
-  async completeCapture(): Promise<void> {
+  async completeCapture(variantId: string): Promise<void> {
     const active = this.active;
     if (!active) return;
     try {
-      await this.invoke('completeCapture', active.requestId);
+      await this.invoke('completeCapture', [active.requestId, variantId]);
     } finally {
       this.active = undefined;
     }
@@ -89,7 +89,7 @@ export class WorkerSessionProtocolClient {
         if (record.protocolVersion !== protocolVersion || typeof handler !== 'function') {
           throw new Error('StoryFreeze worker-session preview protocol is unavailable or incompatible.');
         }
-        return handler.call(protocol, argument);
+        return Array.isArray(argument) ? handler.call(protocol, ...argument) : handler.call(protocol, argument);
       },
       {
         argument,

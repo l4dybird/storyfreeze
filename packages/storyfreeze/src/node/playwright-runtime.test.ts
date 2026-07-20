@@ -83,8 +83,8 @@ describe(PlaywrightRuntime, () => {
     runtimeFixture();
     const runtime = new PlaywrightRuntime({
       launchOptions: {
-        args: ['--no-sandbox'],
-        chromiumSandbox: false,
+        args: ['--custom-browser-argument'],
+        chromiumSandbox: true,
         headless: false,
         proxy: { server: 'http://proxy.test:8080' },
         timeout: 12_345,
@@ -92,8 +92,8 @@ describe(PlaywrightRuntime, () => {
     });
     await runtime.boot();
     expect(playwright.launch).toHaveBeenCalledWith({
-      args: ['--no-sandbox'],
-      chromiumSandbox: false,
+      args: ['--custom-browser-argument'],
+      chromiumSandbox: true,
       executablePath: process.execPath,
       headless: false,
       proxy: { server: 'http://proxy.test:8080' },
@@ -125,7 +125,7 @@ describe(PlaywrightRuntime, () => {
     const runtime = new TestRuntime({});
     await runtime.boot({ viewport: { width: 1280, height: 720 } });
     expect(playwright.launch).toHaveBeenCalledWith({
-      chromiumSandbox: true,
+      chromiumSandbox: false,
       executablePath: process.execPath,
       headless: true,
       timeout: 30_000,
@@ -144,7 +144,7 @@ describe(PlaywrightRuntime, () => {
     const runtime = new PlaywrightRuntime({ launchOptions: { timeout: 0 } });
     await runtime.boot();
     expect(playwright.launch).toHaveBeenCalledWith({
-      chromiumSandbox: true,
+      chromiumSandbox: false,
       executablePath: process.execPath,
       headless: true,
       timeout: 30_000,
@@ -157,7 +157,7 @@ describe(PlaywrightRuntime, () => {
     const runtime = new PlaywrightRuntime({ launchOptions: { timeout: 1_000_000_000 } });
     await runtime.boot();
     expect(playwright.launch).toHaveBeenCalledWith({
-      chromiumSandbox: true,
+      chromiumSandbox: false,
       executablePath: process.execPath,
       headless: true,
       timeout: 30_000,

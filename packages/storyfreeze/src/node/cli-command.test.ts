@@ -40,7 +40,7 @@ describe(runCli, () => {
       chromiumPath: '',
     });
     expect(received?.logger.level).toBe('silent');
-    expect(received?.launchOptions).toEqual({ headless: true });
+    expect(received?.launchOptions).toEqual({ chromiumSandbox: false, headless: true });
     expect(main).toHaveBeenCalledWith(expect.anything());
   });
 
@@ -108,7 +108,7 @@ describe(runCli, () => {
           '--forward-console-logs',
           '--disable-wait-assets',
           '--browser-launch-options',
-          '{"args":["--custom"],"headless":false}',
+          '{"args":["--custom"],"chromiumSandbox":true,"headless":false}',
         ],
         { main },
       ),
@@ -119,7 +119,7 @@ describe(runCli, () => {
       captureMaxRetryCount: 7,
       forwardConsoleLogs: true,
       disableWaitAssets: true,
-      launchOptions: { args: ['--custom'], headless: false },
+      launchOptions: { args: ['--custom'], chromiumSandbox: true, headless: false },
     });
     expect(received?.logger.level).toBe('verbose');
   });

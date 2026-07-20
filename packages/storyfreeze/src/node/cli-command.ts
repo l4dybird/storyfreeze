@@ -21,7 +21,7 @@ const packageVersion = (
   JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as { version: string }
 ).version;
 
-const defaultBrowserLaunchOptions = '{}';
+const defaultBrowserLaunchOptions = '{"chromiumSandbox":false}';
 const chromiumChannels = ['canary', 'stable', '*'] as const;
 
 const storyfreezeCommandArgs = {

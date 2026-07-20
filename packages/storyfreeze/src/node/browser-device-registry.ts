@@ -17,7 +17,12 @@
  * and to generate landscape variants from the Puppeteer 9.1.1 descriptors.
  */
 
-import type { BrowserDeviceDescriptor } from './browser-backend.js';
+import type { Viewport } from '../shared/types.js';
+
+export interface BrowserDeviceDescriptor {
+  name: string;
+  viewport: Viewport;
+}
 
 const portraitDevices = [
   ['Blackberry PlayBook', 600, 1024, 1],

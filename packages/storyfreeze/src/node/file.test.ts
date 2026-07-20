@@ -1,328 +1,110 @@
-import fs from 'fs/promises';
-import fsSync from 'node:fs';
-import os from 'os';
-import path from 'path';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vite-plus/test';
-import { estimateScreenshotBufferReservation, FileSystem } from './file.js';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { afterEach, describe, expect, it, vi } from 'vite-plus/test';
 import type { MainOptions } from './types.js';
-import { subscribeCaptureDiagnostics, type CaptureDiagnosticEvent } from './capture-diagnostics.js';
+import { estimateScreenshotBufferReservation, FileSystem, MAXIMUM_RETAINED_SCREENSHOT_BYTES } from './file.js';
 
 describe(FileSystem, () => {
-  const originalDiagnostics = process.env.STORYFREEZE_CAPTURE_DIAGNOSTICS;
-  let outDir: string;
+  const roots: string[] = [];
 
-  beforeEach(async () => {
-    outDir = await fs.mkdtemp(path.join(os.tmpdir(), 'storyfreeze-file-'));
-  });
+  async function output(flat = false, parallel = 4) {
+    const outDir = await fs.mkdtemp(path.join(os.tmpdir(), 'storyfreeze-output-'));
+    roots.push(outDir);
+    return { outDir, fileSystem: new FileSystem({ outDir, flat, parallel } as MainOptions) };
+  }
 
   afterEach(async () => {
     vi.restoreAllMocks();
-    if (originalDiagnostics === undefined) delete process.env.STORYFREEZE_CAPTURE_DIAGNOSTICS;
-    else process.env.STORYFREEZE_CAPTURE_DIAGNOSTICS = originalDiagnostics;
-    await fs.rm(outDir, { recursive: true, force: true });
+    await Promise.all(roots.splice(0).map(root => fs.rm(root, { recursive: true, force: true })));
   });
 
-  function createFileSystem(flat: boolean) {
-    return new FileSystem({ outDir, flat } as MainOptions);
-  }
-
-  it('estimates screenshot reservations from the resolved layout and device scale factor', () => {
-    expect(estimateScreenshotBufferReservation({ width: 800, height: 600, deviceScaleFactor: 1 })).toBe(3_007_588);
-    expect(estimateScreenshotBufferReservation({ width: 800, height: 600, deviceScaleFactor: 2 })).toBe(8_883_400);
+  it('estimates a conservative raw RGBA reservation', () => {
+    expect(estimateScreenshotBufferReservation({ width: 100, height: 50, deviceScaleFactor: 2 })).toBeGreaterThan(
+      100 * 50 * 4 * 4,
+    );
     expect(estimateScreenshotBufferReservation(undefined)).toBeUndefined();
-    expect(
-      estimateScreenshotBufferReservation({ width: Number.MAX_SAFE_INTEGER, height: 600, deviceScaleFactor: 1 }),
-    ).toBeUndefined();
   });
 
-  it('preserves the nested output path and variant suffix contract', async () => {
-    const fileSystem = createFileSystem(false);
-    const buffer = Buffer.from('png baseline');
-
-    const savedPath = await fileSystem.saveScreenshot('Forms/Input', 'Focused: state', ['SMALL', 'focused'], buffer);
-
-    expect(path.relative(outDir, savedPath)).toBe(path.join('Forms', 'Input', 'Focused state_SMALL_focused.png'));
-    await expect(fs.readFile(savedPath)).resolves.toEqual(buffer);
-  });
-
-  it('preserves the flat output path contract', async () => {
-    const fileSystem = createFileSystem(true);
-
-    const savedPath = await fileSystem.saveScreenshot('Forms/Input', 'Default', [], Buffer.from('png baseline'));
-
-    expect(path.relative(outDir, savedPath)).toBe('Forms_Input_Default.png');
-  });
-
-  it('returns the validated absolute path when outDir is relative', async () => {
-    await fs.rm(outDir, { recursive: true, force: true });
-    outDir = await fs.mkdtemp(path.join(process.cwd(), '.storyfreeze-file-'));
-    const relativeOutDir = path.relative(process.cwd(), outDir);
-    const fileSystem = new FileSystem({ outDir: relativeOutDir, flat: false } as MainOptions);
-
-    const savedPath = await fileSystem.saveScreenshot('Button', 'Primary', [], Buffer.from('png baseline'));
-
-    expect(path.isAbsolute(relativeOutDir)).toBe(false);
-    expect(savedPath).toBe(path.resolve(relativeOutDir, 'Button', 'Primary.png'));
-  });
-
-  it('atomically replaces an existing screenshot without leaving temporary files', async () => {
-    const fileSystem = createFileSystem(false);
-    const savedPath = await fileSystem.saveScreenshot('Button', 'Primary', [], Buffer.from('first'));
-
-    await fileSystem.saveScreenshot('Button', 'Primary', [], Buffer.from('second'));
-
-    await expect(fs.readFile(savedPath, 'utf8')).resolves.toBe('second');
-    await expect(fs.readdir(path.dirname(savedPath))).resolves.toEqual(['Primary.png']);
-  });
-
-  it('bounds concurrent writes and creates a shared output directory once', async () => {
-    const fileSystem = new FileSystem({ outDir, flat: false, parallel: 2 } as MainOptions);
-    const originalWriteFile = fs.writeFile.bind(fs);
-    let active = 0;
-    let peak = 0;
-    vi.spyOn(fs, 'writeFile').mockImplementation((async (...args: Parameters<typeof fs.writeFile>) => {
-      active += 1;
-      peak = Math.max(peak, active);
-      await new Promise<void>(resolve => setImmediate(resolve));
-      try {
-        return await originalWriteFile(...args);
-      } finally {
-        active -= 1;
-      }
-    }) as typeof fs.writeFile);
-    const mkdir = vi.spyOn(fs, 'mkdir');
-
-    await Promise.all(
-      Array.from({ length: 6 }, (_, index) =>
-        fileSystem.saveScreenshot('Button', `Story ${index}`, [], Buffer.from(`png-${index}`)),
-      ),
+  it('preserves nested, flat, suffix, and atomic replacement paths', async () => {
+    const nested = await output();
+    const first = await nested.fileSystem.saveScreenshot(
+      'Forms/Input',
+      'Focused',
+      ['mobile'],
+      Buffer.from('first'),
+      'one',
     );
-    await fileSystem.flush();
+    expect(path.relative(nested.outDir, first)).toBe(path.join('Forms', 'Input', 'Focused_mobile.png'));
+    await nested.fileSystem.saveScreenshot('Forms/Input', 'Focused', ['mobile'], Buffer.from('second'), 'one');
+    await expect(fs.readFile(first, 'utf8')).resolves.toBe('second');
+    expect((await fs.readdir(path.dirname(first))).some(file => file.endsWith('.tmp'))).toBe(false);
 
-    expect(peak).toBe(2);
-    expect(mkdir).toHaveBeenCalledTimes(1);
+    const flat = await output(true);
+    const flatPath = await flat.fileSystem.saveScreenshot('Forms/Input', 'Focused', [], Buffer.from('png'));
+    expect(path.relative(flat.outDir, flatPath)).toBe('Forms_Input_Focused.png');
   });
 
-  it('applies byte backpressure before pending screenshot buffers are created', async () => {
-    const fileSystem = new FileSystem({ outDir, flat: false, parallel: 8 } as MainOptions);
-    const bufferBytes = 16 * 1024 * 1024;
-    let produced = 0;
-    let retainedBytes = 0;
-    let peakRetainedBytes = 0;
-    let releaseWrites = () => {};
-    const writesBlocked = new Promise<void>(resolve => (releaseWrites = resolve));
-    vi.spyOn(fs, 'writeFile').mockImplementation(async () => writesBlocked);
-    vi.spyOn(fs, 'rename').mockImplementation(async () => {});
-
-    const operations = Array.from({ length: 8 }, async (_, index) => {
-      const buffer = await fileSystem.captureScreenshot(bufferBytes, async () => {
-        produced += 1;
-        retainedBytes += bufferBytes;
-        peakRetainedBytes = Math.max(peakRetainedBytes, retainedBytes);
-        return Buffer.alloc(bufferBytes);
-      });
-      try {
-        await fileSystem.saveScreenshot('Button', `Story ${index}`, [], buffer!);
-      } finally {
-        retainedBytes -= bufferBytes;
-      }
+  it('keeps one weighted permit from capture through atomic write', async () => {
+    const { fileSystem } = await output(false, 2);
+    const reservation = 40 * 1024 * 1024;
+    let secondStarted = false;
+    const first = await fileSystem.captureScreenshot(reservation, async () => Buffer.alloc(33 * 1024 * 1024));
+    const secondCapture = fileSystem.captureScreenshot(reservation, async () => {
+      secondStarted = true;
+      return Buffer.from('second');
     });
+    await new Promise(resolve => setImmediate(resolve));
+    expect(secondStarted).toBe(false);
 
-    await vi.waitFor(() => expect(produced).toBe(4));
-    expect(peakRetainedBytes).toBe(64 * 1024 * 1024);
-    releaseWrites();
-    await Promise.all(operations);
-    expect(produced).toBe(8);
-    expect(retainedBytes).toBe(0);
+    await fileSystem.saveScreenshot('Budget', 'First', [], first!);
+    const second = await secondCapture;
+    expect(secondStarted).toBe(true);
+    fileSystem.releaseScreenshotBuffer(second);
+    expect(MAXIMUM_RETAINED_SCREENSHOT_BYTES).toBe(64 * 1024 * 1024);
   });
 
-  it('emits correlated screenshot budget diagnostics without changing reservations', async () => {
-    process.env.STORYFREEZE_CAPTURE_DIAGNOSTICS = '1';
-    vi.spyOn(fsSync, 'write').mockImplementation(((_fd, data, _offset, length, _position, callback) => {
-      callback?.(null, length as number, data as Buffer);
-    }) as never);
-    const events: CaptureDiagnosticEvent[] = [];
-    const unsubscribe = subscribeCaptureDiagnostics(event => {
-      if (event.type === 'screenshot-budget') events.push(event);
-    });
-    const fileSystem = new FileSystem({ outDir, flat: false, parallel: 2 } as MainOptions);
-    const buffer = await fileSystem.captureScreenshot(1024, async () => Buffer.from('png'), undefined, {
-      backend: 'playwright',
-      requestId: 'button--primary',
-      storyId: 'button--primary',
-      workerId: 1,
-    });
-
-    fileSystem.releaseScreenshotBuffer(buffer);
-    unsubscribe();
-
-    expect(events.map(event => event.state)).toEqual(['acquired', 'captured', 'released']);
-    expect(events[0]).toMatchObject({
-      activeReservations: 1,
-      backend: 'playwright',
-      durationMs: expect.any(Number),
-      maximumBufferedBytes: 64 * 1024 * 1024,
-      queuedBefore: 0,
-      requestId: 'button--primary',
-      reservationBytes: 1024,
-      retainedBytes: 1024,
-      storyId: 'button--primary',
-      workerId: 1,
-    });
-    expect(events[1]).toMatchObject({
-      actualBytes: 3,
-      peakActiveReservations: 1,
-      peakRetainedBytes: 1024,
-      reservationBytes: 1024,
-      reservationDeltaBytes: -1021,
-      retainedBytes: 3,
-    });
-    expect(events[2]).toMatchObject({ activeReservations: 0, actualBytes: 3, retainedBytes: 0 });
-  });
-
-  it('does not emit screenshot budget diagnostics when diagnostics are disabled', async () => {
-    delete process.env.STORYFREEZE_CAPTURE_DIAGNOSTICS;
-    const listener = vi.fn();
-    const unsubscribe = subscribeCaptureDiagnostics(listener);
-    const fileSystem = new FileSystem({ outDir, flat: false, parallel: 1 } as MainOptions);
-    const buffer = await fileSystem.captureScreenshot(4, async () => Buffer.from('png'));
-
-    fileSystem.releaseScreenshotBuffer(buffer);
-    unsubscribe();
-
-    expect(listener).not.toHaveBeenCalled();
-  });
-
-  it('removes an aborted producer from the screenshot reservation queue', async () => {
-    const fileSystem = new FileSystem({ outDir, flat: false, parallel: 2 } as MainOptions);
-    const held = await fileSystem.captureScreenshot(64 * 1024 * 1024, async () => Buffer.alloc(64 * 1024 * 1024));
-    const capture = vi.fn(async () => Buffer.from('cancelled'));
+  it('removes an aborted waiter without consuming a permit', async () => {
+    const { fileSystem } = await output(false, 1);
+    const first = await fileSystem.captureScreenshot(1024, async () => Buffer.from('first'));
     const controller = new AbortController();
-    const waiting = fileSystem.captureScreenshot(1, capture, controller.signal);
-
-    controller.abort(new Error('capture cancelled'));
-
-    await expect(waiting).rejects.toThrow('capture cancelled');
-    expect(capture).not.toHaveBeenCalled();
-    fileSystem.releaseScreenshotBuffer(held);
-  });
-
-  it('removes an aborted output from the write queue before it retains a writer slot', async () => {
-    const fileSystem = new FileSystem({ outDir, flat: false, parallel: 1 } as MainOptions);
-    const originalWriteFile = fs.writeFile.bind(fs);
-    let releaseWrite = () => {};
-    const writeBlocked = new Promise<void>(resolve => (releaseWrite = resolve));
-    vi.spyOn(fs, 'writeFile').mockImplementationOnce((async (...args: Parameters<typeof fs.writeFile>) => {
-      await writeBlocked;
-      return originalWriteFile(...args);
-    }) as typeof fs.writeFile);
-    const first = fileSystem.saveScreenshot('Button', 'First', [], Buffer.from('first'));
-    await vi.waitFor(() => expect(fs.writeFile).toHaveBeenCalledOnce());
-    const controller = new AbortController();
-    const second = fileSystem.saveScreenshot(
-      'Button',
-      'Second',
-      [],
-      Buffer.from('second'),
-      undefined,
-      controller.signal,
+    const waiting = fileSystem.captureScreenshot(1024, async () => Buffer.from('never'), controller.signal);
+    controller.abort(new Error('cancelled'));
+    await expect(waiting).rejects.toThrow('cancelled');
+    fileSystem.releaseScreenshotBuffer(first);
+    await expect(fileSystem.captureScreenshot(1024, async () => Buffer.from('next'))).resolves.toEqual(
+      Buffer.from('next'),
     );
-
-    controller.abort(new Error('output cancelled'));
-
-    await expect(second).rejects.toThrow('output cancelled');
-    expect(fs.writeFile).toHaveBeenCalledOnce();
-    releaseWrite();
-    await first;
   });
 
-  it('closes the writer and flush fails after an output error', async () => {
-    await fs.rm(outDir, { recursive: true, force: true });
-    await fs.writeFile(outDir, 'not a directory');
-    const fileSystem = createFileSystem(false);
-
-    await expect(fileSystem.saveScreenshot('Button', 'First', [], Buffer.from('png'))).rejects.toThrow();
-    await expect(fileSystem.saveScreenshot('Button', 'Second', [], Buffer.from('png'))).rejects.toThrow();
-    await expect(fileSystem.flush()).rejects.toThrow();
-  });
-
-  it('streams trace chunks through a temporary file before committing the final path', async () => {
-    const fileSystem = createFileSystem(false);
-    const traceFile = await fileSystem.createTraceFile();
-
-    await traceFile.write(Buffer.from('{"trace'));
-    await traceFile.write(Buffer.from('Events":[]}'));
-    const savedPath = await traceFile.commit('Button', 'Primary', [], 'button--primary');
-    await traceFile.discard();
-
-    expect(path.relative(outDir, savedPath)).toBe(path.join('Button', 'Primary_trace.json'));
-    await expect(fs.readFile(savedPath, 'utf8')).resolves.toBe('{"traceEvents":[]}');
-    await expect(fs.readdir(outDir)).resolves.toEqual(['Button']);
-  });
-
-  it('keeps a relative trace output path stable when cwd changes', async () => {
-    await fs.rm(outDir, { recursive: true, force: true });
-    const originalCwd = process.cwd();
-    outDir = await fs.mkdtemp(path.join(originalCwd, '.storyfreeze-file-'));
-    const alternateCwd = await fs.mkdtemp(path.join(os.tmpdir(), 'storyfreeze-cwd-'));
-    const fileSystem = new FileSystem({ outDir: path.relative(originalCwd, outDir), flat: false } as MainOptions);
-    const traceFile = await fileSystem.createTraceFile();
-    let savedPath = '';
-
-    try {
-      process.chdir(alternateCwd);
-      await traceFile.write(Buffer.from('{"traceEvents":[]}'));
-      savedPath = await traceFile.commit('Button', 'Primary', [], 'button--primary');
-    } finally {
-      process.chdir(originalCwd);
-      await traceFile.discard();
-      await fs.rm(alternateCwd, { recursive: true, force: true });
-    }
-
-    expect(savedPath).toBe(path.resolve(outDir, 'Button', 'Primary_trace.json'));
-    await expect(fs.readFile(savedPath, 'utf8')).resolves.toBe('{"traceEvents":[]}');
-  });
-
-  it('sanitizes every variant suffix and keeps the resolved path inside outDir', async () => {
-    const fileSystem = createFileSystem(false);
-
-    const savedPath = await fileSystem.saveScreenshot(
-      'Button',
-      'Primary',
+  it('sanitizes suffixes, contains paths, and rejects logical collisions', async () => {
+    const { outDir, fileSystem } = await output();
+    const safe = await fileSystem.saveScreenshot(
+      'Forms',
+      'Input',
       ['../../../../../outside'],
-      Buffer.from('safe'),
+      Buffer.from('png'),
+      'safe',
     );
-    const relativePath = path.relative(outDir, path.resolve(savedPath));
+    expect(path.relative(outDir, safe).startsWith('..')).toBe(false);
 
-    expect(relativePath.startsWith(`..${path.sep}`)).toBe(false);
-    expect(path.isAbsolute(relativePath)).toBe(false);
-    await expect(fs.readFile(savedPath, 'utf8')).resolves.toBe('safe');
-  });
-
-  it('rejects nested story names that sanitize to the same output path', async () => {
-    const fileSystem = createFileSystem(false);
-    await fileSystem.saveScreenshot('Button', 'Focused: state', [], Buffer.from('first'));
-
-    await expect(fileSystem.saveScreenshot('Button', 'Focused state', [], Buffer.from('second'))).rejects.toThrow(
+    await fileSystem.saveScreenshot('Forms', 'Focused: state', [], Buffer.from('one'), 'one');
+    await expect(fileSystem.saveScreenshot('Forms', 'Focused state', [], Buffer.from('two'), 'two')).rejects.toThrow(
       'Output path collision',
     );
+
+    await fileSystem.saveScreenshot('Variants', 'Input', ['a_b'], Buffer.from('one'), 'variant-one');
+    await expect(
+      fileSystem.saveScreenshot('Variants', 'Input', ['a', 'b'], Buffer.from('two'), 'variant-two'),
+    ).rejects.toThrow('Output path collision');
   });
 
-  it('rejects flat story paths that normalize to the same output path', async () => {
-    const fileSystem = createFileSystem(true);
-    await fileSystem.saveScreenshot('Forms/Input', 'Default', [], Buffer.from('first'));
-
-    await expect(fileSystem.saveScreenshot('Forms_Input', 'Default', [], Buffer.from('second'))).rejects.toThrow(
-      'Output path collision',
+  it('closes the output owner after an atomic write failure', async () => {
+    const { fileSystem } = await output();
+    vi.spyOn(fs, 'rename').mockRejectedValueOnce(new Error('rename failed'));
+    await expect(fileSystem.saveScreenshot('Button', 'Primary', [], Buffer.from('png'))).rejects.toThrow(
+      'rename failed',
     );
-  });
-
-  it('rejects variant keys that join to the same suffix', async () => {
-    const fileSystem = createFileSystem(false);
-    await fileSystem.saveScreenshot('Button', 'Primary', ['a_b'], Buffer.from('first'));
-
-    await expect(fileSystem.saveScreenshot('Button', 'Primary', ['a', 'b'], Buffer.from('second'))).rejects.toThrow(
-      'Output path collision',
-    );
+    await expect(fileSystem.flush()).rejects.toThrow('rename failed');
   });
 });

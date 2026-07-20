@@ -1,4 +1,4 @@
-import type { BrowserDeviceDescriptor } from './browser-backend.js';
+import type { BrowserDeviceDescriptor } from './browser-device-registry.js';
 import type { StrictScreenshotOptions, Viewport } from '../shared/types.js';
 
 /** Fully normalized Chromium emulation settings used by planning and scheduling. */
@@ -37,17 +37,6 @@ export function normalizeEmulationProfile(viewport: Viewport): EmulationProfile 
 
 export function toViewport(profile: EmulationProfile): Viewport {
   return { ...profile };
-}
-
-export function emulationProfileKey(profile: EmulationProfile): string {
-  return [
-    profile.width,
-    profile.height,
-    profile.deviceScaleFactor,
-    profile.isMobile ? 1 : 0,
-    profile.hasTouch ? 1 : 0,
-    profile.isLandscape ? 1 : 0,
-  ].join(':');
 }
 
 export function sameEmulationProfile(left: EmulationProfile, right: EmulationProfile): boolean {

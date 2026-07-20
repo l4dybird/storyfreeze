@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vite-plus/test';
-import type { BrowserRequest, RequestListeners } from './browser-backend.js';
+import type { BrowserRequest, RequestListeners } from './playwright-runtime.js';
 import { ResourceWatcher } from './resource-watcher.js';
 
 class FakePage {
@@ -19,8 +19,8 @@ class FakePage {
   }
 }
 
-function request(url: string): BrowserRequest {
-  return { method: 'GET', resourceType: 'image', url };
+function request(url: string, resourceType = 'image'): BrowserRequest {
+  return { resourceType, url };
 }
 
 describe(ResourceWatcher, () => {
@@ -37,129 +37,49 @@ describe(ResourceWatcher, () => {
     vi.useRealTimers();
   });
 
-  it('waits for each request even when a URL is requested repeatedly', async () => {
+  it('waits for repeated and concurrent request instances independently', async () => {
     const first = request('https://example.test/image.png');
-    page.start(first);
-    page.finish(first);
-    await watcher.waitForRequestsComplete({ quietMs: 0 });
-
     const second = request('https://example.test/image.png');
+    page.start(first);
     page.start(second);
-    let completed = false;
-    const waiting = watcher.waitForRequestsComplete({ quietMs: 0 }).then(() => (completed = true));
 
+    let completed = false;
+    const waiting = watcher.waitForRequestsComplete().then(() => (completed = true));
+    page.finish(first);
     await Promise.resolve();
     expect(completed).toBe(false);
-
     page.finish(second);
     await waiting;
     expect(completed).toBe(true);
   });
 
-  it('waits for concurrent requests to the same URL independently', async () => {
-    const first = request('https://example.test/font.woff2');
-    const second = request('https://example.test/font.woff2');
-    page.start(first);
-    page.start(second);
-
-    expect(watcher.getDiagnosticSnapshot()).toEqual({
-      pending: [first, second],
-      requestedUrls: ['https://example.test/font.woff2'],
-    });
-
-    let completed = false;
-    const waiting = watcher.waitForRequestsComplete({ quietMs: 0 }).then(() => (completed = true));
-    page.finish(first);
-    await Promise.resolve();
-    expect(completed).toBe(false);
-
-    page.finish(second);
-    await waiting;
-    expect(watcher.getRequestedUrls()).toEqual(['https://example.test/font.woff2']);
-    expect(watcher.getDiagnosticSnapshot().pending).toEqual([]);
+  it('tracks HTTP fetches and ignores resources that cannot settle', async () => {
+    const fetchRequest = request('https://example.test/data', 'fetch');
+    page.start(request('data:image/png;base64,AA=='));
+    page.start(request('https://example.test/live', 'websocket'));
+    page.start(fetchRequest);
+    const waiting = watcher.waitForRequestsComplete();
+    page.finish(fetchRequest);
+    await expect(waiting).resolves.toEqual({ didTimeout: false });
   });
 
-  it('tracks finite non-GET HTTP requests without allocating diagnostic detail on the fast path', async () => {
-    const post = { ...request('https://example.test/data'), method: 'POST', resourceType: 'fetch' };
-    page.start(post);
-    expect(watcher.pendingCount).toBe(1);
-    page.finish(post);
-
-    await expect(watcher.waitForRequestsComplete({ quietMs: 0, includeDetails: false })).resolves.toMatchObject({
-      didTimeout: false,
-      pendingCount: 0,
-      pending: [],
-      requestedUrlCount: 1,
-      requestedUrls: [],
-    });
-  });
-
-  it('restarts the quiet window when a new request arrives', async () => {
+  it('returns at the wall timeout when a request remains in flight', async () => {
     vi.useFakeTimers();
-    const first = request('https://example.test/first.png');
-    page.start(first);
-    let completed = false;
-    const waiting = watcher.waitForRequestsComplete({ quietMs: 100, timeoutMs: 1000 }).then(() => (completed = true));
-
-    page.finish(first);
-    await vi.advanceTimersByTimeAsync(99);
-    expect(completed).toBe(false);
-
-    const second = request('https://example.test/second.png');
-    page.start(second);
-    page.finish(second);
-    await vi.advanceTimersByTimeAsync(99);
-    expect(completed).toBe(false);
-    await vi.advanceTimersByTimeAsync(1);
-
-    await waiting;
-    expect(completed).toBe(true);
-  });
-
-  it('does not restart a quiet window that elapsed before the wait began', async () => {
-    vi.useFakeTimers();
-    watcher.clear();
-    const completed = request('https://example.test/already-complete.png');
-    page.start(completed);
-    page.finish(completed);
-    await vi.advanceTimersByTimeAsync(100);
-
-    await expect(watcher.waitForRequestsComplete({ quietMs: 100, timeoutMs: 1000 })).resolves.toMatchObject({
-      didTimeout: false,
-      elapsedMs: 0,
-      pending: [],
-    });
-  });
-
-  it('does not wait when activity already advanced the expected generation', async () => {
-    page.start(request('https://example.test/late.png'));
-
-    await expect(
-      (
-        watcher as unknown as {
-          waitForActivity(
-            timeoutMs: number,
-            signal: AbortSignal | undefined,
-            expectedGeneration: number,
-          ): Promise<{
-            timedOut: boolean;
-          }>;
-        }
-      ).waitForActivity(1000, undefined, 0),
-    ).resolves.toMatchObject({ timedOut: false });
-  });
-
-  it('returns pending requests at the wall timeout and supports abort', async () => {
-    vi.useFakeTimers();
-    const pending = request('https://example.test/pending.png');
-    page.start(pending);
-    const waiting = watcher.waitForRequestsComplete({ quietMs: 100, timeoutMs: 300 });
+    page.start(request('https://example.test/pending.png'));
+    const waiting = watcher.waitForRequestsComplete({ timeoutMs: 300 });
     await vi.advanceTimersByTimeAsync(300);
-    await expect(waiting).resolves.toMatchObject({ didTimeout: true, pending: [pending] });
+    await expect(waiting).resolves.toEqual({ didTimeout: true });
+  });
 
+  it('aborts a pending wait and clear releases it', async () => {
+    page.start(request('https://example.test/pending.png'));
     const controller = new AbortController();
-    const aborted = watcher.waitForRequestsComplete({ quietMs: 100, timeoutMs: 1000, signal: controller.signal });
+    const aborted = watcher.waitForRequestsComplete({ timeoutMs: 1000, signal: controller.signal });
     controller.abort(new Error('interrupted'));
     await expect(aborted).rejects.toThrow('interrupted');
+
+    const released = watcher.waitForRequestsComplete({ timeoutMs: 1000 });
+    watcher.clear();
+    await expect(released).resolves.toEqual({ didTimeout: false });
   });
 });

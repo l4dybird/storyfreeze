@@ -1,97 +1,26 @@
 import nanomatch from 'nanomatch';
-import { availableParallelism, freemem } from 'node:os';
-import { BaseBrowser, ChromiumNotFoundError } from './browser.js';
-import { lazyPlaywrightBrowserBackend } from './playwright-backend-loader.js';
-import type { BrowserBackend, BrowserSessionOptions } from './browser-backend.js';
-import { BrowserProcessCoordinator, type BrowserSessionSource } from './browser-process-coordinator.js';
-import type { Story } from './story.js';
 import { CapturingBrowser } from './capturing-browser.js';
-import type { MainOptions, RunMode } from './types.js';
+import { ChromiumNotFoundError, type BrowserSessionOptions } from './playwright-runtime.js';
+import type { MainOptions } from './types.js';
+import type { Story } from './story.js';
 import { FileSystem } from './file.js';
-import { createScreenshotService } from './screenshot-service.js';
+import { createScreenshotService, type ScreenshotWorker } from './screenshot-service.js';
 import { shardStories } from './shard-utilities.js';
 import { ManagedStorybookConnection } from './managed-storybook-connection.js';
 import { StorybookStoryIndexProvider, type StoryDescriptor } from './story-index-provider.js';
-import { detectPreviewMode } from './story-navigator.js';
-import { captureDiagnosticsEnabled, emitCaptureDiagnostic, measureCaptureDiagnostic } from './capture-diagnostics.js';
-import { createBaseScreenshotOptions } from '../shared/screenshot-options-helper.js';
-import { browserDeviceDescriptors } from './browser-device-registry.js';
-import { generateCaptureManifest } from './capture-manifest.js';
-import { createCapturePlan } from './capture-plan.js';
-import { toViewport } from './emulation-profile.js';
-import { BrowserRuntimeOrchestrator, selectTopology } from './browser-topology.js';
 import { raceAgainstTimeout } from './async-utils.js';
-import { createExecutionWorkload, prepareExecutionPlan } from './execution-plan.js';
 
 const workerCloseTimeoutMs = 5_000;
-
-async function boundedRuntimeOperation<T>(
-  operation: Promise<T>,
-  timeoutMs: number,
-  label: string,
-  signal?: AbortSignal,
-  onTimeout: (error: Error) => unknown = () => {},
-) {
-  const result = await raceAgainstTimeout(operation, timeoutMs, signal);
-  if (result.timedOut) {
-    const error = new Error(`${label} did not settle within ${timeoutMs} msec.`);
-    try {
-      void Promise.resolve(onTimeout(error)).catch(() => {});
-    } catch {
-      // The timeout remains the primary runtime failure.
-    }
-    throw error;
-  }
-  return result.value;
-}
-
-async function abortable<T>(operation: Promise<T>, signal?: AbortSignal): Promise<T> {
-  if (!signal) return operation;
-  if (signal.aborted) {
-    throw signal.reason instanceof Error ? signal.reason : new Error('StoryFreeze was interrupted.');
-  }
-
-  return new Promise<T>((resolve, reject) => {
-    let settled = false;
-    let onAbort = () => {};
-    const finish = (action: () => void) => {
-      if (settled) return;
-      settled = true;
-      signal.removeEventListener('abort', onAbort);
-      action();
-    };
-    onAbort = () =>
-      finish(() => reject(signal.reason instanceof Error ? signal.reason : new Error('StoryFreeze was interrupted.')));
-    signal.addEventListener('abort', onAbort, { once: true });
-    operation.then(
-      value => finish(() => resolve(value)),
-      error => finish(() => reject(error)),
-    );
-    if (signal.aborted) onAbort();
-  });
-}
 
 function throwIfAborted(signal?: AbortSignal) {
   if (!signal?.aborted) return;
   throw signal.reason instanceof Error ? signal.reason : new Error('StoryFreeze was interrupted.');
 }
 
-function measureRuntimePhase<T>(phase: string, action: () => Promise<T>) {
-  return measureCaptureDiagnostic({ type: 'runtime-phase', phase }, action);
-}
-
-async function detectRunMode(storiesBrowser: BaseBrowser, opt: MainOptions) {
-  const storyId = 'storyfreeze-probe--preview';
-  const detection = await detectPreviewMode(
-    storiesBrowser.page,
-    new URL(opt.serverOptions.storybookUrl),
-    storyId,
-    5000,
-    opt.mode,
-    opt.signal,
-  );
-  opt.logger.log(`StoryFreeze runs with ${detection.mode} mode (${detection.reason}).`);
-  return detection.mode;
+async function boundedOperation<T>(operation: Promise<T>, timeoutMs: number, label: string, signal?: AbortSignal) {
+  const result = await raceAgainstTimeout(operation, timeoutMs, signal);
+  if (result.timedOut) throw new Error(`${label} did not settle within ${timeoutMs} msec.`);
+  return result.value;
 }
 
 type BootableCaptureWorker<T> = {
@@ -102,55 +31,28 @@ type BootableCaptureWorker<T> = {
 export async function bootCaptureWorkers<T extends BootableCaptureWorker<T>>(
   workers: T[],
   signal?: AbortSignal,
-  sessionOptions: Array<BrowserSessionOptions | undefined> = [],
   operationTimeoutMs = Number.POSITIVE_INFINITY,
 ): Promise<T[]> {
   throwIfAborted(signal);
-  const boots = workers.map((worker, workerId) =>
-    measureCaptureDiagnostic({ type: 'runtime-phase', phase: 'capture-worker-boot', workerId }, () =>
-      worker.boot(sessionOptions[workerId]),
-    ),
-  );
+  const boots = workers.map(worker => worker.boot());
   try {
-    return await boundedRuntimeOperation(Promise.all(boots), operationTimeoutMs, 'Capture worker boot', signal);
+    const settled = await boundedOperation(Promise.allSettled(boots), operationTimeoutMs, 'Capture worker boot');
+    throwIfAborted(signal);
+    const failure = settled.find(result => result.status === 'rejected');
+    if (failure?.status === 'rejected') throw failure.reason;
+    return settled.map(result => (result as PromiseFulfilledResult<T>).value);
   } catch (error) {
     await Promise.allSettled(
       workers.map(worker =>
         raceAgainstTimeout(
           Promise.resolve().then(() => worker.close()),
           workerCloseTimeoutMs,
-        ).catch(() => undefined),
+        ),
       ),
     );
-    if (signal?.aborted) {
-      throw signal.reason instanceof Error ? signal.reason : new Error('StoryFreeze was interrupted.');
-    }
+    if (signal?.aborted) throwIfAborted(signal);
     throw error;
   }
-}
-
-async function bootCapturingBrowserAsWorkers(
-  connection: ManagedStorybookConnection,
-  opt: MainOptions,
-  mode: RunMode,
-  backend: BrowserBackend,
-  sessionSourceForWorker?: (workerId: number) => BrowserSessionSource | undefined,
-  initialSessionOptions: Array<BrowserSessionOptions | undefined> = [],
-  workerCount = Math.max(opt.parallel, 1),
-  initialWorkerCount = workerCount,
-  operationTimeoutMs = Number.POSITIVE_INFINITY,
-) {
-  const browsers = [...new Array(workerCount).keys()].map(
-    i => new CapturingBrowser(connection, opt, mode, i, backend, sessionSourceForWorker?.(i)),
-  );
-  await bootCaptureWorkers(
-    browsers.slice(0, initialWorkerCount),
-    opt.signal,
-    initialSessionOptions.slice(0, initialWorkerCount),
-    operationTimeoutMs,
-  );
-  opt.logger.debug(`Started ${initialWorkerCount} of ${browsers.length} capture browsers`);
-  return browsers;
 }
 
 export function filterStories(
@@ -168,19 +70,39 @@ export function filterStories(
   return excluded.map(({ story }) => story);
 }
 
-function toLegacyStory(descriptor: StoryDescriptor): Story {
-  return { id: descriptor.id, kind: descriptor.title, story: descriptor.name, version: 'v5' };
+function toStory(descriptor: StoryDescriptor): Story {
+  return {
+    id: descriptor.id,
+    kind: descriptor.title,
+    story: descriptor.name,
+    version: 'v5',
+    ...(descriptor.viewportProfileHint ? { viewportProfileHint: descriptor.viewportProfileHint } : {}),
+  };
 }
 
-type RuntimeResources = {
-  workers: Array<Pick<CapturingBrowser, 'close'>>;
-  storiesBrowser?: Pick<BaseBrowser, 'close'>;
-  browserProcess?: Pick<BrowserProcessCoordinator, 'close'>;
-  browserRuntime?: Pick<BrowserRuntimeOrchestrator, 'close'>;
-  connection?: Pick<ManagedStorybookConnection, 'disconnect'>;
+export interface CaptureWorker extends ScreenshotWorker, BootableCaptureWorker<CaptureWorker> {
+  readonly executablePath: string;
+}
+
+export type CaptureWorkerFactory = (
+  connection: ManagedStorybookConnection,
+  options: MainOptions,
+  workerId: number,
+) => CaptureWorker;
+
+export interface MainDependencies {
+  createCaptureWorker: CaptureWorkerFactory;
+}
+
+const defaultMainDependencies: MainDependencies = {
+  createCaptureWorker: (connection, options, workerId) => new CapturingBrowser(connection, options, workerId),
 };
 
-export async function disposeRuntimeResources(resources: RuntimeResources, logger: MainOptions['logger']) {
+export async function disposeRuntimeResources(
+  workers: Array<Pick<CaptureWorker, 'close'>>,
+  connection: Pick<ManagedStorybookConnection, 'disconnect'> | undefined,
+  logger: MainOptions['logger'],
+) {
   const closeSafely = async (label: string, action: () => Promise<unknown>) => {
     try {
       const result = await raceAgainstTimeout(Promise.resolve().then(action), workerCloseTimeoutMs);
@@ -189,128 +111,42 @@ export async function disposeRuntimeResources(resources: RuntimeResources, logge
       logger.debug(`Failed to dispose ${label}.`, error);
     }
   };
-
-  await Promise.all(
-    resources.workers.map((worker, index) => closeSafely(`capture worker ${index}`, () => worker.close())),
-  );
-  if (resources.storiesBrowser) {
-    await closeSafely('stories browser', () => resources.storiesBrowser!.close());
-  }
-  if (resources.browserRuntime) {
-    await closeSafely('browser runtime', () => resources.browserRuntime!.close());
-  } else if (resources.browserProcess) {
-    await closeSafely('shared browser process', () => resources.browserProcess!.close());
-  }
-  if (resources.connection) {
-    await closeSafely('Storybook connection', () => resources.connection!.disconnect());
-  }
+  await Promise.all(workers.map((worker, index) => closeSafely(`capture worker ${index}`, () => worker.close())));
+  if (connection) await closeSafely('Storybook connection', () => connection.disconnect());
 }
 
-export interface MainDependencies {
-  browserBackend: BrowserBackend;
-}
-
-const defaultMainDependencies: MainDependencies = {
-  browserBackend: lazyPlaywrightBrowserBackend,
-};
-
-/**
- *
- * Run main process of StoryFreeze.
- *
- * @param mainOptions - Parameters for this procedure
- *
- **/
+/** Run StoryFreeze against an externally hosted Storybook 10 static build. */
 export async function main(mainOptions: MainOptions, overrides: Partial<MainDependencies> = {}) {
-  const startupStartedAt = captureDiagnosticsEnabled() ? performance.now() : undefined;
-  const { browserBackend } = { ...defaultMainDependencies, ...overrides };
+  const startedAt = performance.now();
+  const dependencies = { ...defaultMainDependencies, ...overrides };
   const logger = mainOptions.logger;
-  const browserIsolation = mainOptions.trace ? 'process' : mainOptions.browserIsolation;
-  const browserOptions =
-    browserIsolation === mainOptions.browserIsolation ? mainOptions : { ...mainOptions, browserIsolation };
-  const operationTimeoutMs = Math.max(60_000, mainOptions.captureTimeout * 2, mainOptions.captureTimeout + 30_000);
   const fileSystem = new FileSystem(mainOptions);
+  const operationTimeoutMs = Math.max(60_000, mainOptions.captureTimeout * 2);
   let connection: ManagedStorybookConnection | undefined;
-  let storiesBrowser: BaseBrowser | undefined;
-  let browserProcess: BrowserProcessCoordinator | undefined;
-  let browserRuntime: BrowserRuntimeOrchestrator | undefined;
-  let workers: CapturingBrowser[] = [];
+  let workers: CaptureWorker[] = [];
 
   try {
-    // Start the browser while the managed server is becoming ready; index loading follows readiness.
     connection = new ManagedStorybookConnection(mainOptions.serverOptions, logger);
-    browserProcess = new BrowserProcessCoordinator(browserBackend, browserOptions);
-    storiesBrowser = new BaseBrowser(browserOptions, browserBackend, { role: 'story-index' }, browserProcess);
     const storyIndexProvider = new StorybookStoryIndexProvider();
-    const startupController = new AbortController();
-    const startupSignal = mainOptions.signal
-      ? AbortSignal.any([mainOptions.signal, startupController.signal])
-      : startupController.signal;
-    const connectionPromise = measureRuntimePhase('storybook-connect', () => connection!.connect(startupSignal));
-    const browserBootPromise = measureRuntimePhase('story-index-browser-boot', () =>
-      boundedRuntimeOperation(
-        storiesBrowser!.boot(),
-        operationTimeoutMs,
-        'Story index browser boot',
-        startupSignal,
-        error => startupController.abort(error),
-      ),
+    await connection.connect(mainOptions.signal);
+    const allStories = await boundedOperation(
+      storyIndexProvider.load(new URL(connection.url), mainOptions.signal),
+      operationTimeoutMs,
+      'Story index load',
+      mainOptions.signal,
     );
-    const storyIndexPromise = connectionPromise.then(() => {
-      throwIfAborted(startupSignal);
-      return measureRuntimePhase('story-index-load', () =>
-        boundedRuntimeOperation(
-          storyIndexProvider.load(new URL(mainOptions.serverOptions.storybookUrl), startupSignal),
-          operationTimeoutMs,
-          'Story index load',
-          startupSignal,
-          error => startupController.abort(error),
-        ),
-      );
-    });
-    const startupTasks = [connectionPromise, browserBootPromise, storyIndexPromise] as const;
-    let allStories: readonly StoryDescriptor[];
-    try {
-      [, , allStories] = await Promise.all(startupTasks);
-    } catch (error) {
-      startupController.abort(error);
-      await Promise.allSettled(startupTasks);
-      throw error;
-    }
     throwIfAborted(mainOptions.signal);
-    logger.debug('Created to connection.');
-    logger.log('Executable Chromium path:', logger.color.magenta(storiesBrowser.executablePath));
-    logger.debug('Ended to fetch stories metadata.');
 
     const stories = filterStories(allStories, mainOptions.include, mainOptions.exclude);
-
     if (stories.length === 0) {
       logger.warn('There is no matched story. Check your include/exclude options.');
       return 0;
     }
-
-    // Auto mode probes the addon. Explicit modes validate their contract on the first real story.
-    const mode =
-      browserOptions.mode === 'auto'
-        ? await measureRuntimePhase('preview-mode-detection', () =>
-            abortable(detectRunMode(storiesBrowser!, browserOptions), mainOptions.signal),
-          )
-        : browserOptions.mode;
-    if (mode === 'simple' && browserOptions.captureProtocol === 'story-session') {
-      throw new Error('The persistent capture protocol requires the managed Preview and the StoryFreeze addon.');
-    }
-    if (browserOptions.mode !== 'auto') {
-      logger.log('StoryFreeze runs with managed mode (StoryFreeze addon required; validated on first capture).');
-    }
-    await measureRuntimePhase('story-index-browser-close', () => storiesBrowser!.close());
-    storiesBrowser = undefined;
-
     const shardedStories = shardStories(
-      stories.map(toLegacyStory),
+      stories.map(toStory),
       mainOptions.shard.shardNumber,
       mainOptions.shard.totalShards,
     );
-
     if (shardedStories.length === 0) {
       logger.log('This shard has no stories to screenshot.');
       return 0;
@@ -320,101 +156,26 @@ export async function main(mainOptions: MainOptions, overrides: Partial<MainDepe
       logger.log(`Found ${logger.color.green(String(stories.length))} stories.`);
     } else {
       logger.log(
-        `Found ${logger.color.green(String(stories.length))} stories. ${logger.color.green(
-          String(shardedStories.length),
-        )} are being processed by this shard (number ${mainOptions.shard.shardNumber} of ${
-          mainOptions.shard.totalShards
-        }).`,
+        `Found ${logger.color.green(String(stories.length))} stories. ${logger.color.green(String(shardedStories.length))} are being processed by shard ${mainOptions.shard.shardNumber}/${mainOptions.shard.totalShards}.`,
       );
     }
 
-    const baseScreenshotOptions = createBaseScreenshotOptions(browserOptions);
-    const shardedStoryIds = new Set(shardedStories.map(story => story.id));
-    const manifest = generateCaptureManifest({
-      stories: stories.filter(story => shardedStoryIds.has(story.id)),
-      baseOptions: baseScreenshotOptions,
-      deviceDescriptors: browserDeviceDescriptors,
-      mode,
-      freshContext: false,
-    });
-    for (const warning of manifest.warnings) logger.warn(warning);
-    const capturePlan = createCapturePlan(manifest);
-    const executionWorkload = createExecutionWorkload(capturePlan, mainOptions.captureProtocol ?? 'auto');
-    const topologySelection = selectTopology(
-      executionWorkload,
-      { cpuCount: availableParallelism(), availableMemoryBytes: freemem() },
-      Math.max(browserOptions.parallel, 1),
-      browserIsolation,
+    const workerCount = Math.min(Math.max(1, mainOptions.parallel), shardedStories.length);
+    workers = Array.from({ length: workerCount }, (_, workerId) =>
+      dependencies.createCaptureWorker(connection!, mainOptions, workerId),
     );
-    const executionPlan = prepareExecutionPlan(executionWorkload, topologySelection.topology.workerCount);
-    const workerPlans = executionPlan.workers;
-    browserRuntime = new BrowserRuntimeOrchestrator(
-      browserBackend,
-      browserOptions,
-      topologySelection.topology,
-      workerPlans,
-      browserProcess,
-    );
-    browserProcess = undefined;
-    emitCaptureDiagnostic({
-      type: 'browser-topology',
-      ...topologySelection.topology,
-      initialWorkerCount: topologySelection.initialWorkerCount,
-      maximumParallel: browserOptions.parallel,
-      reason: topologySelection.reason,
-      requestedMode: browserIsolation,
-      workerProcessIds: browserRuntime.workerProcessIds,
-    });
-    logger.debug('Browser topology:', topologySelection.topology, topologySelection.reason);
-    const initialSessionOptions = workerPlans.map(worker => {
-      const profile = worker.workItems[0]?.profile;
-      return profile ? { viewport: toViewport(profile) } : undefined;
-    });
+    await bootCaptureWorkers(workers, mainOptions.signal, operationTimeoutMs);
+    logger.log('Executable Chromium path:', logger.color.magenta(workers[0].executablePath));
+    logger.debug(`Started ${workers.length} persistent capture workers.`);
 
-    // Launch browser processes to capture each story.
-    workers = await measureRuntimePhase('capture-workers-boot', () =>
-      bootCapturingBrowserAsWorkers(
-        connection!,
-        browserOptions,
-        mode,
-        browserBackend,
-        workerId => browserRuntime!.sessionSourceForWorker(workerId),
-        initialSessionOptions,
-        topologySelection.topology.workerCount,
-        topologySelection.initialWorkerCount,
-        operationTimeoutMs,
-      ),
-    );
-    if (startupStartedAt !== undefined) {
-      emitCaptureDiagnostic({
-        type: 'runtime-phase',
-        phase: 'startup-complete',
-        state: 'end',
-        durationMs: performance.now() - startupStartedAt,
-      });
-    }
-    logger.debug('Created workers.');
-
-    // Execution caputuring procedure.
-    const captured = await measureRuntimePhase('capture-execution', () =>
-      createScreenshotService({
-        workers,
-        stories: shardedStories,
-        fileSystem,
-        logger,
-        forwardConsoleLogs: mainOptions.forwardConsoleLogs,
-        trace: mainOptions.trace,
-        executionPlan,
-        initialWorkerCount: topologySelection.initialWorkerCount,
-        // This deadlock watchdog also covers cold browser boot and recovery, so
-        // keep it deliberately looser than the per-attempt capture deadline.
-        operationTimeoutMs,
-        bootWorker: async workerId => {
-          await workers[workerId].boot(initialSessionOptions[workerId]);
-        },
-      }).execute(),
-    );
-    logger.debug('Ended ScreenshotService execution.');
+    const captured = await createScreenshotService({
+      workers,
+      stories: shardedStories,
+      fileSystem,
+      logger,
+      forwardConsoleLogs: mainOptions.forwardConsoleLogs,
+    }).execute();
+    logger.log(`Captured ${captured} PNGs in ${Math.round(performance.now() - startedAt)} msec.`);
     return captured;
   } catch (error) {
     if (error instanceof ChromiumNotFoundError) {
@@ -424,11 +185,6 @@ export async function main(mainOptions: MainOptions, overrides: Partial<MainDepe
     }
     throw error;
   } finally {
-    // Shutdown workers and dispose connection.
-    await measureRuntimePhase('runtime-dispose', () =>
-      disposeRuntimeResources({ workers, storiesBrowser, browserProcess, browserRuntime, connection }, logger),
-    );
-    logger.debug('Ended to dispose workers.');
-    logger.debug('Ended to dispose connection.');
+    await disposeRuntimeResources(workers, connection, logger);
   }
 }

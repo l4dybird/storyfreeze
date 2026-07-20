@@ -1,10 +1,8 @@
-import type { ScreenshotOptions, Exposed, PreviewCaptureDiagnostic } from '../shared/types.js';
+import type { ScreenshotOptions, Exposed, StorySessionResetContext } from '../shared/types.js';
 import {
   mergeScreenshotOptions,
   pickupWithVariantKey,
   expandViewportsOption,
-  extractVariantKeys,
-  variantKeyIdentifier,
 } from '../shared/screenshot-options-helper.js';
 import {
   STORYFREEZE_PREVIEW_STATE_GLOBAL,
@@ -14,14 +12,7 @@ import {
   type SerializedError,
   type StoryFreezePreviewStateV1,
 } from '../shared/preview-protocol.js';
-import { waitForVisualCommitInPage } from '../shared/visual-commit.js';
 import { applyViewportFromGlobals, type StoryContextLike } from './resolve-viewport-globals.js';
-import {
-  initializeStorySessionController,
-  registerStorySessionRuntime,
-  setStorySessionReset,
-  snapshotStorySessionRuntime,
-} from './story-session-controller.js';
 import { getWorkerSessionIdentity, initializeWorkerSessionController } from './worker-session-controller.js';
 
 type Args<T> = T extends (...args: infer A) => unknown ? A : never;
@@ -33,7 +24,10 @@ type ExposedFns = {
 
 type StoryFreezeWindow = typeof window & {
   optionStore?: { [storyKey: string]: ScreenshotOptions[] };
-  reportCaptureDiagnostic?: (event: PreviewCaptureDiagnostic) => Promise<void>;
+  __STORYFREEZE_CAPTURE_RESET__?: {
+    storyId: string;
+    reset?: (context: StorySessionResetContext) => void | Promise<void>;
+  };
   [STORYFREEZE_PREVIEW_STATE_GLOBAL]?: StoryFreezePreviewStateV1;
 } & ExposedFns;
 
@@ -60,7 +54,6 @@ export function initializePreviewState() {
   const win = getWindow();
   const identity = getCaptureIdentity();
   if (!win || !identity) return;
-  initializeStorySessionController(win);
   initializeWorkerSessionController(win);
   setState(win, { ...createPreviewStateBase(identity.storyId, identity.requestId), status: 'booting' });
 }
@@ -135,7 +128,6 @@ export function triggerScreenshot(
   if (!win || !identity || !context.id) return;
   setState(win, { ...createPreviewStateBase(identity.storyId, identity.requestId), status: 'booting' });
   const resolvedOptions = applyViewportFromGlobals(screenshotOptions, context);
-  registerStorySessionRuntime(resolvedOptions, context);
   pushOptions(win, context.id, resolvedOptions);
 }
 
@@ -144,7 +136,7 @@ export async function finalizeScreenshot(context: { id?: string; abortSignal?: A
   const win = getWindow();
   const identity = getCaptureIdentity();
   if (!win || !identity || !context.id) return;
-  if (!win.getBaseScreenshotOptions || !win.getCurrentVariantKey || !win.waitBrowserMetricsStable) return;
+  if (!win.getBaseScreenshotOptions || !win.getCurrentVariantKey) return;
   if (context.abortSignal?.aborted) return;
 
   const baseState = createPreviewStateBase(identity.storyId, identity.requestId);
@@ -157,8 +149,6 @@ export async function finalizeScreenshot(context: { id?: string; abortSignal?: A
     const storedOptions = consumeOptions(win, context.id);
     if (storedOptions.length === 0) return;
 
-    await win.waitBrowserMetricsStable();
-    if (context.abortSignal?.aborted) return;
     const [baseScreenshotOptions, variantKey] = await Promise.all([
       win.getBaseScreenshotOptions(),
       win.getCurrentVariantKey(),
@@ -175,35 +165,13 @@ export async function finalizeScreenshot(context: { id?: string; abortSignal?: A
       if (context.abortSignal?.aborted) return;
       await waitUserFunction(screenshotOptions.waitFor);
       if (context.abortSignal?.aborted) return;
-      const visualCommitDiagnostic = await waitForVisualCommitInPage(
-        { paintFallbackMs: 250, timeoutMs: 3000 },
-        context.abortSignal,
-      );
-      void Promise.resolve(
-        win.reportCaptureDiagnostic?.({
-          type: 'visual-commit',
-          ...visualCommitDiagnostic,
-          requestId: identity.requestId,
-          storyId: identity.storyId,
-          variantKey: variantKey.keys,
-        }),
-      ).catch(() => {});
-      if (context.abortSignal?.aborted) return;
     }
 
     if (context.abortSignal?.aborted) return;
-    const [invalidVariantGraph, variantKeys] = extractVariantKeys(mergedOptions);
-    const runtimeWaitForVariants = invalidVariantGraph
-      ? []
-      : [
-          ...new Set(
-            variantKeys
-              .filter(key => Boolean(pickupWithVariantKey(mergedOptions, key).waitFor))
-              .map(key => variantKeyIdentifier(key.keys)),
-          ),
-        ].sort();
-    setStorySessionReset(context.id, (mergedOptions as ScreenshotOptions).reset, win);
-    snapshotStorySessionRuntime(context.id, win);
+    win.__STORYFREEZE_CAPTURE_RESET__ = {
+      storyId: context.id,
+      ...((mergedOptions as ScreenshotOptions).reset ? { reset: (mergedOptions as ScreenshotOptions).reset } : {}),
+    };
     const normalizedOptions = normalizeOptions(screenshotOptions);
     const normalizedRootOptions = screenshotOptions === mergedOptions ? undefined : normalizeOptions(mergedOptions);
     setState(win, {
@@ -211,11 +179,6 @@ export async function finalizeScreenshot(context: { id?: string; abortSignal?: A
       status: 'ready',
       options: normalizedOptions,
       ...(normalizedRootOptions ? { rootOptions: normalizedRootOptions } : {}),
-      runtime: {
-        hasCustomReset: typeof (mergedOptions as ScreenshotOptions).reset === 'function',
-        hasRuntimeWaitFor: Boolean(screenshotOptions.waitFor),
-        runtimeWaitForVariants,
-      },
     });
   } catch (error) {
     if (context.abortSignal?.aborted) return;

@@ -1,4 +1,4 @@
-import type { BrowserRequest, CapturePage } from './browser-backend.js';
+import type { BrowserRequest, PlaywrightCapturePage } from './playwright-runtime.js';
 import { raceAgainstTimeout } from './async-utils.js';
 
 // Derived from storycrawler. Copyright (c) 2019 reg-viz, MIT licensed.
@@ -10,29 +10,17 @@ const ignoredResourceTypes = new Set(['media', 'texttrack', 'websocket', 'events
 
 export class ResourceWatcher {
   private inFlight = new Set<BrowserRequest>();
-  private requestedAssetUrls = new Set<string>();
   private unsubscribe?: () => void;
   private activityGeneration = 0;
-  private lastActivityAt = Date.now();
   private activityWaiters = new Set<() => void>();
 
-  constructor(private page: Pick<CapturePage, 'subscribeRequests'>) {}
-
-  get pendingCount() {
-    return this.inFlight.size;
-  }
-
-  get generation() {
-    return this.activityGeneration;
-  }
+  constructor(private page: Pick<PlaywrightCapturePage, 'subscribeRequests'>) {}
 
   private onRequest = (request: BrowserRequest) => {
-    const url = request.url;
-    if (ignoredResourceTypes.has(request.resourceType) || !url.startsWith('http')) {
+    if (ignoredResourceTypes.has(request.resourceType) || !request.url.startsWith('http')) {
       return;
     }
 
-    this.requestedAssetUrls.add(url);
     this.inFlight.add(request);
     this.notifyActivity();
   };
@@ -44,7 +32,6 @@ export class ResourceWatcher {
 
   private notifyActivity() {
     this.activityGeneration += 1;
-    this.lastActivityAt = Date.now();
     for (const resolve of this.activityWaiters) resolve();
     this.activityWaiters.clear();
   }
@@ -69,23 +56,7 @@ export class ResourceWatcher {
 
   clear() {
     this.inFlight.clear();
-    this.requestedAssetUrls.clear();
     this.notifyActivity();
-  }
-
-  getRequestedUrls() {
-    return [...this.requestedAssetUrls];
-  }
-
-  getDiagnosticSnapshot() {
-    return {
-      pending: [...this.inFlight].map(request => ({
-        method: request.method,
-        resourceType: request.resourceType,
-        url: request.url,
-      })),
-      requestedUrls: this.getRequestedUrls(),
-    };
   }
 
   private async waitForActivity(timeoutMs: number, signal?: AbortSignal, expectedGeneration = this.activityGeneration) {
@@ -103,51 +74,17 @@ export class ResourceWatcher {
   }
 
   async waitForRequestsComplete(
-    options: { quietMs?: number; timeoutMs?: number; signal?: AbortSignal; includeDetails?: boolean } = {},
-  ): Promise<{
-    didTimeout: boolean;
-    elapsedMs: number;
-    pendingCount: number;
-    pending: ReturnType<ResourceWatcher['getDiagnosticSnapshot']>['pending'];
-    requestedUrlCount: number;
-    requestedUrls: string[];
-  }> {
-    const quietMs = options.quietMs ?? 0;
+    options: { timeoutMs?: number; signal?: AbortSignal } = {},
+  ): Promise<{ didTimeout: boolean }> {
     const timeoutMs = options.timeoutMs ?? Number.POSITIVE_INFINITY;
-    const startedAt = Date.now();
-    const deadline = startedAt + timeoutMs;
-    let quietStartedAt: number | undefined;
-    let quietGeneration = -1;
+    const deadline = Date.now() + timeoutMs;
 
-    const result = (didTimeout: boolean) => {
-      const includeDetails = options.includeDetails ?? true;
-      return {
-        didTimeout,
-        elapsedMs: Date.now() - startedAt,
-        pendingCount: this.inFlight.size,
-        pending: includeDetails ? this.getDiagnosticSnapshot().pending : [],
-        requestedUrlCount: this.requestedAssetUrls.size,
-        requestedUrls: includeDetails ? this.getRequestedUrls() : [],
-      };
-    };
-
-    while (true) {
+    while (this.inFlight.size > 0) {
       const now = Date.now();
-      if (this.inFlight.size === 0) {
-        if (quietStartedAt === undefined || quietGeneration !== this.activityGeneration) {
-          quietStartedAt = this.lastActivityAt;
-          quietGeneration = this.activityGeneration;
-        }
-        const quietRemaining = quietMs - (now - quietStartedAt);
-        if (quietRemaining <= 0) return result(false);
-        if (now >= deadline) return result(true);
-        await this.waitForActivity(Math.min(quietRemaining, deadline - now), options.signal, quietGeneration);
-      } else {
-        quietStartedAt = undefined;
-        if (now >= deadline) return result(true);
-        const activity = await this.waitForActivity(deadline - now, options.signal, this.activityGeneration);
-        if (activity.timedOut) return result(true);
-      }
+      if (now >= deadline) return { didTimeout: true };
+      const activity = await this.waitForActivity(deadline - now, options.signal, this.activityGeneration);
+      if (activity.timedOut) return { didTimeout: true };
     }
+    return { didTimeout: false };
   }
 }

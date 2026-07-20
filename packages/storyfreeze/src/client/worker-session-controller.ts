@@ -12,6 +12,7 @@ import {
   type WorkerSessionPreviewProtocol,
   type WorkerStorySelection,
 } from '../shared/preview-protocol.js';
+import type { StorySessionResetContext } from '../shared/types.js';
 
 type ChannelListener = (...args: unknown[]) => void;
 
@@ -24,6 +25,10 @@ export interface PreviewChannel {
 type WorkerSessionWindow = typeof window & {
   [STORYFREEZE_PREVIEW_STATE_GLOBAL]?: StoryFreezePreviewStateV1;
   [STORYFREEZE_WORKER_SESSION_GLOBAL]?: WorkerSessionPreviewProtocol;
+  __STORYFREEZE_CAPTURE_RESET__?: {
+    storyId: string;
+    reset?: (context: StorySessionResetContext) => void | Promise<void>;
+  };
 };
 
 type EventName =
@@ -195,14 +200,24 @@ export function initializeWorkerSessionController(
         channel.emit(eventNames.SET_CURRENT_STORY, { storyId: request.storyId, viewMode: 'story' });
       });
     },
-    completeCapture(requestId) {
+    async completeCapture(requestId, variantId) {
       if (!active || active.requestId !== requestId) {
         throw new Error(
           `StoryFreeze cannot complete worker request ${requestId}; active request is ${active?.requestId ?? 'none'}.`,
         );
       }
       if (pending) throw new Error(`StoryFreeze worker request ${requestId} has not selected its story yet.`);
-      active = undefined;
+      const completed = active;
+      try {
+        if (variantId) {
+          const registration = target.__STORYFREEZE_CAPTURE_RESET__;
+          if (registration?.storyId === completed.storyId) {
+            await registration.reset?.({ storyId: completed.storyId, variantId });
+          }
+        }
+      } finally {
+        active = undefined;
+      }
     },
     current: () => active,
     dispose() {

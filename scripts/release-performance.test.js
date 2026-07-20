@@ -3,17 +3,21 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { execFileSync } = require('node:child_process');
 const test = require('node:test');
 const { PNG } = require('pngjs');
 
 const {
   buildSchedule,
   compareManifests,
+  createLogInspector,
   evaluateRecord,
   inspectPngDirectory,
   measuredOrder,
   percentile,
+  prepareImplementationPackage,
   replacePlaceholders,
+  resolvePackageExecutable,
   summarize,
   validateConfig,
 } = require('./release-performance.js');
@@ -79,9 +83,31 @@ function record() {
       staticBuildHash: hash,
     },
     implementations: {
-      candidate: { commit: sha, packageHash: hash, tree: sha, version: '0.2.0-rc.3' },
-      rc: { commit: sha, packageHash: hash, tree: sha, version: '0.2.0-rc.2' },
-      storycapture: { packageHash: hash, version: '9.0.0' },
+      candidate: {
+        binName: 'storyfreeze',
+        binPath: 'dist/node/cli.js',
+        commit: sha,
+        packageHash: hash,
+        packageName: 'storyfreeze',
+        tree: sha,
+        version: '0.2.0-rc.3',
+      },
+      rc: {
+        binName: 'storyfreeze',
+        binPath: 'dist/node/cli.js',
+        commit: sha,
+        packageHash: hash,
+        packageName: 'storyfreeze',
+        tree: sha,
+        version: '0.2.0-rc.2',
+      },
+      storycapture: {
+        binName: 'storycapture',
+        binPath: 'cli.js',
+        packageHash: hash,
+        packageName: 'storycapture',
+        version: '9.0.0',
+      },
     },
     schedule: buildSchedule(),
     reference: {
@@ -171,6 +197,81 @@ test('decodes a PNG manifest independently of encoded bytes', () => {
   }
 });
 
+test('resolves only an executable declared inside the packed package', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'storyfreeze-release-package-'));
+  try {
+    fs.mkdirSync(path.join(directory, 'dist'));
+    fs.writeFileSync(path.join(directory, 'dist', 'cli.js'), '');
+    assert.deepEqual(
+      resolvePackageExecutable(directory, { name: 'storyfreeze', bin: { storyfreeze: 'dist/cli.js' } }),
+      {
+        binName: 'storyfreeze',
+        binPath: 'dist/cli.js',
+        executablePath: path.join(directory, 'dist', 'cli.js'),
+      },
+    );
+    assert.throws(
+      () => resolvePackageExecutable(directory, { name: 'storyfreeze', bin: { storyfreeze: '../outside.js' } }),
+      /outside the extracted package/,
+    );
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('installs and resolves the CLI from the hashed npm archive', { skip: process.platform === 'win32' }, () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'storyfreeze-release-archive-'));
+  try {
+    const packageDirectory = path.join(directory, 'source');
+    fs.mkdirSync(packageDirectory);
+    fs.writeFileSync(
+      path.join(packageDirectory, 'package.json'),
+      `${JSON.stringify({ name: 'storyfreeze-release-fixture', version: '1.0.0', bin: { fixture: 'cli.js' } })}\n`,
+    );
+    fs.writeFileSync(path.join(packageDirectory, 'cli.js'), '#!/usr/bin/env node\n');
+    const packed = JSON.parse(
+      execFileSync('npm', ['pack', '--json', '--pack-destination', directory], {
+        cwd: packageDirectory,
+        encoding: 'utf8',
+      }),
+    )[0];
+    const prepared = prepareImplementationPackage(
+      'fixture',
+      { args: [], packagePath: packed.filename, version: '1.0.0' },
+      directory,
+      path.join(directory, 'prepared'),
+    );
+    assert.equal(prepared.command, process.execPath);
+    assert.equal(prepared.packageName, 'storyfreeze-release-fixture');
+    assert.equal(prepared.packageBinName, 'fixture');
+    assert.equal(prepared.packageBinPath, 'cli.js');
+    assert.match(prepared.packageHash, /^[0-9a-f]{64}$/);
+    assert.equal(fs.readFileSync(prepared.commandPrefixArgs[0], 'utf8'), '#!/usr/bin/env node\n');
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('inspects failures and duplicate output after more than 16 MiB of logs', () => {
+  const inspector = createLogInspector();
+  const noise = `${'x'.repeat(1024 * 1024)}\n`;
+  for (let index = 0; index < 17; index += 1) inspector.push('stdout', noise);
+  inspector.push('stdout', 'Screenshot stored: /tmp/A.png in 10 msec.\n');
+  inspector.push('stderr', 'Screenshot stored: /tmp/A.png in 11 msec.\n');
+  inspector.push('stderr', 'Retry to screenshot this story after this sequence.\n');
+  inspector.push('stderr', 'capture failed (error): TimeoutError browser process crash retry budget exhausted\n');
+  inspector.push('stdout', 'Screenshot was ended successfully in 123 msec\n');
+  assert.deepEqual(inspector.finish(), {
+    captureTimeMs: 123,
+    crashCount: 1,
+    duplicatePngCount: 1,
+    failureCount: 2,
+    retryCount: 1,
+    retryExhaustionLogCount: 1,
+    timeoutLogCount: 1,
+  });
+});
+
 test('summarizes raw runs without averaging dispatch summaries', () => {
   assert.equal(percentile([1, 2, 100, 3, 4], 0.95), 100);
   assert.deepEqual(summarize([successfulRun(100), successfulRun(80), successfulRun(90)]), {
@@ -197,11 +298,10 @@ test('passes only when both RC.2 and StoryCapture ratios pass', () => {
   assert.match(failedEvaluation.gate.errors.join('\n'), /rgbaMismatchCount/);
 });
 
-test('requires the fixed release scenario and complete command templates', () => {
+test('requires the fixed release scenario and complete package argument templates', () => {
   const sha = 'a'.repeat(40);
   const implementation = {
-    command: 'node',
-    args: ['cli.js', '--parallel', '4', '--chromium-path', '{chromiumPath}', '--out-dir', '{outDir}', '{storybookUrl}'],
+    args: ['--parallel', '4', '--chromium-path', '{chromiumPath}', '--out-dir', '{outDir}', '{storybookUrl}'],
     packagePath: 'package.tgz',
     version: '0.2.0-rc.3',
     commit: sha,
@@ -228,5 +328,16 @@ test('requires the fixed release scenario and complete command templates', () =>
   assert.throws(
     () => validateConfig({ ...config, implementations: { ...config.implementations, rc: implementation } }),
     /rc.version must be 0.2.0-rc.2/,
+  );
+  assert.throws(
+    () =>
+      validateConfig({
+        ...config,
+        implementations: {
+          ...config.implementations,
+          candidate: { ...implementation, command: 'node' },
+        },
+      }),
+    /command is not supported/,
   );
 });

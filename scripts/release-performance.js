@@ -9,7 +9,6 @@ const { PNG } = require('pngjs');
 
 const sampleIntervalMs = 50;
 const processExitGraceMs = 2_000;
-const retainedLogBytes = 16 * 1024 * 1024;
 const requiredZeroFields = [
   'cleanupErrorCount',
   'crashCount',
@@ -166,16 +165,18 @@ function commandParallel(args) {
 }
 
 function validateImplementation(name, implementation, parallel) {
-  if (typeof implementation?.command !== 'string' || implementation.command.length === 0) {
-    throw new Error(`implementations.${name}.command is required.`);
+  if (implementation?.command !== undefined) {
+    throw new Error(
+      `implementations.${name}.command is not supported; the release runner executes the CLI declared by packagePath.`,
+    );
   }
-  if (!Array.isArray(implementation.args) || !implementation.args.every(value => typeof value === 'string')) {
+  if (!Array.isArray(implementation?.args) || !implementation.args.every(value => typeof value === 'string')) {
     throw new Error(`implementations.${name}.args must be an array of strings.`);
   }
   if (commandParallel(implementation.args) !== parallel) {
     throw new Error(`implementations.${name}.args must explicitly set --parallel ${parallel}.`);
   }
-  const template = [implementation.command, ...implementation.args].join('\0');
+  const template = implementation.args.join('\0');
   for (const placeholder of ['{chromiumPath}', '{outDir}', '{storybookUrl}']) {
     if (!template.includes(placeholder)) {
       throw new Error(`implementations.${name} must include ${placeholder}.`);
@@ -185,6 +186,12 @@ function validateImplementation(name, implementation, parallel) {
     if (typeof implementation[field] !== 'string' || implementation[field].length === 0) {
       throw new Error(`implementations.${name}.${field} is required.`);
     }
+  }
+  if (
+    implementation.binName !== undefined &&
+    (typeof implementation.binName !== 'string' || implementation.binName.length === 0)
+  ) {
+    throw new Error(`implementations.${name}.binName must be a string when provided.`);
   }
   if (implementation.captureTimePattern !== undefined && typeof implementation.captureTimePattern !== 'string') {
     throw new Error(`implementations.${name}.captureTimePattern must be a string.`);
@@ -196,6 +203,128 @@ function validateImplementation(name, implementation, parallel) {
       throw new Error(`implementations.${name}.captureTimePattern is invalid: ${error.message}`);
     }
   }
+}
+
+function resolvePackageExecutable(packageRoot, metadata, requestedBinName) {
+  const declared = metadata?.bin;
+  let entries;
+  if (typeof declared === 'string') {
+    if (typeof metadata.name !== 'string' || metadata.name.length === 0) {
+      throw new Error('The package must declare a name when bin is a string.');
+    }
+    entries = [[metadata.name, declared]];
+  } else if (declared && typeof declared === 'object' && !Array.isArray(declared)) {
+    entries = Object.entries(declared).filter(
+      ([name, target]) =>
+        typeof name === 'string' && name.length > 0 && typeof target === 'string' && target.length > 0,
+    );
+  } else {
+    entries = [];
+  }
+  if (entries.length === 0) throw new Error('The package does not declare an executable bin.');
+
+  const selectedName =
+    requestedBinName ??
+    (typeof metadata.name === 'string' && entries.some(([name]) => name === metadata.name)
+      ? metadata.name
+      : entries.length === 1
+        ? entries[0][0]
+        : undefined);
+  const selected = entries.find(([name]) => name === selectedName);
+  if (!selected) {
+    throw new Error(
+      `Unable to select package bin${requestedBinName ? ` ${JSON.stringify(requestedBinName)}` : ''}; declared bins: ${entries
+        .map(([name]) => name)
+        .join(', ')}.`,
+    );
+  }
+
+  const executablePath = path.resolve(packageRoot, selected[1]);
+  const relative = path.relative(packageRoot, executablePath);
+  if (!relative || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw new Error(`Package bin ${JSON.stringify(selected[1])} resolves outside the extracted package.`);
+  }
+  if (!fs.statSync(executablePath, { throwIfNoEntry: false })?.isFile()) {
+    throw new Error(`Package bin does not exist: ${executablePath}`);
+  }
+  return {
+    binName: selected[0],
+    binPath: relative.replaceAll('\\', '/'),
+    executablePath,
+  };
+}
+
+function prepareImplementationPackage(name, implementation, configDir, packageWorkspace) {
+  const packageArchivePath = path.resolve(configDir, implementation.packagePath);
+  if (
+    !packageArchivePath.toLowerCase().endsWith('.tgz') ||
+    !fs.statSync(packageArchivePath, { throwIfNoEntry: false })?.isFile()
+  ) {
+    throw new Error(`implementations.${name}.packagePath must be an existing npm .tgz archive: ${packageArchivePath}`);
+  }
+  const archiveRoot = path.join(packageWorkspace, 'archive');
+  const consumerRoot = path.join(packageWorkspace, 'consumer');
+  fs.mkdirSync(archiveRoot, { recursive: true });
+  execFileSync(
+    'tar',
+    ['-xzf', packageArchivePath, '--strip-components=1', '--no-same-owner', '--no-same-permissions', '-C', archiveRoot],
+    { stdio: 'pipe' },
+  );
+  const metadataPath = path.join(archiveRoot, 'package.json');
+  if (!fs.statSync(metadataPath, { throwIfNoEntry: false })?.isFile()) {
+    throw new Error(`implementations.${name}.packagePath is not an npm package archive.`);
+  }
+  const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf8'));
+  if (typeof metadata.name !== 'string' || metadata.name.length === 0) {
+    throw new Error(`implementations.${name}.packagePath does not declare a package name.`);
+  }
+  if (metadata.version !== implementation.version) {
+    throw new Error(
+      `implementations.${name}.version ${JSON.stringify(implementation.version)} does not match package metadata ${JSON.stringify(metadata.version)}.`,
+    );
+  }
+  fs.mkdirSync(consumerRoot, { recursive: true });
+  fs.writeFileSync(
+    path.join(consumerRoot, 'package.json'),
+    `${JSON.stringify({ name: `storyfreeze-release-${name}`, private: true })}\n`,
+  );
+  const npmBefore = new Date(Date.now() - 24 * 60 * 60 * 1_000).toISOString();
+  execFileSync(
+    'npm',
+    [
+      'install',
+      '--ignore-scripts',
+      '--legacy-peer-deps',
+      '--no-audit',
+      '--no-fund',
+      '--package-lock=false',
+      `--before=${npmBefore}`,
+      packageArchivePath,
+    ],
+    { cwd: consumerRoot, maxBuffer: 20 * 1024 * 1024, stdio: 'pipe' },
+  );
+  const nodeModulesRoot = path.resolve(consumerRoot, 'node_modules');
+  const installedPackageRoot = path.resolve(nodeModulesRoot, ...metadata.name.split('/'));
+  const installedRelative = path.relative(nodeModulesRoot, installedPackageRoot);
+  if (!installedRelative || installedRelative.startsWith(`..${path.sep}`) || path.isAbsolute(installedRelative)) {
+    throw new Error(`implementations.${name}.packagePath declares an invalid package name.`);
+  }
+  const installedMetadata = JSON.parse(fs.readFileSync(path.join(installedPackageRoot, 'package.json'), 'utf8'));
+  if (installedMetadata.name !== metadata.name || installedMetadata.version !== metadata.version) {
+    throw new Error(`implementations.${name}.packagePath installed metadata does not match the inspected archive.`);
+  }
+  const executable = resolvePackageExecutable(installedPackageRoot, installedMetadata, implementation.binName);
+  return {
+    ...implementation,
+    command: process.execPath,
+    commandPrefixArgs: [executable.executablePath],
+    packageArchivePath,
+    packageHash: hashPath(packageArchivePath),
+    packageName: metadata.name,
+    packageBinName: executable.binName,
+    packageBinPath: executable.binPath,
+    version: metadata.version,
+  };
 }
 
 function validateConfig(config) {
@@ -358,21 +487,69 @@ function signalProcessGroup(pid, signal) {
   }
 }
 
-function parseCaptureTime(log, pattern) {
-  if (pattern) {
-    const matches = [...log.matchAll(new RegExp(pattern, 'g'))];
-    const value = matches.at(-1)?.[1];
-    if (value !== undefined && Number.isFinite(Number(value))) return Number(value);
-  }
-  const total = [...log.matchAll(/Screenshot was ended successfully in (\d+(?:\.\d+)?) msec/g)].at(-1);
-  if (total) return Number(total[1]);
-  const captures = [...log.matchAll(/Screenshot stored: .*? in (\d+(?:\.\d+)?) msec\./g)];
-  return captures.length > 0 ? captures.reduce((sum, match) => sum + Number(match[1]), 0) : null;
+function countMatches(value, pattern) {
+  return [...value.matchAll(pattern)].length;
 }
 
-function appendRetained(current, chunk) {
-  if (current.length >= retainedLogBytes) return current;
-  return `${current}${chunk}`.slice(0, retainedLogBytes);
+function createLogInspector(captureTimePattern) {
+  const pending = new Map();
+  const storedPaths = new Set();
+  let captureDurationSum = 0;
+  let captureDurationCount = 0;
+  let customCaptureTime;
+  let totalCaptureTime;
+  let retryCount = 0;
+  let crashCount = 0;
+  let duplicatePngCount = 0;
+  let failureCount = 0;
+  let retryExhaustionLogCount = 0;
+  let timeoutLogCount = 0;
+
+  const inspectLine = line => {
+    if (captureTimePattern) {
+      for (const match of line.matchAll(new RegExp(captureTimePattern, 'g'))) {
+        if (match[1] !== undefined && Number.isFinite(Number(match[1]))) customCaptureTime = Number(match[1]);
+      }
+    }
+    for (const match of line.matchAll(/Screenshot was ended successfully in (\d+(?:\.\d+)?) msec/g)) {
+      totalCaptureTime = Number(match[1]);
+    }
+    for (const match of line.matchAll(/Screenshot stored:\s+(.+?)\s+in\s+(\d+(?:\.\d+)?)\s+msec\./g)) {
+      const outputPath = match[1].replaceAll('\\', '/');
+      if (storedPaths.has(outputPath)) duplicatePngCount += 1;
+      storedPaths.add(outputPath);
+      captureDurationSum += Number(match[2]);
+      captureDurationCount += 1;
+    }
+    retryCount += countMatches(line, /Retry to screenshot this story after this sequence\./g);
+    crashCount += countMatches(line, /(?:Target closed|browser process.*crash|Failed to launch)/gi);
+    failureCount += countMatches(line, /(?:failed to capture|capture failed|\(error\):)/gi);
+    retryExhaustionLogCount += countMatches(line, /(?:retry budget exhausted|failed after \d+ retries)/gi);
+    timeoutLogCount += countMatches(line, /(?:did not become ready|deadline exceeded|TimeoutError)/gi);
+  };
+
+  return {
+    push(source, value) {
+      const lines = `${pending.get(source) ?? ''}${value}`.split(/\r\n|\n|\r/);
+      pending.set(source, lines.pop() ?? '');
+      for (const line of lines) inspectLine(line);
+    },
+    finish() {
+      for (const value of pending.values()) {
+        if (value) inspectLine(value);
+      }
+      pending.clear();
+      return {
+        captureTimeMs: customCaptureTime ?? totalCaptureTime ?? (captureDurationCount > 0 ? captureDurationSum : null),
+        crashCount,
+        duplicatePngCount,
+        failureCount,
+        retryCount,
+        retryExhaustionLogCount,
+        timeoutLogCount,
+      };
+    },
+  };
 }
 
 async function measureCommand({
@@ -388,8 +565,11 @@ async function measureCommand({
   fs.rmSync(outputDir, { recursive: true, force: true });
   fs.mkdirSync(outputDir, { recursive: true });
   fs.mkdirSync(artifactDir, { recursive: true });
-  const command = replacePlaceholders(implementation.command, replacements);
-  const args = implementation.args.map(value => replacePlaceholders(value, replacements));
+  const command = implementation.command;
+  const args = [
+    ...implementation.commandPrefixArgs,
+    ...implementation.args.map(value => replacePlaceholders(value, replacements)),
+  ];
   const logPath = path.join(artifactDir, `${label}.log`);
   const logStream = fs.createWriteStream(logPath, { encoding: 'utf8' });
   const child = spawn(command, args, {
@@ -399,14 +579,15 @@ async function measureCommand({
     shell: false,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
-  let retainedLog = '';
-  const captureChunk = chunk => {
-    const value = chunk.toString();
-    retainedLog = appendRetained(retainedLog, value);
+  const logInspector = createLogInspector(implementation.captureTimePattern);
+  const captureChunk = source => value => {
+    logInspector.push(source, value);
     logStream.write(value);
   };
-  child.stdout.on('data', captureChunk);
-  child.stderr.on('data', captureChunk);
+  child.stdout.setEncoding('utf8');
+  child.stderr.setEncoding('utf8');
+  child.stdout.on('data', captureChunk('stdout'));
+  child.stderr.on('data', captureChunk('stderr'));
 
   const observed = new Set();
   const maximumCpu = new Map();
@@ -477,29 +658,23 @@ async function measureCommand({
     }
   }
   const inspection = inspectPngDirectory(outputDir);
-  const storedPaths = [...retainedLog.matchAll(/Screenshot stored:\s+(.+?)\s+in\s+\d+(?:\.\d+)?\s+msec\./g)].map(
-    match => match[1].replaceAll('\\', '/'),
-  );
-  const retryCount = [...retainedLog.matchAll(/Retry to screenshot this story after this sequence\./g)].length;
+  const inspectedLog = logInspector.finish();
   return {
-    captureTimeMs: parseCaptureTime(retainedLog, implementation.captureTimePattern),
+    captureTimeMs: inspectedLog.captureTimeMs,
     cpuTimeMs: [...maximumCpu.values()].reduce((total, value) => total + value, 0),
     peakRssBytes,
     wallTimeMs,
     exitCode: exit.code ?? -1,
     exitSignal: exit.signal,
     cleanupErrorCount: signalErrors.length,
-    crashCount: [...retainedLog.matchAll(/(?:Target closed|browser process.*crash|Failed to launch)/gi)].length,
-    duplicatePngCount: Math.max(0, storedPaths.length - new Set(storedPaths).size),
-    failureCount: [...retainedLog.matchAll(/(?:failed to capture|capture failed|\(error\):)/gi)].length,
+    crashCount: inspectedLog.crashCount,
+    duplicatePngCount: inspectedLog.duplicatePngCount,
+    failureCount: inspectedLog.failureCount,
     invalidPreviewCount: inspection.manifest.filter(entry => invalidPngHashes.has(entry.visualSha256)).length,
     residualProcessCount: residual.length,
-    retryCount,
-    retryExhaustionCount:
-      Number(retryCount > 0 && exit.code !== 0) +
-      [...retainedLog.matchAll(/(?:retry budget exhausted|failed after \d+ retries)/gi)].length,
-    timeoutCount:
-      Number(timedOut) + [...retainedLog.matchAll(/(?:did not become ready|deadline exceeded|TimeoutError)/gi)].length,
+    retryCount: inspectedLog.retryCount,
+    retryExhaustionCount: Number(inspectedLog.retryCount > 0 && exit.code !== 0) + inspectedLog.retryExhaustionLogCount,
+    timeoutCount: Number(timedOut) + inspectedLog.timeoutLogCount,
     unreadablePngCount: inspection.unreadable.length,
     pngCount: inspection.manifest.length,
     manifestSha256: hashBuffer(Buffer.from(JSON.stringify(inspection.manifest))),
@@ -560,8 +735,10 @@ function evaluateRecord(record) {
   }
   for (const name of ['candidate', 'rc', 'storycapture']) {
     const implementation = record?.implementations?.[name];
-    if (typeof implementation?.version !== 'string' || implementation.version.length === 0) {
-      errors.push(`implementations.${name}.version is required.`);
+    for (const field of ['binName', 'binPath', 'packageName', 'version']) {
+      if (typeof implementation?.[field] !== 'string' || implementation[field].length === 0) {
+        errors.push(`implementations.${name}.${field} is required.`);
+      }
     }
     if (!/^[0-9a-f]{64}$/i.test(implementation?.packageHash ?? '')) {
       errors.push(`implementations.${name}.packageHash must be a SHA-256 hash.`);
@@ -775,19 +952,18 @@ async function recordReleasePerformance(config, { configDir, outputFile }) {
   const artifactDir = `${outputFile}.artifacts`;
   const schedule = buildSchedule(config.starting);
   const invalidPngHashes = new Set(config.invalidPngHashes);
-  const implementations = Object.fromEntries(
-    Object.entries(config.implementations).map(([name, implementation]) => [
-      name,
-      {
-        ...implementation,
-        cwd: path.resolve(configDir, implementation.cwd ?? '.'),
-        packageHash: hashPath(path.resolve(configDir, implementation.packagePath)),
-      },
-    ]),
-  );
   const measuredRuns = new Map();
   let referenceManifest;
   try {
+    const implementations = Object.fromEntries(
+      Object.entries(config.implementations).map(([name, implementation]) => [
+        name,
+        {
+          ...prepareImplementationPackage(name, implementation, configDir, path.join(temporaryRoot, 'packages', name)),
+          cwd: path.resolve(configDir, implementation.cwd ?? '.'),
+        },
+      ]),
+    );
     for (const step of schedule) {
       const outputDir = path.join(temporaryRoot, step.label);
       const run = await measureCommand({
@@ -809,7 +985,10 @@ async function recordReleasePerformance(config, { configDir, outputFile }) {
       parallel: config.parallel,
       storybookUrl: config.storybookUrl,
       commands: Object.fromEntries(
-        Object.entries(config.implementations).map(([name, implementation]) => [name, implementation.args]),
+        Object.entries(implementations).map(([name, implementation]) => [
+          name,
+          { args: implementation.args, binName: implementation.packageBinName, binPath: implementation.packageBinPath },
+        ]),
       ),
     };
     const record = {
@@ -831,7 +1010,10 @@ async function recordReleasePerformance(config, { configDir, outputFile }) {
         Object.entries(implementations).map(([name, implementation]) => [
           name,
           {
+            binName: implementation.packageBinName,
+            binPath: implementation.packageBinPath,
             commit: implementation.commit,
+            packageName: implementation.packageName,
             packageHash: implementation.packageHash,
             tree: implementation.tree,
             version: implementation.version,
@@ -907,11 +1089,14 @@ if (require.main === module) {
 module.exports = {
   buildSchedule,
   compareManifests,
+  createLogInspector,
   evaluateRecord,
   inspectPngDirectory,
   measuredOrder,
   percentile,
+  prepareImplementationPackage,
   replacePlaceholders,
+  resolvePackageExecutable,
   summarize,
   validateConfig,
 };

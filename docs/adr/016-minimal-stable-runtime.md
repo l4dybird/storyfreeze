@@ -118,12 +118,16 @@ The JSON config has `schemaVersion: 1`, `parallel: 4`,
 `expectedCaptures: 452`, the served `storybookUrl`, `staticBuildDir`,
 `repositoryDir`, one `chromiumPath`, Azure image identity, command timeout,
 known invalid Preview PNG hashes, and `candidate`, `rc`, and `storycapture`
-command specifications. Every command explicitly uses `--parallel 4` and the `{storybookUrl}`,
-`{chromiumPath}`, and `{outDir}` placeholders. Candidate and RC specifications
-also carry full commit and tree SHAs; the candidate values must match the
-repository HEAD. An implementation may supply `captureTimePattern` with one
-numeric capture group when its CLI does not emit StoryFreeze-compatible timing
-lines. A known invalid hash can be generated with:
+package specifications. The runner extracts each npm tarball, verifies its
+declared version, installs it in an isolated consumer with scripts disabled and
+the same 24-hour npm cutoff, and executes only the CLI declared by that
+package's `bin` metadata. Every argument list explicitly uses `--parallel 4` and the
+`{storybookUrl}`, `{chromiumPath}`, and `{outDir}` placeholders. Candidate and
+RC specifications also carry full commit and tree SHAs; the candidate values
+must match the repository HEAD. An implementation with multiple bins selects
+one with `binName`. It may also supply `captureTimePattern` with one numeric
+capture group when its CLI does not emit StoryFreeze-compatible timing lines.
+A known invalid hash can be generated with:
 
 ```sh
 node scripts/release-performance.js --hash-png ./no-preview.png
@@ -150,51 +154,21 @@ the Azure job):
   },
   "implementations": {
     "candidate": {
-      "command": "node",
-      "args": [
-        "../candidate/dist/node/cli.js",
-        "--parallel",
-        "4",
-        "--chromium-path",
-        "{chromiumPath}",
-        "--out-dir",
-        "{outDir}",
-        "{storybookUrl}"
-      ],
+      "args": ["--parallel", "4", "--chromium-path", "{chromiumPath}", "--out-dir", "{outDir}", "{storybookUrl}"],
       "packagePath": "../candidate.tgz",
       "version": "0.2.0-rc.3",
       "commit": "<40-character candidate commit>",
       "tree": "<40-character candidate tree>"
     },
     "rc": {
-      "command": "node",
-      "args": [
-        "../rc2/dist/node/cli.js",
-        "--parallel",
-        "4",
-        "--chromium-path",
-        "{chromiumPath}",
-        "--out-dir",
-        "{outDir}",
-        "{storybookUrl}"
-      ],
+      "args": ["--parallel", "4", "--chromium-path", "{chromiumPath}", "--out-dir", "{outDir}", "{storybookUrl}"],
       "packagePath": "../storyfreeze-0.2.0-rc.2.tgz",
       "version": "0.2.0-rc.2",
       "commit": "<40-character RC.2 commit>",
       "tree": "<40-character RC.2 tree>"
     },
     "storycapture": {
-      "command": "node",
-      "args": [
-        "../storycapture/cli.js",
-        "--parallel",
-        "4",
-        "--chromium-path",
-        "{chromiumPath}",
-        "--out-dir",
-        "{outDir}",
-        "{storybookUrl}"
-      ],
+      "args": ["--parallel", "4", "--chromium-path", "{chromiumPath}", "--out-dir", "{outDir}", "{storybookUrl}"],
       "packagePath": "../storycapture.tgz",
       "version": "9.0.0"
     }

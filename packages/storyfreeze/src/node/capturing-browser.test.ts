@@ -65,4 +65,29 @@ describe(CapturingBrowser, () => {
     expect(select).toHaveBeenCalledOnce();
     deadline.dispose();
   });
+
+  it('exposes a readiness notification binding that reaches the current navigator', async () => {
+    const browser = new CapturingBrowser({ url: 'https://example.test' } as never, options(), 0);
+    const exposed = new Map<string, (...args: unknown[]) => unknown>();
+    (browser as any).capturePage = {
+      exposeFunction: vi.fn(async (name: string, handler: (...args: unknown[]) => unknown) => {
+        exposed.set(name, handler);
+      }),
+    };
+
+    await (browser as any).expose();
+    expect([...exposed.keys()]).toEqual([
+      'getBaseScreenshotOptions',
+      'getCurrentVariantKey',
+      'notifyPreviewStateChanged',
+    ]);
+
+    // expose() runs before the navigator exists, so the binding must tolerate
+    // that and still reach the navigator once a context is up.
+    expect(() => exposed.get('notifyPreviewStateChanged')!('ready')).not.toThrow();
+    const notifyStateChanged = vi.fn();
+    (browser as any).navigator = { notifyStateChanged };
+    exposed.get('notifyPreviewStateChanged')!('ready');
+    expect(notifyStateChanged).toHaveBeenCalledWith('ready');
+  });
 });

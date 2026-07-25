@@ -31,6 +31,32 @@ describe(WorkerSessionProtocolClient, () => {
     expect(client.current).toBeUndefined();
   });
 
+  it('normalizes capability answers from Previews of either generation', async () => {
+    const cases: Array<[unknown, { available: boolean; notifiesStateChanges: boolean }]> = [
+      // Preview that announces its state transitions.
+      [
+        { available: true, notifiesStateChanges: true },
+        { available: true, notifiesStateChanges: true },
+      ],
+      // Preview with the managed protocol but no notifications.
+      [
+        { available: true, notifiesStateChanges: false },
+        { available: true, notifiesStateChanges: false },
+      ],
+      // Older in-page probe result, which was a bare boolean.
+      [true, { available: true, notifiesStateChanges: false }],
+      [false, { available: false, notifiesStateChanges: false }],
+      // Anything unexpected must not be mistaken for a usable protocol.
+      [undefined, { available: false, notifiesStateChanges: false }],
+      ['ready', { available: false, notifiesStateChanges: false }],
+    ];
+    for (const [answer, expected] of cases) {
+      const client = new WorkerSessionProtocolClient({ evaluate: vi.fn().mockResolvedValue(answer) } as never);
+      await expect(client.capabilities()).resolves.toEqual(expected);
+      await expect(client.isAvailable()).resolves.toBe(expected.available);
+    }
+  });
+
   it('does not allow overlapping requests', async () => {
     const evaluate = vi.fn().mockResolvedValue({ requestId: '0-2', storyId: 'button--secondary', generation: 1 });
     const client = new WorkerSessionProtocolClient({ evaluate } as never);

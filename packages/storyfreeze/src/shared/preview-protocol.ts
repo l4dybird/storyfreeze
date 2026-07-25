@@ -44,6 +44,13 @@ export function createPreviewStateBase(storyId: string, requestId: string): Prev
 export const STORYFREEZE_WORKER_SESSION_GLOBAL = '__STORYFREEZE_WORKER_SESSION__';
 export const STORYFREEZE_WORKER_SESSION_PROTOCOL_VERSION = 1 as const;
 
+/**
+ * Name of the optional binding StoryFreeze exposes into the Preview so it can
+ * announce state transitions instead of being polled. A Preview that predates
+ * the binding simply never calls it and the Node side keeps polling.
+ */
+export const STORYFREEZE_NOTIFY_STATE_CHANGED_BINDING = 'notifyPreviewStateChanged';
+
 export interface SelectWorkerStoryRequest {
   requestId: string;
   storyId: string;
@@ -55,6 +62,12 @@ export interface WorkerStorySelection extends SelectWorkerStoryRequest {
 
 export interface WorkerSessionPreviewProtocol {
   protocolVersion: typeof STORYFREEZE_WORKER_SESSION_PROTOCOL_VERSION;
+  /**
+   * Advertises that every preview-state write goes through
+   * `publishPreviewState`, so the Node side may wait for a notification rather
+   * than polling the state global.
+   */
+  notifiesStateChanges: true;
   selectStory(request: SelectWorkerStoryRequest): Promise<WorkerStorySelection>;
   completeCapture(requestId: string, variantId: string): Promise<void>;
   current(): WorkerStorySelection | undefined;

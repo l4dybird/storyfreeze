@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vite-plus/test';
-import type { Story } from './story.js';
+import { storyCostMs, type Story } from './story.js';
 import { parseShardOptions, sortStories, shardStories } from './shard-utilities.js';
 
 describe(parseShardOptions, () => {
@@ -116,7 +116,7 @@ describe(shardStories, () => {
     ];
 
     const sortedStories = sortStories(stories);
-    const shardedStories = shardStories(sortedStories, 1, 1);
+    const shardedStories = shardStories(sortedStories, 1, 1, 'round-robin');
 
     expect(shardedStories).toMatchObject(sortedStories);
   });
@@ -149,8 +149,8 @@ describe(shardStories, () => {
     ];
 
     const sortedStories = sortStories(stories);
-    const shardedStoriesA = shardStories(sortedStories, 1, 2);
-    const shardedStoriesB = shardStories(sortedStories, 2, 2);
+    const shardedStoriesA = shardStories(sortedStories, 1, 2, 'round-robin');
+    const shardedStoriesB = shardStories(sortedStories, 2, 2, 'round-robin');
 
     expect(shardedStoriesA.length).toBe(shardedStoriesB.length);
   });
@@ -178,8 +178,8 @@ describe(shardStories, () => {
     ];
 
     const sortedStories = sortStories(stories);
-    const shardedStoriesA = shardStories(sortedStories, 1, 2);
-    const shardedStoriesB = shardStories(sortedStories, 2, 2);
+    const shardedStoriesA = shardStories(sortedStories, 1, 2, 'round-robin');
+    const shardedStoriesB = shardStories(sortedStories, 2, 2, 'round-robin');
 
     expect(Math.abs(shardedStoriesA.length - shardedStoriesB.length)).toBeLessThanOrEqual(1);
   });
@@ -201,10 +201,10 @@ describe(shardStories, () => {
     ];
 
     const sortedStories = sortStories(stories);
-    const shardedStoriesA = shardStories(sortedStories, 1, 4);
-    const shardedStoriesB = shardStories(sortedStories, 2, 4);
-    const shardedStoriesC = shardStories(sortedStories, 3, 4);
-    const shardedStoriesD = shardStories(sortedStories, 4, 4);
+    const shardedStoriesA = shardStories(sortedStories, 1, 4, 'round-robin');
+    const shardedStoriesB = shardStories(sortedStories, 2, 4, 'round-robin');
+    const shardedStoriesC = shardStories(sortedStories, 3, 4, 'round-robin');
+    const shardedStoriesD = shardStories(sortedStories, 4, 4, 'round-robin');
 
     expect(shardedStoriesA.length + shardedStoriesB.length + shardedStoriesC.length + shardedStoriesD.length).toBe(
       sortedStories.length,
@@ -237,13 +237,66 @@ describe(shardStories, () => {
     ];
 
     const sortedStories = sortStories(stories);
-    const shardedStoriesA = shardStories(sortedStories, 1, 2);
-    const shardedStoriesB = shardStories(sortedStories, 2, 2);
+    const shardedStoriesA = shardStories(sortedStories, 1, 2, 'round-robin');
+    const shardedStoriesB = shardStories(sortedStories, 2, 2, 'round-robin');
 
     const numComplexOnA = shardedStoriesA.filter(story => story.id.startsWith('complex')).length;
     const numComplexOnB = shardedStoriesB.filter(story => story.id.startsWith('complex')).length;
 
     expect(shardedStoriesA.length).toBe(shardedStoriesB.length);
     expect(numComplexOnA).toBe(numComplexOnB);
+  });
+
+  describe('cost strategy', () => {
+    const costed = (id: string, estimatedCostMs?: number): Story => ({
+      id,
+      kind: 'Example',
+      story: id,
+      version: 'v5',
+      ...(estimatedCostMs === undefined ? {} : { estimatedCostMs }),
+    });
+
+    it('balances estimated work instead of story count', () => {
+      // Round-robin on sorted index would give one shard both expensive stories.
+      const stories = [costed('a-expensive', 2000), costed('b-cheap'), costed('c-expensive', 2000), costed('d-cheap')];
+      const first = shardStories(stories, 1, 2, 'cost');
+      const second = shardStories(stories, 2, 2, 'cost');
+      const cost = (shard: Story[]) => shard.reduce((total, story) => total + storyCostMs(story), 0);
+
+      expect(cost(first)).toBe(2500);
+      expect(cost(second)).toBe(2500);
+      expect(cost(shardStories(stories, 1, 2, 'round-robin'))).toBe(4000);
+    });
+
+    it('covers every story exactly once across shards', () => {
+      const stories = Array.from({ length: 37 }, (_, index) =>
+        costed(`story-${String(index).padStart(2, '0')}`, index % 5 === 0 ? 1500 : undefined),
+      );
+      const totalShards = 4;
+      const selected = Array.from({ length: totalShards }, (_, index) =>
+        shardStories(stories, index + 1, totalShards, 'cost'),
+      );
+      const ids = selected.flat().map(story => story.id);
+
+      expect(ids).toHaveLength(stories.length);
+      expect(new Set(ids).size).toBe(stories.length);
+    });
+
+    it('returns each shard in sorted index order so output stays deterministic', () => {
+      const stories = [costed('c'), costed('a'), costed('b'), costed('d')];
+      for (let shard = 1; shard <= 2; shard += 1) {
+        const ids = shardStories(stories, shard, 2, 'cost').map(story => story.id);
+        expect(ids).toEqual([...ids].sort());
+      }
+    });
+
+    it('is stable across machines computing their own shard', () => {
+      const stories = Array.from({ length: 20 }, (_, index) => costed(`s-${index}`, index % 3 === 0 ? 900 : 400));
+      // Two independent invocations for the same shard must agree, otherwise
+      // machines would duplicate or drop stories.
+      expect(shardStories(stories, 2, 3, 'cost').map(story => story.id)).toEqual(
+        shardStories(stories, 2, 3, 'cost').map(story => story.id),
+      );
+    });
   });
 });

@@ -5,12 +5,22 @@ import type { StorybookConnectionOptions } from './managed-storybook-connection.
 
 /**
  *
+ * How a run selects its share of the stories across machines.
+ *
+ **/
+export const shardStrategies = ['cost', 'round-robin'] as const;
+
+export type ShardStrategy = (typeof shardStrategies)[number];
+
+/**
+ *
  * Parameters for sharding.
  *
  **/
 export type ShardOptions = {
   shardNumber: number;
   totalShards: number;
+  strategy: ShardStrategy;
 };
 
 /**

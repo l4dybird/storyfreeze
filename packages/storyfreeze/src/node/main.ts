@@ -88,6 +88,7 @@ function toStory(descriptor: StoryDescriptor): Story {
     story: descriptor.name,
     version: 'v5',
     ...(descriptor.viewportProfileHint ? { viewportProfileHint: descriptor.viewportProfileHint } : {}),
+    ...(descriptor.estimatedCostMs === undefined ? {} : { estimatedCostMs: descriptor.estimatedCostMs }),
   };
 }
 
@@ -152,6 +153,7 @@ export async function main(mainOptions: MainOptions, overrides: Partial<MainDepe
       stories.map(toStory),
       mainOptions.shard.shardNumber,
       mainOptions.shard.totalShards,
+      mainOptions.shard.strategy,
     );
     if (shardedStories.length === 0) {
       logger.log('This shard has no stories to screenshot.');

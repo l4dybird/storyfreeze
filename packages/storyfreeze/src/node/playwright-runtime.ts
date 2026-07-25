@@ -89,6 +89,7 @@ export class PlaywrightCapturePage {
   private readonly requests = new WeakMap<Request, BrowserRequest>();
   private readonly cdp: CdpClient;
   private viewport?: Viewport;
+  private touchEmulationEnabled?: boolean;
 
   constructor(
     private readonly rawPage: Page,
@@ -97,6 +98,9 @@ export class PlaywrightCapturePage {
   ) {
     this.cdp = rawCdp as unknown as CdpClient;
     this.viewport = initialViewport ? { ...initialViewport } : undefined;
+    // BrowserContext already established the initial touch emulation. A live
+    // page resize only has to send CDP when a caller crosses that invariant.
+    this.touchEmulationEnabled = initialViewport?.hasTouch ?? false;
   }
 
   isHealthy() {
@@ -259,13 +263,24 @@ export class PlaywrightCapturePage {
   }
 
   async setViewport(viewport: Viewport) {
+    // Keep Playwright's viewport bookkeeping in sync before applying the raw
+    // override that preserves StoryFreeze's orientation semantics. Bypassing
+    // this call changes full-page layout metrics on tall, high-DPI pages even
+    // though the final CDP override appears equivalent.
     await this.rawPage.setViewportSize({ width: viewport.width, height: viewport.height });
     await this.applyDeviceMetrics(viewport);
     const hasTouch = viewport.hasTouch ?? false;
-    await this.cdp.send('Emulation.setTouchEmulationEnabled', {
-      enabled: hasTouch,
-      ...(hasTouch ? { maxTouchPoints: 1 } : {}),
-    });
+    // Touch emulation belongs to the emulation class, and a class change
+    // recreates the browser context, so within one context this can only ever
+    // need to be sent once. Re-sending an identical value on every width/height
+    // change is pure protocol traffic.
+    if (this.touchEmulationEnabled !== hasTouch) {
+      await this.cdp.send('Emulation.setTouchEmulationEnabled', {
+        enabled: hasTouch,
+        ...(hasTouch ? { maxTouchPoints: 1 } : {}),
+      });
+      this.touchEmulationEnabled = hasTouch;
+    }
     this.viewport = { ...viewport };
   }
 

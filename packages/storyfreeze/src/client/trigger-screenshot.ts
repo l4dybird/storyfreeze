@@ -14,6 +14,7 @@ import {
 } from '../shared/preview-protocol.js';
 import { applyViewportFromGlobals, type StoryContextLike } from './resolve-viewport-globals.js';
 import { getWorkerSessionIdentity, initializeWorkerSessionController } from './worker-session-controller.js';
+import { publishPreviewState, type PreviewStateTarget } from './preview-state-publisher.js';
 
 type Args<T> = T extends (...args: infer A) => unknown ? A : never;
 type Return<T> = T extends (...args: infer _A) => infer R ? R : never;
@@ -47,7 +48,7 @@ function getCaptureIdentity() {
 }
 
 function setState(win: StoryFreezeWindow, state: StoryFreezePreviewStateV1) {
-  win[STORYFREEZE_PREVIEW_STATE_GLOBAL] = state;
+  publishPreviewState(win as PreviewStateTarget, state);
 }
 
 export function initializePreviewState() {

@@ -25,6 +25,13 @@ const managedScreenshotPaths = [
   'Compatibility/Fixture/Retry_SMALL.png',
 ].sort();
 const retryScreenshotPaths = ['Compatibility/Fixture/Retry_LARGE.png', 'Compatibility/Fixture/Retry_SMALL.png'].sort();
+// The cost strategy places the Interactions story, which expands into seven
+// captures, on the first shard, so the second shard keeps the two cheap stories.
+const costShardScreenshotPaths = [
+  'Compatibility/Fixture/Console Error_LARGE.png',
+  'Compatibility/Fixture/Console Error_SMALL.png',
+  ...retryScreenshotPaths,
+].sort();
 
 function runPnpm(script) {
   const invocation = resolvePnpmCommand(['--dir', fixtureDir, 'run', script]);
@@ -360,6 +367,14 @@ async function main() {
         directoryName: '__screenshots__/shard-static',
         expectedPaths: interactionScreenshotPaths,
         extraFragments: ['Found 3 stories. 1 are being processed by shard 2/2.'],
+      },
+      {
+        // The default strategy splits by estimated work, so a given shard holds
+        // different stories than the index-based split above.
+        script: 'storyfreeze:shard-cost-static',
+        directoryName: '__screenshots__/shard-cost-static',
+        expectedPaths: costShardScreenshotPaths,
+        extraFragments: ['Found 3 stories. 2 are being processed by shard 2/2.'],
       },
       {
         script: 'storyfreeze:retry-static',

@@ -32,6 +32,7 @@ import {
 } from './emulation-profile.js';
 import { raceAgainstTimeout } from './async-utils.js';
 import { isWorkerSessionProtocolFault } from './worker-session-protocol.js';
+import { STORYFREEZE_NOTIFY_STATE_CHANGED_BINDING } from '../shared/preview-protocol.js';
 
 const disableAnimationStylePath = fileURLToPath(new URL('../../assets/disable-animation.css', import.meta.url));
 const maximumCapturesPerContext = 128;
@@ -101,6 +102,11 @@ export class CapturingBrowser extends PlaywrightRuntime {
       getCurrentVariantKey: () => this.currentVariantKey,
     };
     await Promise.all(Object.entries(exposed).map(([name, handler]) => this.page.exposeFunction(name, handler)));
+    // Preview-driven readiness. The navigator is created after expose(), so the
+    // lookup is deliberately deferred to call time.
+    await this.page.exposeFunction(STORYFREEZE_NOTIFY_STATE_CHANGED_BINDING, (status: string) => {
+      this.navigator?.notifyStateChanged(status);
+    });
   }
 
   private async addStyles() {

@@ -23,6 +23,11 @@ function validateSelection(value: unknown, expected: SelectWorkerStoryRequest): 
   return { ...expected, generation: Number(value.generation) };
 }
 
+export interface WorkerSessionCapabilities {
+  available: boolean;
+  notifiesStateChanges: boolean;
+}
+
 export class WorkerSessionProtocolClient {
   private active?: WorkerStorySelection;
 
@@ -32,23 +37,38 @@ export class WorkerSessionProtocolClient {
     return this.active;
   }
 
-  isAvailable(): Promise<boolean> {
-    return this.page.evaluate(
+  /**
+   * One round trip that reports both whether the managed protocol is usable and
+   * whether the Preview announces its state transitions. Older Previews answer
+   * with a bare boolean, which is normalized to "available, but polls".
+   */
+  async capabilities(): Promise<WorkerSessionCapabilities> {
+    // Typed as unknown on purpose: the answer crosses a page boundary and may
+    // come from a Preview built against an older addon version.
+    const answer: unknown = await this.page.evaluate(
       ({ globalName, protocolVersion }) => {
         const protocol = (window as unknown as Record<string, unknown>)[globalName];
         if (typeof protocol !== 'object' || protocol === null) return false;
         const record = protocol as Record<string, unknown>;
-        return (
+        const available =
           record.protocolVersion === protocolVersion &&
           typeof record.selectStory === 'function' &&
-          typeof record.completeCapture === 'function'
-        );
+          typeof record.completeCapture === 'function';
+        if (!available) return false;
+        return { available: true, notifiesStateChanges: record.notifiesStateChanges === true };
       },
       {
         globalName: STORYFREEZE_WORKER_SESSION_GLOBAL,
         protocolVersion: STORYFREEZE_WORKER_SESSION_PROTOCOL_VERSION,
       },
     );
+    if (answer === true) return { available: true, notifiesStateChanges: false };
+    if (!isRecord(answer) || answer.available !== true) return { available: false, notifiesStateChanges: false };
+    return { available: true, notifiesStateChanges: answer.notifiesStateChanges === true };
+  }
+
+  async isAvailable(): Promise<boolean> {
+    return (await this.capabilities()).available;
   }
 
   async selectStory(request: SelectWorkerStoryRequest): Promise<WorkerStorySelection> {

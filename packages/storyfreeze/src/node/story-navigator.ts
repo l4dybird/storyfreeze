@@ -96,12 +96,28 @@ function validatePreviewState(raw: unknown, expected: ExpectedPreviewState): Sto
   return raw as unknown as StoryFreezePreviewStateV1;
 }
 
+/**
+ * How long the notification-driven wait goes without a state transition before
+ * it re-reads the state global anyway.
+ *
+ * This is a safety net for a lost binding call, not the primary wake path, so it
+ * is much coarser than the polling interval. It is still kept well under the
+ * 5 s default capture deadline: if a notification is ever dropped, the interval
+ * is the latency the capture inherits, and it must not be large enough to push
+ * an otherwise healthy story past its deadline.
+ */
+const notifiedSafetyReadIntervalMs = 250;
+const pollIntervalMs = 25;
+
 export class StoryNavigator {
   private sequence = 0;
   private current?: ExpectedPreviewState;
   private _rootOptions?: NormalizedScreenshotOptions;
   private reusableDocument = false;
   private workerSessionSupport: 'unknown' | 'supported' | 'unsupported' = 'unknown';
+  private notifiesStateChanges = false;
+  private stateGeneration = 0;
+  private readonly stateWaiters = new Set<() => void>();
   private readonly workerSession: WorkerSessionProtocolClient;
 
   constructor(
@@ -122,9 +138,23 @@ export class StoryNavigator {
 
   async detectWorkerSessionSupport(): Promise<boolean> {
     if (this.workerSessionSupport !== 'unknown') return this.workerSessionSupport === 'supported';
-    const supported = await this.workerSession.isAvailable();
-    this.workerSessionSupport = supported ? 'supported' : 'unsupported';
-    return supported;
+    const capabilities = await this.workerSession.capabilities();
+    this.workerSessionSupport = capabilities.available ? 'supported' : 'unsupported';
+    this.notifiesStateChanges = capabilities.notifiesStateChanges;
+    return capabilities.available;
+  }
+
+  /**
+   * Called from the Node-side binding the Preview invokes after every state
+   * write. Only terminal transitions advance the generation: a waiter has
+   * nothing to act on while the story is still booting, so waking it there
+   * would only cost an extra state read.
+   */
+  notifyStateChanged(status: string): void {
+    if (status !== 'ready' && status !== 'error') return;
+    this.stateGeneration += 1;
+    for (const resolve of this.stateWaiters) resolve();
+    this.stateWaiters.clear();
   }
 
   async navigate(storyId: string, timeout = 60_000, retryCount = 0): Promise<void> {
@@ -136,6 +166,10 @@ export class StoryNavigator {
     await this.page.goto(url.href, { timeout, waitUntil: 'domcontentloaded' });
     assertPreviewUrl(this.page, url, this.current);
     this.reusableDocument = true;
+    // Learn the Preview's capabilities before the first readiness wait so that
+    // wait can already use notifications. The result is cached for the life of
+    // this navigator (one browser context), so this costs no extra round trip.
+    if (this.workerSessionSupport === 'unknown') await this.detectWorkerSessionSupport().catch(() => undefined);
   }
 
   async selectStory(storyId: string): Promise<void> {
@@ -156,15 +190,25 @@ export class StoryNavigator {
     this.workerSession.invalidate();
   }
 
+  /**
+   * Waits until the Preview publishes a terminal state for the current request.
+   *
+   * A Preview that advertises `notifiesStateChanges` is awaited rather than
+   * polled: the generation is snapshotted *before* each read so a transition
+   * that lands between the read and the wait registration cannot be missed.
+   * Previews without the capability keep the original 25 msec polling loop.
+   */
   async waitForReady(timeout: number, signal?: AbortSignal): Promise<NormalizedScreenshotOptions> {
     if (!this.current) throw new Error('Story preview navigation has not started.');
     const deadline = Date.now() + timeout;
+    const notified = this.notifiesStateChanges;
     let lastState: unknown;
 
     do {
       if (signal?.aborted) {
         throw signal.reason instanceof Error ? signal.reason : new Error('StoryFreeze was interrupted.');
       }
+      const observedGeneration = this.stateGeneration;
       const read = await raceAgainstTimeout(readPreviewState(this.page), deadline - Date.now(), signal);
       if (read.timedOut) break;
       lastState = read.value;
@@ -176,9 +220,30 @@ export class StoryNavigator {
         }
         if (state.status === 'error') throw new PreviewRenderError(state.storyId, state.error);
       }
-      await sleep(25);
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) break;
+      if (notified) {
+        await this.waitForStateChange(Math.min(notifiedSafetyReadIntervalMs, remaining), signal, observedGeneration);
+      } else {
+        await sleep(pollIntervalMs);
+      }
     } while (Date.now() < deadline);
 
     throw new PreviewReadyTimeoutError(timeout, this.page.currentUrl(), this.current, lastState);
+  }
+
+  private async waitForStateChange(timeoutMs: number, signal: AbortSignal | undefined, expectedGeneration: number) {
+    let resolveChange = () => {};
+    const change = new Promise<void>(resolve => {
+      resolveChange = resolve;
+      this.stateWaiters.add(resolve);
+      // Closes the window between reading the state and registering the waiter.
+      if (this.stateGeneration !== expectedGeneration) resolve();
+    });
+    try {
+      await raceAgainstTimeout(change, timeoutMs, signal);
+    } finally {
+      this.stateWaiters.delete(resolveChange);
+    }
   }
 }

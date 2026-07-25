@@ -1,0 +1,65 @@
+.bench-surface,
+.bench-probe {
+  box-sizing: border-box;
+  font-family: 'Noto Sans', sans-serif;
+  margin: 0;
+  padding: 16px;
+}
+
+.bench-title {
+  font-size: 20px;
+  margin: 0 0 12px;
+}
+
+.bench-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.bench-row {
+  align-items: center;
+  border-bottom: 1px solid #d7dee8;
+  box-sizing: border-box;
+  display: flex;
+  gap: 12px;
+  height: 40px;
+  padding: 0 8px;
+}
+
+.bench-row-even {
+  background: #f4f7fb;
+}
+
+.bench-row-index {
+  color: #5a6b80;
+  font-variant-numeric: tabular-nums;
+  width: 56px;
+}
+
+.bench-row-body {
+  color: #243b53;
+}
+
+.bench-probe-list {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+}
+
+.bench-probe-entry {
+  display: flex;
+  gap: 8px;
+}
+
+.bench-probe-entry dt {
+  color: #5a6b80;
+  width: 180px;
+}
+
+.bench-probe-entry dd {
+  color: #102a43;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  margin: 0;
+}

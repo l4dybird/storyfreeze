@@ -89,7 +89,7 @@ const scenarios = {
   // whole machine, which is what a multi-machine run actually looks like, and the
   // scenario's wall time is the maximum rather than the sum.
   S5: {
-    static: 'bench-4a-candidate',
+    static: 'bench',
     parallel: 4,
     shards: 4,
     // A generous deadline: at the 5 s default, an unlucky shard hits a
@@ -98,7 +98,7 @@ const scenarios = {
     note: '4 shards, cost uncorrelated with index',
   },
   S6: {
-    static: 'bench-4a-candidate',
+    static: 'bench',
     parallel: 4,
     shards: 4,
     args: ['--include', 'Bench/Skew/**', '--capture-timeout', '30000'],
@@ -700,8 +700,15 @@ async function runMemory(scenarioId, armSpec) {
 function buildSchedule(arms, reps) {
   const schedule = [];
   for (let rep = 0; rep < reps; rep += 1) {
-    const rotated = arms.map((_, index) => arms[(index + rep) % arms.length]);
-    schedule.push(rep % 2 === 0 ? rotated : [...rotated].reverse());
+    const cycle = Math.floor(rep / arms.length);
+    const position = rep % arms.length;
+    // Walk each complete rotation forward, then walk the next one backwards
+    // while reversing the run order. For two arms this is the expected
+    // A/B, B/A, A/B, B/A sequence; for larger sets every arm still occupies
+    // every position before the direction changes.
+    const offset = cycle % 2 === 0 ? position : arms.length - 1 - position;
+    const rotated = arms.map((_, index) => arms[(index + offset) % arms.length]);
+    schedule.push(cycle % 2 === 0 ? rotated : [...rotated].reverse());
   }
   return schedule;
 }
@@ -811,6 +818,39 @@ function parityHasMismatch(value, mode) {
   );
 }
 
+function aggregateParityComparisons(comparisons) {
+  const total = {
+    checkedRuns: comparisons.length,
+    missingPngCount: 0,
+    unexpectedPngCount: 0,
+    dimensionMismatchCount: 0,
+    byteMismatchCount: 0,
+    byteMismatches: [],
+  };
+  const byteMismatches = new Set();
+  let rgba;
+  for (const comparison of comparisons) {
+    total.missingPngCount += comparison.missingPngCount;
+    total.unexpectedPngCount += comparison.unexpectedPngCount;
+    total.dimensionMismatchCount += comparison.dimensionMismatchCount;
+    total.byteMismatchCount += comparison.byteMismatchCount;
+    for (const relativePath of comparison.byteMismatches ?? []) byteMismatches.add(relativePath);
+    if (comparison.rgba) {
+      rgba ??= {
+        missingPngCount: 0,
+        unexpectedPngCount: 0,
+        dimensionMismatchCount: 0,
+        rgbaMismatchCount: 0,
+        referenceUnreadableCount: 0,
+        candidateUnreadableCount: 0,
+      };
+      for (const key of Object.keys(rgba)) rgba[key] += comparison.rgba[key] ?? 0;
+    }
+  }
+  total.byteMismatches = [...byteMismatches].sort().slice(0, 10);
+  return { ...total, ...(rgba ? { rgba } : {}) };
+}
+
 async function runScenario(scenarioId, armSpecs, options) {
   const scenario = scenarios[scenarioId];
   if (!scenario) throw new Error(`Unknown scenario: ${scenarioId}`);
@@ -884,29 +924,33 @@ async function runScenario(scenarioId, armSpecs, options) {
   // A run that exited non-zero or retried has an incomplete or re-captured
   // output set, so it can never serve as the reference or the candidate; using
   // one silently turns a flaky run into a fake parity mismatch.
-  const healthy = arm => runsByArm.get(arm).find(run => runHealthFailures(run).length === 0);
-  const reference = healthy(arms[0]);
+  const healthy = arm => runsByArm.get(arm).filter(run => runHealthFailures(run).length === 0);
+  const reference = healthy(arms[0])[0];
   const parity = {};
   if (!reference) failures.push(`${arms[0]} produced no healthy run to compare against`);
   for (const arm of reference ? arms : []) {
-    const candidate = healthy(arm);
-    if (!candidate) {
+    const candidates = healthy(arm);
+    if (candidates.length === 0) {
       failures.push(`${arm} produced no healthy run for the parity gate`);
       continue;
     }
-    const byteComparison = comparePngBytes(reference.manifest, candidate.manifest);
-    let rgba;
-    if (byteComparison.byteMismatchCount > 0) {
-      // Escalate to a decoded comparison only when bytes differ.
-      const referenceDecoded = inspectPngDirectory(reference.outDir);
-      const candidateDecoded = inspectPngDirectory(candidate.outDir);
-      rgba = {
-        ...compareManifests(referenceDecoded.manifest, candidateDecoded.manifest),
-        referenceUnreadableCount: referenceDecoded.unreadable.length,
-        candidateUnreadableCount: candidateDecoded.unreadable.length,
-      };
+    const comparisons = [];
+    for (const candidate of candidates) {
+      const byteComparison = comparePngBytes(reference.manifest, candidate.manifest);
+      let rgba;
+      if (byteComparison.byteMismatchCount > 0) {
+        // Escalate to a decoded comparison only when bytes differ.
+        const referenceDecoded = inspectPngDirectory(reference.outDir);
+        const candidateDecoded = inspectPngDirectory(candidate.outDir);
+        rgba = {
+          ...compareManifests(referenceDecoded.manifest, candidateDecoded.manifest),
+          referenceUnreadableCount: referenceDecoded.unreadable.length,
+          candidateUnreadableCount: candidateDecoded.unreadable.length,
+        };
+      }
+      comparisons.push({ ...byteComparison, ...(rgba ? { rgba } : {}) });
     }
-    parity[arm] = { ...byteComparison, ...(rgba ? { rgba } : {}) };
+    parity[arm] = aggregateParityComparisons(comparisons);
   }
   for (const [arm, value] of Object.entries(parity)) {
     if (parityHasMismatch(value, options.parity)) {
@@ -1051,6 +1095,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  aggregateParityComparisons,
   buildSchedule,
   combinedFailure,
   findCrossShardDuplicatePaths,

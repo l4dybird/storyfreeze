@@ -49,7 +49,7 @@ export const STORYFREEZE_WORKER_SESSION_PROTOCOL_VERSION = 1 as const;
  * announce state transitions instead of being polled. A Preview that predates
  * the binding simply never calls it and the Node side keeps polling.
  */
-export const STORYFREEZE_NOTIFY_STATE_CHANGED_BINDING = 'notifyPreviewStateChanged';
+export const STORYFREEZE_NOTIFY_STATE_CHANGED_BINDING = '__STORYFREEZE_NOTIFY_PREVIEW_STATE_CHANGED__';
 
 export interface SelectWorkerStoryRequest {
   requestId: string;

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vite-plus/test';
 import {
+  STORYFREEZE_NOTIFY_STATE_CHANGED_BINDING,
   STORYFREEZE_PREVIEW_STATE_GLOBAL,
   createPreviewStateBase,
   type StoryFreezePreviewStateV1,
@@ -13,12 +14,12 @@ describe(publishPreviewState, () => {
       status: 'booting',
     };
     const target = {} as PreviewStateTarget;
-    target.notifyPreviewStateChanged = vi.fn(async () => {
+    target[STORYFREEZE_NOTIFY_STATE_CHANGED_BINDING] = vi.fn(async () => {
       expect(target[STORYFREEZE_PREVIEW_STATE_GLOBAL]).toBe(state);
     });
 
     publishPreviewState(target, state);
-    await vi.waitFor(() => expect(target.notifyPreviewStateChanged).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(target[STORYFREEZE_NOTIFY_STATE_CHANGED_BINDING]).toHaveBeenCalledOnce());
   });
 
   it('keeps state published when notification rejects', async () => {
@@ -27,7 +28,7 @@ describe(publishPreviewState, () => {
       status: 'booting',
     };
     const target = {
-      notifyPreviewStateChanged: vi.fn(async () => Promise.reject(new Error('closed'))),
+      [STORYFREEZE_NOTIFY_STATE_CHANGED_BINDING]: vi.fn(async () => Promise.reject(new Error('closed'))),
     } as unknown as PreviewStateTarget;
 
     expect(() => publishPreviewState(target, state)).not.toThrow();

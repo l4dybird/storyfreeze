@@ -1,6 +1,8 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 const {
+  aggregateParityComparisons,
+  buildSchedule,
   findCrossShardDuplicatePaths,
   combinedFailure,
   memoryRunFailures,
@@ -10,6 +12,47 @@ const {
   startMemorySampler,
   windowsProcessTreeScript,
 } = require('./local-ab.js');
+
+test('alternates two-arm measurements and balances larger rotations', () => {
+  assert.deepEqual(buildSchedule(['baseline', 'candidate'], 5), [
+    ['baseline', 'candidate'],
+    ['candidate', 'baseline'],
+    ['baseline', 'candidate'],
+    ['candidate', 'baseline'],
+    ['baseline', 'candidate'],
+  ]);
+  const schedule = buildSchedule(['a', 'b', 'c'], 6);
+  for (const arm of ['a', 'b', 'c']) {
+    assert.deepEqual(
+      [0, 1, 2].map(position => schedule.filter(order => order[position] === arm).length),
+      [2, 2, 2],
+    );
+  }
+});
+
+test('aggregates parity failures from every healthy repetition', () => {
+  const aggregate = aggregateParityComparisons([
+    {
+      missingPngCount: 0,
+      unexpectedPngCount: 0,
+      dimensionMismatchCount: 0,
+      byteMismatchCount: 0,
+      byteMismatches: [],
+    },
+    {
+      missingPngCount: 0,
+      unexpectedPngCount: 0,
+      dimensionMismatchCount: 1,
+      byteMismatchCount: 1,
+      byteMismatches: ['changed.png'],
+    },
+  ]);
+  assert.equal(aggregate.checkedRuns, 2);
+  assert.equal(aggregate.dimensionMismatchCount, 1);
+  assert.equal(aggregate.byteMismatchCount, 1);
+  assert.deepEqual(aggregate.byteMismatches, ['changed.png']);
+  assert.equal(parityHasMismatch(aggregate, 'bytes'), true);
+});
 
 const byteMismatch = {
   missingPngCount: 0,

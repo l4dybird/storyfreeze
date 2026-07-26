@@ -33,9 +33,11 @@ export class FileSystem {
   private readonly maximumBytes = MAXIMUM_RETAINED_SCREENSHOT_BYTES;
   private readonly waiters: Waiter[] = [];
   private readonly bufferPermits = new WeakMap<Buffer, Permit>();
+  private readonly pendingWrites = new Set<Promise<void>>();
   private active = 0;
   private activeBytes = 0;
   private failure?: { error: unknown };
+  private pendingFailure?: { error: unknown };
   private outputRootRealPath?: Promise<string>;
 
   constructor(private readonly opt: MainOptions) {
@@ -253,8 +255,75 @@ export class FileSystem {
     }
   }
 
+  /** Waits for every started write to settle, then reports the first failure. */
   async flush() {
+    // Writes may still be registered while earlier ones are draining.
+    while (this.pendingWrites.size > 0) {
+      await Promise.allSettled([...this.pendingWrites]);
+    }
+    if (this.pendingFailure) throw this.pendingFailure.error;
     if (this.failure) throw this.failure.error;
+  }
+
+  private track(written: Promise<void>) {
+    this.pendingWrites.add(written);
+    // Observed here so a background rejection can never surface as an unhandled
+    // rejection; flush() is what actually reports it.
+    void written.then(
+      () => this.pendingWrites.delete(written),
+      error => {
+        if (!this.pendingFailure) this.pendingFailure = { error };
+        this.pendingWrites.delete(written);
+      },
+    );
+  }
+
+  /**
+   * Reserves the output path and starts the atomic write without waiting for it.
+   *
+   * The path is resolved and reserved synchronously so collisions still fail in
+   * queue order, while the bytes land in the background. Ownership of the buffer
+   * and of its output permit transfers to the returned promise.
+   */
+  beginSaveScreenshot(
+    kind: string,
+    story: string,
+    suffix: string[],
+    buffer: Buffer,
+    logicalId?: string,
+    signal?: AbortSignal,
+  ): { outputPath: string; written: Promise<void> } {
+    const writeSignal = signal ?? this.opt.signal;
+    let destination: ReturnType<FileSystem['getPath']>;
+    try {
+      destination = this.getPath(kind, story, suffix, '.png', logicalId);
+    } catch (error) {
+      // Ownership transfers at the method boundary. A synchronous path
+      // reservation failure must release the capture permit just like an
+      // asynchronous write failure does.
+      this.releaseScreenshotBuffer(buffer);
+      throw error;
+    }
+    const written = (async () => {
+      let permit = this.bufferPermits.get(buffer);
+      if (!permit) {
+        permit = await this.acquire(buffer.byteLength, writeSignal);
+        this.bufferPermits.set(buffer, permit);
+      }
+      try {
+        await this.writeAtomic(
+          destination.resolvedPath,
+          buffer,
+          destination.identity,
+          destination.relativePath,
+          writeSignal,
+        );
+      } finally {
+        this.releaseScreenshotBuffer(buffer);
+      }
+    })();
+    this.track(written);
+    return { outputPath: destination.resolvedPath, written };
   }
 
   /** Takes ownership of the buffer and releases its permit after the atomic write. */
@@ -266,24 +335,8 @@ export class FileSystem {
     logicalId?: string,
     signal?: AbortSignal,
   ) {
-    const writeSignal = signal ?? this.opt.signal;
-    let permit = this.bufferPermits.get(buffer);
-    if (!permit) {
-      permit = await this.acquire(buffer.byteLength, writeSignal);
-      this.bufferPermits.set(buffer, permit);
-    }
-    try {
-      const destination = this.getPath(kind, story, suffix, '.png', logicalId);
-      await this.writeAtomic(
-        destination.resolvedPath,
-        buffer,
-        destination.identity,
-        destination.relativePath,
-        writeSignal,
-      );
-      return destination.resolvedPath;
-    } finally {
-      this.releaseScreenshotBuffer(buffer);
-    }
+    const { outputPath, written } = this.beginSaveScreenshot(kind, story, suffix, buffer, logicalId, signal);
+    await written;
+    return outputPath;
   }
 }

@@ -13,6 +13,7 @@ import {
   type WorkerStorySelection,
 } from '../shared/preview-protocol.js';
 import type { StorySessionResetContext } from '../shared/types.js';
+import { publishPreviewState } from './preview-state-publisher.js';
 
 type ChannelListener = (...args: unknown[]) => void;
 
@@ -127,11 +128,11 @@ export function initializeWorkerSessionController(
   const failActive = (error: unknown, fallback: string) => {
     if (!active) return;
     const serialized = serializedError(error, fallback);
-    target[STORYFREEZE_PREVIEW_STATE_GLOBAL] = {
+    publishPreviewState(target, {
       ...createPreviewStateBase(active.storyId, active.requestId),
       status: 'error',
       error: serialized,
-    };
+    });
     if (pending) {
       const reject = pending.reject;
       pending = undefined;
@@ -174,6 +175,7 @@ export function initializeWorkerSessionController(
 
   const protocol: WorkerSessionPreviewProtocol = {
     protocolVersion: STORYFREEZE_WORKER_SESSION_PROTOCOL_VERSION,
+    notifiesStateChanges: true,
     selectStory(request) {
       if (disposed) return Promise.reject(new Error('The StoryFreeze worker session has been disposed.'));
       if (!request.requestId || !request.storyId) {
@@ -187,10 +189,10 @@ export function initializeWorkerSessionController(
       }
       seenRequestIds.add(request.requestId);
       active = { ...request, generation: ++generation };
-      target[STORYFREEZE_PREVIEW_STATE_GLOBAL] = {
+      publishPreviewState(target, {
         ...createPreviewStateBase(request.storyId, request.requestId),
         status: 'booting',
-      };
+      });
       if (currentStoryId === request.storyId) {
         channel.emit(eventNames.FORCE_REMOUNT, { storyId: request.storyId });
         return Promise.resolve(active);

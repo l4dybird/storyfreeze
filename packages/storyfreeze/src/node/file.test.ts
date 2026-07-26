@@ -26,6 +26,85 @@ describe(FileSystem, () => {
     expect(estimateScreenshotBufferReservation(undefined)).toBeUndefined();
   });
 
+  it('lets writes proceed in the background and collects them in flush', async () => {
+    const { outDir, fileSystem } = await output();
+    const started = [
+      fileSystem.beginSaveScreenshot('Bench', 'First', [], Buffer.from('first')),
+      fileSystem.beginSaveScreenshot('Bench', 'Second', [], Buffer.from('second')),
+    ];
+    // beginSaveScreenshot reserves the path synchronously, so the caller can log
+    // or schedule against it without waiting for the bytes.
+    expect(started.map(entry => path.relative(outDir, entry.outputPath))).toEqual([
+      path.join('Bench', 'First.png'),
+      path.join('Bench', 'Second.png'),
+    ]);
+    await fileSystem.flush();
+    await expect(fs.readFile(started[0].outputPath, 'utf8')).resolves.toBe('first');
+    await expect(fs.readFile(started[1].outputPath, 'utf8')).resolves.toBe('second');
+  });
+
+  it('reports a background write failure from flush and keeps reporting it', async () => {
+    const { fileSystem } = await output();
+    vi.spyOn(fs, 'rename').mockRejectedValueOnce(new Error('rename failed'));
+    const { written } = fileSystem.beginSaveScreenshot('Bench', 'Broken', [], Buffer.from('png'));
+    await expect(written).rejects.toThrow('rename failed');
+    await expect(fileSystem.flush()).rejects.toThrow('rename failed');
+    await expect(fileSystem.flush()).rejects.toThrow('rename failed');
+  });
+
+  it('reports a tracked write that rejects before entering the atomic writer', async () => {
+    const { fileSystem } = await output();
+    const controller = new AbortController();
+    controller.abort(new Error('cancelled'));
+    const { written } = fileSystem.beginSaveScreenshot(
+      'Bench',
+      'Aborted',
+      [],
+      Buffer.from('png'),
+      'aborted',
+      controller.signal,
+    );
+    await expect(written).rejects.toThrow('cancelled');
+    await expect(fileSystem.flush()).rejects.toThrow('cancelled');
+    await expect(fileSystem.flush()).rejects.toThrow('cancelled');
+  });
+
+  it('reports the first tracked failure when later writes fail differently', async () => {
+    const { fileSystem } = await output();
+    const controller = new AbortController();
+    controller.abort(new Error('first failure'));
+    const first = fileSystem.beginSaveScreenshot(
+      'Bench',
+      'Aborted',
+      [],
+      Buffer.from('png'),
+      'aborted',
+      controller.signal,
+    ).written;
+    vi.spyOn(fs, 'rename').mockRejectedValueOnce(new Error('later failure'));
+    const second = fileSystem.beginSaveScreenshot('Bench', 'Broken', [], Buffer.from('png'), 'broken').written;
+    await Promise.allSettled([first, second]);
+    await expect(fileSystem.flush()).rejects.toThrow('first failure');
+  });
+
+  it('does not leave a background write rejection unhandled', async () => {
+    const { fileSystem } = await output();
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      vi.spyOn(fs, 'rename').mockRejectedValueOnce(new Error('rename failed'));
+      // Deliberately ignores the returned promise, exactly as a caller that only
+      // relies on flush() would.
+      fileSystem.beginSaveScreenshot('Bench', 'Ignored', [], Buffer.from('png'));
+      await expect(fileSystem.flush()).rejects.toThrow('rename failed');
+      await new Promise(resolve => setImmediate(resolve));
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+    expect(unhandled).toEqual([]);
+  });
+
   it('preserves nested, flat, suffix, and atomic replacement paths', async () => {
     const nested = await output();
     const first = await nested.fileSystem.saveScreenshot(
@@ -97,6 +176,23 @@ describe(FileSystem, () => {
     await expect(
       fileSystem.saveScreenshot('Variants', 'Input', ['a', 'b'], Buffer.from('two'), 'variant-two'),
     ).rejects.toThrow('Output path collision');
+  });
+
+  it('releases a captured buffer when synchronous path reservation fails', async () => {
+    const { fileSystem } = await output(false, 1);
+    await fileSystem.saveScreenshot('Forms', 'Collision', [], Buffer.from('first'), 'first');
+    const captured = await fileSystem.captureScreenshot(1024, async () => Buffer.from('second'));
+    expect(() => fileSystem.beginSaveScreenshot('Forms', 'Collision', [], captured!, 'second')).toThrow(
+      'Output path collision',
+    );
+
+    let nextCaptureStarted = false;
+    const next = await fileSystem.captureScreenshot(1024, async () => {
+      nextCaptureStarted = true;
+      return Buffer.from('next');
+    });
+    expect(nextCaptureStarted).toBe(true);
+    fileSystem.releaseScreenshotBuffer(next);
   });
 
   it('rejects a directory symlink to the output root parent', async () => {

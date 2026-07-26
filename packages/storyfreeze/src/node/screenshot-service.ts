@@ -1,7 +1,7 @@
 import { time } from './async-utils.js';
 import type { FileSystem } from './file.js';
 import type { Logger } from './logger.js';
-import type { Story } from './story.js';
+import { storyCostMs, type Story } from './story.js';
 import type { VariantKey } from '../shared/types.js';
 import { variantKeyIdentifier } from '../shared/screenshot-options-helper.js';
 
@@ -32,30 +32,52 @@ function requestFor(story: Story, variantKey: VariantKey = { isDefault: true, ke
 }
 
 /**
- * Groups stories by their static viewport hint and assigns the largest groups
- * first to the least-loaded worker. Every tie is resolved deterministically.
+ * Balances viewport groups by estimated cost without splitting a group across
+ * lanes, so a worker does not bounce between emulation profiles and a scheduler
+ * change cannot alter which stories are each page's first capture. Every tie is
+ * resolved deterministically.
+ *
+ * Balancing by estimated group cost rather than group size still matters because
+ * one story expands into one capture per variant, and each of those pays its
+ * delay again. Runtime work stealing can split a slow lane after its deterministic
+ * initial assignment without changing the initial page lifecycle up front.
  */
 export function assignStories(stories: readonly Story[], workerCount: number): Story[][] {
   if (!Number.isSafeInteger(workerCount) || workerCount < 1) throw new Error('workerCount must be at least one.');
-  const groups = new Map<string, Story[]>();
+  const groups = new Map<string, { stories: Story[]; costMs: number }>();
   for (const story of [...stories].sort((left, right) => left.id.localeCompare(right.id))) {
     const key = story.viewportProfileHint ?? '';
-    const group = groups.get(key) ?? [];
-    group.push(story);
+    const group = groups.get(key) ?? { stories: [], costMs: 0 };
+    group.stories.push(story);
+    group.costMs += storyCostMs(story);
     groups.set(key, group);
   }
   const ordered = [...groups.entries()].sort(
-    ([leftKey, left], [rightKey, right]) => right.length - left.length || leftKey.localeCompare(rightKey),
+    ([leftKey, left], [rightKey, right]) =>
+      right.costMs - left.costMs || right.stories.length - left.stories.length || leftKey.localeCompare(rightKey),
   );
-  const assignments = Array.from({ length: workerCount }, () => [] as Story[]);
+  const assignments = Array.from({ length: workerCount }, () => ({
+    stories: [] as Story[],
+    costMs: 0,
+    storyCount: 0,
+  }));
   for (const [, group] of ordered) {
     let target = 0;
     for (let workerId = 1; workerId < assignments.length; workerId += 1) {
-      if (assignments[workerId].length < assignments[target].length) target = workerId;
+      const candidate = assignments[workerId];
+      const best = assignments[target];
+      if (
+        candidate.costMs < best.costMs ||
+        (candidate.costMs === best.costMs && candidate.storyCount < best.storyCount)
+      ) {
+        target = workerId;
+      }
     }
-    assignments[target].push(...group);
+    assignments[target].stories.push(...group.stories);
+    assignments[target].costMs += group.costMs;
+    assignments[target].storyCount += group.stories.length;
   }
-  return assignments;
+  return assignments.map(assignment => assignment.stories);
 }
 
 class CaptureQueue {
@@ -178,6 +200,29 @@ export function createScreenshotService({
     async execute() {
       let captured = 0;
       let firstFailure: { error: unknown } | undefined;
+      // Counting and logging happen once a write lands, so they outlive the
+      // worker loop and have to be drained separately from the writes.
+      const bookkeeping = new Set<Promise<void>>();
+
+      const recordStoredScreenshot = (outputPath: string, durationMs: number, written: Promise<void>) => {
+        const task = written.then(() => {
+          logger.log(`Screenshot stored: ${logger.color.magenta(outputPath)} in ${durationMs} msec.`);
+          captured += 1;
+        });
+        bookkeeping.add(task);
+        void task.then(
+          () => {
+            bookkeeping.delete(task);
+          },
+          error => {
+            bookkeeping.delete(task);
+            // A failed write or its success bookkeeping is fail-stop: stop
+            // handing out work immediately.
+            if (!firstFailure) firstFailure = { error };
+            queue.stop();
+          },
+        );
+      };
 
       const runWorker = async (worker: ScreenshotWorker, workerId: number) => {
         while (!firstFailure) {
@@ -211,15 +256,14 @@ export function createScreenshotService({
                   ? [result.defaultVariantSuffix]
                   : request.variantKey.keys;
               const logicalId = JSON.stringify({ storyId: request.story.id, variantKey: request.variantKey });
-              const outputPath = await fileSystem.saveScreenshot(
+              const { outputPath, written } = fileSystem.beginSaveScreenshot(
                 request.story.kind,
                 request.story.story,
                 suffix,
                 result.buffer,
                 logicalId,
               );
-              logger.log(`Screenshot stored: ${logger.color.magenta(outputPath)} in ${durationMs} msec.`);
-              captured += 1;
+              recordStoredScreenshot(outputPath, durationMs, written);
             }
             queue.enqueueVariants(workerId, request.story, result.variantKeysToPush);
             queue.complete();
@@ -237,9 +281,15 @@ export function createScreenshotService({
       }
       let flushFailure: { error: unknown } | undefined;
       try {
+        // Awaits every started write.
         await fileSystem.flush();
       } catch (error) {
         flushFailure = { error };
+      }
+      // Then awaits the counting and logging chained onto those writes, so the
+      // returned total can never miss a screenshot that has already landed.
+      while (bookkeeping.size > 0) {
+        await Promise.allSettled([...bookkeeping]);
       }
       if (firstFailure && flushFailure) {
         throw new AggregateError([firstFailure.error, flushFailure.error], 'Capture and output flush both failed.');

@@ -15,7 +15,7 @@ import type { ChromeChannel } from './chromium-resolver.js';
 import { Logger } from './logger.js';
 import { main } from './main.js';
 import { parseShardOptions } from './shard-utilities.js';
-import type { MainOptions } from './types.js';
+import { shardStrategies, type MainOptions, type ShardStrategy } from './types.js';
 
 const packageVersion = (
   JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as { version: string }
@@ -62,6 +62,13 @@ const storyfreezeCommandArgs = {
     description:
       'The sharding options for this run. In the format <shardNumber>/<totalShards>. <shardNumber> is a number between 1 and <totalShards>. <totalShards> is the total number of computers working.',
   },
+  shardStrategy: {
+    type: 'enum',
+    choices: shardStrategies,
+    default: 'cost',
+    description:
+      'How to split stories across shards. "cost" balances estimated capture work; "round-robin" splits by sorted index.',
+  },
   captureTimeout: { type: 'number', default: 5_000, description: 'Timeout [msec] for capturing a story.' },
   captureMaxRetryCount: { type: 'number', default: 3, description: 'Number of times to retry capture.' },
   chromiumChannel: {
@@ -93,6 +100,7 @@ export interface StoryfreezeCliValues {
   verbose: boolean;
   forwardConsoleLogs: boolean;
   shard: string;
+  shardStrategy: ShardStrategy;
   captureTimeout: number;
   captureMaxRetryCount: number;
   chromiumChannel: ChromeChannel;
@@ -185,7 +193,7 @@ function toMainOptions(
     delay: values.delay,
     viewports: values.viewport ?? ['800x600'],
     parallel: values.parallel,
-    shard: parseShardOptions(values.shard),
+    shard: { ...parseShardOptions(values.shard), strategy: values.shardStrategy },
     captureTimeout: values.captureTimeout,
     captureMaxRetryCount: values.captureMaxRetryCount,
     disableCssAnimation: values.disableCssAnimation,

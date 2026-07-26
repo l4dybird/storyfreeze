@@ -152,6 +152,59 @@ describe(PlaywrightRuntime, () => {
     await runtime.close();
   });
 
+  it('reuses context touch emulation and sends CDP only when touch changes', async () => {
+    const fixture = runtimeFixture();
+    class TestRuntime extends PlaywrightRuntime {
+      resize(viewport: { width: number; height: number; hasTouch?: boolean }) {
+        return this.page.setViewport(viewport);
+      }
+    }
+    const runtime = new TestRuntime({});
+    await runtime.boot({ viewport: { width: 800, height: 600 } });
+    const touchCalls = () =>
+      fixture.cdp.send.mock.calls.filter(call => call[0] === 'Emulation.setTouchEmulationEnabled');
+    // BrowserContext already establishes the initial touch state.
+    expect(touchCalls()).toHaveLength(0);
+
+    await runtime.resize({ width: 1024, height: 768 });
+    await runtime.resize({ width: 1280, height: 720 });
+    // Width/height changes must not re-send an unchanged touch state.
+    expect(touchCalls()).toHaveLength(0);
+    // Device metrics still follow every resize.
+    expect(fixture.cdp.send.mock.calls.filter(call => call[0] === 'Emulation.setDeviceMetricsOverride')).toHaveLength(
+      3,
+    );
+
+    await runtime.resize({ width: 1280, height: 720, hasTouch: true });
+    expect(touchCalls()).toHaveLength(1);
+    expect(touchCalls().at(-1)?.[1]).toEqual({ enabled: true, maxTouchPoints: 1 });
+    await runtime.close();
+  });
+
+  it('keeps Playwright viewport bookkeeping in sync before the raw device override', async () => {
+    const fixture = runtimeFixture();
+    class TestRuntime extends PlaywrightRuntime {
+      resize(viewport: { width: number; height: number; deviceScaleFactor?: number; isMobile?: boolean }) {
+        return this.page.setViewport(viewport);
+      }
+    }
+    const runtime = new TestRuntime({});
+    await runtime.boot({
+      viewport: { width: 800, height: 600, deviceScaleFactor: 2, isMobile: true },
+    });
+    const metricCalls = () =>
+      fixture.cdp.send.mock.calls.filter(call => call[0] === 'Emulation.setDeviceMetricsOverride');
+    expect(metricCalls()).toHaveLength(1);
+    expect(fixture.page.setViewportSize).toHaveBeenCalledOnce();
+    expect(fixture.page.setViewportSize).toHaveBeenLastCalledWith({ width: 800, height: 600 });
+
+    await runtime.resize({ width: 600, height: 800, deviceScaleFactor: 2, isMobile: true });
+    expect(metricCalls()).toHaveLength(2);
+    expect(fixture.page.setViewportSize).toHaveBeenCalledTimes(2);
+    expect(fixture.page.setViewportSize).toHaveBeenLastCalledWith({ width: 600, height: 800 });
+    await runtime.close();
+  });
+
   it('caps an explicit launch timeout at the lifecycle safety limit', async () => {
     runtimeFixture();
     const runtime = new PlaywrightRuntime({ launchOptions: { timeout: 1_000_000_000 } });

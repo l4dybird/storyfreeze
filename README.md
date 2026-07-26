@@ -376,6 +376,7 @@ OPTIONS:
   --verbose                                                    Enable verbose StoryFreeze output. (default: false)
   --forward-console-logs                                       Forward in-page console logs to the user's console. (default: false)
   --shard [shard]                                              The sharding options for this run. In the format <shardNumber>/<totalShards>. <shardNumber> is a number between 1 and <totalShards>. <totalShards> is the total number of computers working. (default: 1/1)
+  --shard-strategy [shard-strategy]                            How to split stories across shards. "cost" balances estimated capture work; "round-robin" splits by sorted index. (default: cost, choices: cost | round-robin)
   --capture-timeout [capture-timeout]                          Timeout [msec] for capturing a story. (default: 5000)
   --capture-max-retry-count [capture-max-retry-count]          Number of times to retry capture. (default: 3)
   -C, --chromium-channel [chromium-channel]                    Channel to search local Chromium. (default: *, choices: canary | stable | *)

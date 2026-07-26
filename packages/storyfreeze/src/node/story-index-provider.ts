@@ -1,4 +1,5 @@
 import { parseViewportProfileTag } from '../shared/viewport-profile-tag.js';
+import { parseStoryCostTag } from '../shared/story-cost-tag.js';
 
 export interface StoryDescriptor {
   id: string;
@@ -7,6 +8,8 @@ export interface StoryDescriptor {
   tags?: readonly string[];
   importPath?: string;
   viewportProfileHint?: string;
+  /** Static estimate, in milliseconds, of every capture this story expands into. */
+  estimatedCostMs?: number;
 }
 
 export interface StoryIndexProvider {
@@ -101,6 +104,11 @@ export class StorybookStoryIndexProvider implements StoryIndexProvider {
             return profile === undefined ? [] : [profile];
           });
           if (profileHints.length > 0) story.viewportProfileHint = profileHints[profileHints.length - 1];
+          const costHints = value.tags.flatMap(tag => {
+            const cost = parseStoryCostTag(tag);
+            return cost === undefined ? [] : [cost];
+          });
+          if (costHints.length > 0) story.estimatedCostMs = costHints[costHints.length - 1];
         }
         if (value.importPath !== undefined) {
           if (typeof value.importPath !== 'string') {

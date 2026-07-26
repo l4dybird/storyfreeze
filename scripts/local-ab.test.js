@@ -1,4 +1,5 @@
 const assert = require('node:assert/strict');
+const http = require('node:http');
 const test = require('node:test');
 const {
   aggregateParityComparisons,
@@ -7,11 +8,13 @@ const {
   combinedFailure,
   memoryRunFailures,
   normalizeExitCode,
+  openStaticServers,
   parityHasMismatch,
   parseArgs,
   parseArmSpec,
   readPngHeader,
   startMemorySampler,
+  startStaticServer,
   windowsProcessTreeScript,
 } = require('./local-ab.js');
 
@@ -103,6 +106,64 @@ test('rejects truncated or non-PNG output before parity approval', () => {
   assert.deepEqual(readPngHeader(validPng), { width: 1, height: 1 });
   assert.equal(readPngHeader(validPng.subarray(0, -1)), null);
   assert.equal(readPngHeader(Buffer.alloc(validPng.length)), null);
+});
+
+test('closes already-opened static servers when a later startup fails', async () => {
+  let closeCount = 0;
+  await assert.rejects(
+    openStaticServers(
+      [
+        ['first', 'first-static'],
+        ['second', 'second-static'],
+      ],
+      async directory => {
+        if (directory === 'second-static') throw new Error('listen failed');
+        return {
+          close: async () => {
+            closeCount += 1;
+          },
+        };
+      },
+    ),
+    /listen failed/,
+  );
+  assert.equal(closeCount, 1);
+});
+
+test('preserves the startup failure if cleanup also fails', async () => {
+  await assert.rejects(
+    openStaticServers(
+      [
+        ['first', 'first-static'],
+        ['second', 'second-static'],
+      ],
+      async directory => {
+        if (directory === 'second-static') throw new Error('listen failed');
+        return {
+          close: () => {
+            throw new Error('close failed');
+          },
+        };
+      },
+    ),
+    /listen failed/,
+  );
+});
+
+test('returns 400 for malformed static request URLs without crashing', async () => {
+  const server = await startStaticServer(__dirname);
+  try {
+    const statusCode = await new Promise((resolve, reject) => {
+      const request = http.get(`${server.url}/%`, response => {
+        response.resume();
+        response.once('end', () => resolve(response.statusCode));
+      });
+      request.once('error', reject);
+    });
+    assert.equal(statusCode, 400);
+  } finally {
+    await server.close();
+  }
 });
 
 test('accepts compression-only changes only in RGBA mode', () => {

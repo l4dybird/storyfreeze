@@ -258,8 +258,14 @@ function parseArmSpec(spec) {
 function startStaticServer(directory) {
   const root = fs.realpathSync(directory);
   const server = http.createServer((request, response) => {
-    const requested = new URL(request.url, 'http://127.0.0.1');
-    let relative = decodeURIComponent(requested.pathname);
+    let relative;
+    try {
+      const requested = new URL(request.url, 'http://127.0.0.1');
+      relative = decodeURIComponent(requested.pathname);
+    } catch {
+      response.writeHead(400).end();
+      return;
+    }
     if (relative.endsWith('/')) relative += 'index.html';
     const resolved = path.join(root, relative);
     // Path containment: never serve outside the static root.
@@ -294,6 +300,17 @@ function startStaticServer(directory) {
       });
     });
   });
+}
+
+async function openStaticServers(entries, startServer = startStaticServer) {
+  const servers = new Map();
+  try {
+    for (const [name, directory] of entries) servers.set(name, await startServer(directory));
+    return servers;
+  } catch (error) {
+    await Promise.allSettled([...servers.values()].map(server => Promise.resolve().then(() => server.close())));
+    throw error;
+  }
 }
 
 // --- PNG manifest (cheap path) -------------------------------------------
@@ -927,14 +944,16 @@ async function runScenario(scenarioId, armSpecs, options) {
 
   // One server per distinct static so arms pinned to different builds can be
   // interleaved in a single balanced schedule.
-  const servers = new Map();
-  for (const name of new Set(staticFor.values())) {
+  // Resolve every build before opening the first server. openStaticServers()
+  // then closes any already-opened servers if a later listen fails.
+  const staticEntries = [...new Set(staticFor.values())].map(name => {
     const staticDir = path.join(staticRoot, name);
     if (!fs.existsSync(staticDir)) {
       throw new Error(`Missing static build ${staticDir}. Run pnpm --dir examples/react-vite build-storybook:bench.`);
     }
-    servers.set(name, await startStaticServer(staticDir));
-  }
+    return [name, staticDir];
+  });
+  const servers = await openStaticServers(staticEntries);
   const urlFor = spec => servers.get(staticFor.get(spec)).url;
   const runsByArm = new Map(arms.map(arm => [arm, []]));
   const failures = [];
@@ -1169,10 +1188,12 @@ module.exports = {
   findCrossShardDuplicatePaths,
   memoryRunFailures,
   normalizeExitCode,
+  openStaticServers,
   parityHasMismatch,
   parseArgs,
   parseArmSpec,
   readPngHeader,
+  startStaticServer,
   startMemorySampler,
   windowsProcessTreeScript,
 };

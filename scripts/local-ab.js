@@ -29,6 +29,10 @@ const armsDir = path.join(packageDir, '.perf-arms');
 const fixtureDir = path.join(repoDir, 'examples/react-vite');
 const staticRoot = path.join(fixtureDir, 'storybook-static');
 const workDir = path.join(armsDir, '.work');
+const portableArtifactName = /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/;
+const windowsReservedName = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i;
+const pngSignature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+const pngIendChunk = Buffer.from([0, 0, 0, 0, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82]);
 
 const mimeTypes = {
   '.css': 'text/css; charset=utf-8',
@@ -106,6 +110,29 @@ const scenarios = {
   },
 };
 
+function assertPortableArtifactName(value, label) {
+  if (
+    typeof value !== 'string' ||
+    !portableArtifactName.test(value) ||
+    value.endsWith('.') ||
+    windowsReservedName.test(value)
+  ) {
+    throw new Error(
+      `${label} must be a portable filename segment (1-80 letters, numbers, ".", "_", or "-", without path separators).`,
+    );
+  }
+  return value;
+}
+
+function artifactSlug(value) {
+  const readable = value
+    .replace(/[^A-Za-z0-9._-]+/g, '_')
+    .replace(/^\.+/, '')
+    .slice(0, 48);
+  const digest = crypto.createHash('sha256').update(value).digest('hex').slice(0, 10);
+  return `${readable || 'arm'}-${digest}`;
+}
+
 function parseArgs(argv) {
   const values = {
     reps: 5,
@@ -140,13 +167,26 @@ function parseArgs(argv) {
   if (values.parity !== 'bytes' && values.parity !== 'rgba') {
     throw new Error(`--parity must be "bytes" or "rgba".`);
   }
+  if (!Number.isSafeInteger(values.reps) || values.reps < 1) throw new Error('--reps must be a positive safe integer.');
+  if (!Number.isSafeInteger(values.warmup) || values.warmup < 0) {
+    throw new Error('--warmup must be a non-negative safe integer.');
+  }
+  assertPortableArtifactName(values.tag, '--tag');
+  if (values.saveArm !== null) assertPortableArtifactName(values.saveArm, '--save-arm');
   return values;
 }
 
 // --- arm management -------------------------------------------------------
 
 function saveArm(name) {
+  assertPortableArtifactName(name, 'Arm name');
   const target = path.join(armsDir, name);
+  const sources = ['dist', 'assets', 'package.json'].map(entry => path.join(packageDir, entry));
+  for (const source of sources) {
+    if (!fs.existsSync(source)) {
+      throw new Error(`Cannot save arm ${name}: missing ${path.relative(repoDir, source)}. Build the package first.`);
+    }
+  }
   fs.rmSync(target, { recursive: true, force: true });
   fs.mkdirSync(target, { recursive: true });
   fs.cpSync(path.join(packageDir, 'dist'), path.join(target, 'dist'), { recursive: true });
@@ -166,6 +206,7 @@ function listArms() {
 }
 
 function armCli(name) {
+  assertPortableArtifactName(name, 'Arm name');
   const cli = path.join(armsDir, name, 'dist/node/cli.js');
   if (!fs.existsSync(cli)) throw new Error(`Arm ${name} has no dist/node/cli.js. Save it first.`);
   return cli;
@@ -189,13 +230,25 @@ function armCli(name) {
  */
 function parseArmSpec(spec) {
   const [beforeEnv, ...envParts] = spec.split('%');
-  const [head, rawArgs] = beforeEnv.split('!');
-  const [name, staticDir] = head.split('@');
+  const argParts = beforeEnv.split('!');
+  if (argParts.length > 2) throw new Error(`Invalid arm specification ${JSON.stringify(spec)}: too many "!" sections.`);
+  const [head, rawArgs] = argParts;
+  const staticParts = head.split('@');
+  if (staticParts.length > 2)
+    throw new Error(`Invalid arm specification ${JSON.stringify(spec)}: too many "@" sections.`);
+  const [name, staticDir] = staticParts;
+  assertPortableArtifactName(name, 'Arm name');
+  if (staticDir !== undefined) assertPortableArtifactName(staticDir, 'Static build name');
   const extraArgs = rawArgs ? rawArgs.split('+').filter(Boolean) : [];
   const extraEnv = {};
   for (const part of envParts) {
     const separator = part.indexOf('=');
-    if (separator > 0) extraEnv[part.slice(0, separator)] = part.slice(separator + 1);
+    if (separator <= 0) throw new Error(`Invalid environment override in arm ${JSON.stringify(spec)}.`);
+    const key = part.slice(0, separator);
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+      throw new Error(`Invalid environment variable name ${JSON.stringify(key)} in arm ${JSON.stringify(spec)}.`);
+    }
+    extraEnv[key] = part.slice(separator + 1);
   }
   return { spec, name, staticDir, extraArgs, extraEnv };
 }
@@ -245,16 +298,19 @@ function startStaticServer(directory) {
 
 // --- PNG manifest (cheap path) -------------------------------------------
 
-function readPngHeader(file) {
-  const header = Buffer.alloc(33);
-  const handle = fs.openSync(file, 'r');
-  try {
-    fs.readSync(handle, header, 0, 33, 0);
-  } finally {
-    fs.closeSync(handle);
+function readPngHeader(content) {
+  if (
+    content.length < 45 ||
+    !content.subarray(0, pngSignature.length).equals(pngSignature) ||
+    content.readUInt32BE(8) !== 13 ||
+    content.subarray(12, 16).toString('latin1') !== 'IHDR' ||
+    !content.subarray(-pngIendChunk.length).equals(pngIendChunk)
+  ) {
+    return null;
   }
-  if (header.subarray(12, 16).toString('latin1') !== 'IHDR') return null;
-  return { width: header.readUInt32BE(16), height: header.readUInt32BE(20) };
+  const width = content.readUInt32BE(16);
+  const height = content.readUInt32BE(20);
+  return width > 0 && height > 0 ? { width, height } : null;
 }
 
 /**
@@ -266,6 +322,7 @@ function readPngHeader(file) {
 function inspectPngBytes(directory) {
   const manifest = [];
   const pending = [directory];
+  const unreadable = [];
   let totalBytes = 0;
   while (pending.length > 0) {
     const current = pending.pop();
@@ -278,10 +335,12 @@ function inspectPngBytes(directory) {
       }
       if (!entry.isFile() || !entry.name.toLowerCase().endsWith('.png')) continue;
       const content = fs.readFileSync(absolute);
-      const dimensions = readPngHeader(absolute);
+      const dimensions = readPngHeader(content);
+      const relativePath = path.relative(directory, absolute).replaceAll('\\', '/');
+      if (!dimensions) unreadable.push(relativePath);
       totalBytes += content.length;
       manifest.push({
-        path: path.relative(directory, absolute).replaceAll('\\', '/'),
+        path: relativePath,
         bytes: content.length,
         width: dimensions?.width ?? 0,
         height: dimensions?.height ?? 0,
@@ -290,7 +349,8 @@ function inspectPngBytes(directory) {
     }
   }
   manifest.sort((left, right) => (left.path < right.path ? -1 : left.path > right.path ? 1 : 0));
-  return { manifest, totalBytes };
+  unreadable.sort();
+  return { manifest, totalBytes, unreadablePngCount: unreadable.length, unreadablePngPaths: unreadable.slice(0, 10) };
 }
 
 function comparePngBytes(reference, actual) {
@@ -355,7 +415,7 @@ function normalizeExitCode(code) {
 }
 
 async function runOnce({ arm, name, scenario, scenarioId, label, url, extraArgs = [], extraEnv = {}, onSpawn }) {
-  const slug = arm.replaceAll('@', '_at_');
+  const slug = artifactSlug(arm);
   const outDir = path.join(workDir, `${scenarioId}-${slug}-${label}`);
   const tracePath = path.join(workDir, `${scenarioId}-${slug}-${label}.trace.json`);
   fs.rmSync(outDir, { recursive: true, force: true });
@@ -424,6 +484,8 @@ async function runOnce({ arm, name, scenario, scenarioId, label, url, extraArgs 
     wallMs,
     pngCount: png.manifest.length,
     totalPngBytes: png.totalBytes,
+    unreadablePngCount: png.unreadablePngCount,
+    unreadablePngPaths: png.unreadablePngPaths,
     manifest: png.manifest,
     outDir,
     log,
@@ -443,7 +505,7 @@ async function runOnce({ arm, name, scenario, scenarioId, label, url, extraArgs 
 async function runSharded(context) {
   const { scenario, scenarioId, arm, label } = context;
   const shardRuns = [];
-  const unionDir = path.join(workDir, `${arm.replaceAll('@', '_at_')}-${scenarioId}-${label}-union`);
+  const unionDir = path.join(workDir, `${artifactSlug(arm)}-${scenarioId}-${label}-union`);
   fs.rmSync(unionDir, { recursive: true, force: true });
   fs.mkdirSync(unionDir, { recursive: true });
   for (let shard = 1; shard <= scenario.shards; shard += 1) {
@@ -475,6 +537,8 @@ async function runSharded(context) {
     crossShardDuplicatePngPaths: crossShardDuplicatePngPaths.slice(0, 10),
     pngCount: png.manifest.length,
     totalPngBytes: png.totalBytes,
+    unreadablePngCount: shardRuns.reduce((total, run) => total + (run.unreadablePngCount ?? 0), 0),
+    unreadablePngPaths: [...new Set(shardRuns.flatMap(run => run.unreadablePngPaths ?? []))].sort().slice(0, 10),
     manifest: png.manifest,
     outDir: unionDir,
     log: {
@@ -614,6 +678,9 @@ function runHealthFailures(run) {
     failures.push(`produced ${run.crossShardDuplicatePngCount} duplicate PNG path(s) across shards`);
   }
   if (!Number.isSafeInteger(run.pngCount) || run.pngCount < 1) failures.push('produced no PNG files');
+  if ((run.unreadablePngCount ?? 0) > 0) {
+    failures.push(`produced ${run.unreadablePngCount} structurally invalid PNG file(s)`);
+  }
   return failures;
 }
 
@@ -1044,6 +1111,7 @@ async function main() {
 
   const arms = options.arms.length > 0 ? options.arms : listArms();
   if (arms.length === 0) throw new Error('No arms available. Use --save-arm <name> first.');
+  if (new Set(arms).size !== arms.length) throw new Error('Arm specifications must be unique.');
   const selected = options.scenarios.length > 0 ? options.scenarios : Object.keys(scenarios);
 
   if (options.memory) {
@@ -1103,6 +1171,8 @@ module.exports = {
   normalizeExitCode,
   parityHasMismatch,
   parseArgs,
+  parseArmSpec,
+  readPngHeader,
   startMemorySampler,
   windowsProcessTreeScript,
 };

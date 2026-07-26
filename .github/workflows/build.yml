@@ -52,7 +52,7 @@ jobs:
       - name: Verify release and performance tooling
         if: matrix.node-version == '22.18.0'
         run: |
-          node --test scripts/*.test.js
+          node --test scripts/get-dist-tag.test.js scripts/local-ab.test.js scripts/pnpm-command.test.js scripts/release-performance.test.js
           node scripts/get-dist-tag.js --json
       - run: pnpm publish:dry-run
         if: matrix.node-version == '22.18.0'

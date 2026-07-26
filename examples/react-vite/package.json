@@ -12,7 +12,7 @@
     "build-storybook": "pnpm run build-storybook:managed",
     "build-storybook:managed": "storybook build --test --config-dir .storybook -o storybook-static/managed",
     "build-storybook:bench": "storybook build --test --config-dir .storybook-bench -o storybook-static/bench",
-    "build-storybook:bench-s0": "storybook build --test --config-dir .storybook -o storybook-static/bench-s0",
+    "build-storybook:bench-s0": "storybook build --test --config-dir .storybook-bench-s0 -o storybook-static/bench-s0",
     "storyfreeze:managed-static": "storyfreeze --verbose --parallel 4 --out-dir __screenshots__/managed-static http://127.0.0.1:9013",
     "storyfreeze:filter-static": "storyfreeze --verbose --parallel 1 --out-dir __screenshots__/filter-static --include \"Compatibility/Fixture/**\" --exclude \"Compatibility/Fixture/Console Error\" --exclude \"Compatibility/Fixture/Retry\" http://127.0.0.1:9013",
     "storyfreeze:shard-static": "storyfreeze --verbose --parallel 1 --out-dir __screenshots__/shard-static --shard 2/2 --shard-strategy round-robin http://127.0.0.1:9013",

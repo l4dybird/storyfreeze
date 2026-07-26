@@ -9,6 +9,8 @@ const {
   normalizeExitCode,
   parityHasMismatch,
   parseArgs,
+  parseArmSpec,
+  readPngHeader,
   startMemorySampler,
   windowsProcessTreeScript,
 } = require('./local-ab.js');
@@ -75,6 +77,34 @@ test('defaults to byte parity and requires an explicit RGBA mode', () => {
   assert.throws(() => parseArgs(['--parity', 'pixels']), /bytes.*rgba/);
 });
 
+test('rejects paths and invalid run counts in artifact-producing arguments', () => {
+  assert.throws(() => parseArgs(['--save-arm', '../outside']), /portable filename segment/);
+  assert.throws(() => parseArgs(['--tag', '..\\outside']), /portable filename segment/);
+  assert.throws(() => parseArgs(['--reps', '0']), /positive safe integer/);
+  assert.throws(() => parseArgs(['--warmup', '-1']), /non-negative safe integer/);
+  assert.throws(() => parseArmSpec('../outside'), /portable filename segment/);
+  assert.throws(() => parseArmSpec('baseline@../../static'), /portable filename segment/);
+  assert.throws(() => parseArmSpec('baseline%BROKEN'), /environment override/);
+  assert.deepEqual(parseArmSpec('baseline@bench!--flag+value%FEATURE=on'), {
+    spec: 'baseline@bench!--flag+value%FEATURE=on',
+    name: 'baseline',
+    staticDir: 'bench',
+    extraArgs: ['--flag', 'value'],
+    extraEnv: { FEATURE: 'on' },
+  });
+});
+
+test('rejects truncated or non-PNG output before parity approval', () => {
+  const validPng = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+    'base64',
+  );
+
+  assert.deepEqual(readPngHeader(validPng), { width: 1, height: 1 });
+  assert.equal(readPngHeader(validPng.subarray(0, -1)), null);
+  assert.equal(readPngHeader(Buffer.alloc(validPng.length)), null);
+});
+
 test('accepts compression-only changes only in RGBA mode', () => {
   assert.equal(parityHasMismatch(byteMismatch, 'bytes'), true);
   assert.equal(parityHasMismatch(byteMismatch, 'rgba'), false);
@@ -132,6 +162,9 @@ test('rejects unhealthy memory runs', () => {
     ],
   );
   assert.deepEqual(memoryRunFailures({ ...healthy, pngCount: 0 }), ['produced no PNG files']);
+  assert.deepEqual(memoryRunFailures({ ...healthy, unreadablePngCount: 1 }), [
+    'produced 1 structurally invalid PNG file(s)',
+  ]);
 });
 
 test('keeps the primary failure visible when cleanup also fails', () => {
